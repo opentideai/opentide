@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-label="Fewer bugs: nothing lands without tests the server ran. Less review: every change comes with its plan and its proof. Fewer tokens: the agent asks the app instead of rereading your code.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-label="Fewer bugs: nothing lands without tests the server ran. Fewer review rounds: every change comes with its plan and its proof. Fewer tokens: the agent asks the app instead of rereading your code.">
   <style>
     .ui { font-family: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif; }
     .pulse { animation: pulse 2.2s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
@@ -36,7 +36,7 @@
       <path d="M18 10 H36 L44 18 V50 H18 Z" fill="none" stroke="#8EC9E8" stroke-width="3.5" stroke-linejoin="round"/>
       <path d="M24 34 L29 39 L38 28" fill="none" stroke="#8EC9E8" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" class="pulse"/>
     </g>
-    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Less review</text>
+    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Fewer review rounds</text>
     <text class="ui" font-size="17" fill="#94a3b8">
       <tspan x="32" y="176">Every change arrives with its plan,</tspan>
       <tspan x="32" y="202">acceptance criteria and evidence, and</tspan>

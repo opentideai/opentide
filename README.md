@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="OpenTide: let your agent ship production-ready apps. Fewer bugs, less review, fewer tokens." width="100%">
+  <img src="assets/hero.svg" alt="OpenTide: make your agent ship production-ready apps. Fewer bugs, fewer review rounds, fewer tokens." width="100%">
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@ Python support is coming next.
 
 - **Fewer bugs.** A change can't be marked done until tests the server ran
   itself cover every point in the plan.
-- **Review in minutes, not hours.** Every change comes with its plan, its
+- **Fewer review rounds.** Every change comes with its plan, its
   acceptance criteria and its evidence. Check the proof instead of
   reverse-engineering the diff.
 - **Spend fewer tokens.** The agent asks the app what exists instead of
@@ -44,7 +44,7 @@ Python support is coming next.
   lock-in, no API key. Bring the agent you already pay for.
 
 <p align="center">
-  <img src="assets/pillars.svg" alt="Fewer bugs, less review, fewer tokens" width="100%">
+  <img src="assets/pillars.svg" alt="Fewer bugs, fewer review rounds, fewer tokens" width="100%">
 </p>
 
 ## Quick start
@@ -128,7 +128,7 @@ The agent can't call a change finished on its own say-so.
   way it is, so it doesn't undo a fix.
 - `opentide build` boots the build and smoke-tests its routes before you ship.
 
-### <img src="assets/icons/review.svg" width="22" height="22" align="top" alt=""> Review in minutes
+### <img src="assets/icons/review.svg" width="22" height="22" align="top" alt=""> Fewer review rounds
 
 Every change is a **changeset**: a title, a plan with steps, acceptance
 criteria, a verification plan, and the evidence that it was met.

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-label="OpenTide: let your agent ship production-ready apps. Fewer bugs, less review, fewer wasted tokens.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-label="OpenTide: make your agent ship production-ready apps. Fewer bugs, fewer review rounds, fewer tokens.">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0a1230"/>
@@ -73,12 +73,12 @@
     <text x="200" y="172" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="88" letter-spacing="-2" fill="#f8fafc"><tspan font-weight="400">Open</tspan><tspan font-weight="800">Tide</tspan></text>
 
     <text x="98" y="250" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
-          font-size="38" font-weight="700" fill="#f1f5f9" letter-spacing="-0.5">Let your agent ship production-ready apps.</text>
+          font-size="38" font-weight="700" fill="#f1f5f9" letter-spacing="-0.5">Make your agent ship production-ready apps.</text>
     <text x="98" y="298" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
-          font-size="38" font-weight="700" fill="#F2A03D" letter-spacing="-0.5">Fewer bugs. Less review. Fewer tokens.</text>
+          font-size="38" font-weight="700" fill="#F2A03D" letter-spacing="-0.5">Fewer bugs. Fewer review rounds. Fewer tokens.</text>
 
     <!-- Live badge, right side -->
-    <g transform="translate(930 92)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15">
+    <g transform="translate(930 74)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15">
       <rect width="254" height="184" rx="16" fill="#0a1230" fill-opacity="0.8" stroke="#2a3a66"/>
       <circle cx="26" cy="28" r="6" fill="#22c55e">
         <animate attributeName="opacity" values="1;0.25;1" dur="1.6s" repeatCount="indefinite"/>
