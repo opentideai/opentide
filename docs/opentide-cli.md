@@ -17,8 +17,11 @@ Needs Deno 2 on PATH (`curl -fsSL https://deno.land/install.sh | sh`).
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
 ```
 
-**Not live yet.** `opentideai/opentide` has no release yet. Until it does,
-install from a tarball you packaged yourself:
+macOS is tested; Linux should work but isn't tested yet. On Windows, run it
+under WSL: the installer is a POSIX shell script and native Windows hasn't been
+run.
+
+To install from a tarball you packaged yourself (see [Release](#release)):
 
 ```sh
 deno task package:opentide
