@@ -9,7 +9,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-94a3b8" alt="Apache-2.0"></a>
 </p>
 
+<h3 align="center">The agent-native web framework</h3>
+
 <p align="center">
+  <b><a href="https://opentide.ai">opentide.ai</a></b> ·
   <b><a href="#quick-start">Quick start</a></b> ·
   <b><a href="#connect-your-agent">Connect your agent</a></b> ·
   <b><a href="#what-you-get">What you get</a></b> ·
@@ -24,9 +27,10 @@
 lines of diff, running the tests it didn't run, and finding the bug it didn't
 mention.**
 
-OpenTide is the workspace that fixes that. Connect any coding agent that speaks
-MCP (Claude Code, Codex, Cursor, Windsurf and the rest) and it builds inside a
-running app that keeps it honest:
+OpenTide is the agent-native web framework that fixes that. Connect any coding
+agent that speaks MCP (Claude Code, Codex, Cursor, Windsurf and the rest) and it
+builds inside a running app that keeps it honest. Apps are TypeScript today;
+Python support is coming next.
 
 - **Fewer bugs.** A change can't be marked done until tests the server ran
   itself cover every point in the plan.
@@ -251,6 +255,13 @@ Node runs.
 | [Connecting agents over MCP](docs/mcp-connect.md) | Claude Code, Codex, Cursor, HTTP, tokens, changesets, tasks |
 | [LSP for editors](docs/lsp-connect.md)            | Neovim, Zed, capabilities, writing through LSP              |
 | [Project storage](docs/project-storage.md)        | What's in a project, what to commit, what stays local       |
+
+## Tide
+
+Tide, the IDE reinvented for AI, is built on OpenTide and coming soon: chat with
+an agent on one side and your running app on the other, with every change
+verified before it counts as done. Follow it at
+[opentide.ai](https://opentide.ai).
 
 ## License
 
