@@ -1,0 +1,1 @@
+ALTER TABLE "_genie_schemas" ADD COLUMN "module" text;

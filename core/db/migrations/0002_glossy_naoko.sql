@@ -1,0 +1,1 @@
+CREATE INDEX "messages_session_id_idx" ON "_genie_messages" USING btree ("session_id");

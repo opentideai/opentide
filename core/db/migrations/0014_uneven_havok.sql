@@ -1,0 +1,1 @@
+ALTER TABLE "_genie_model_usage" ADD COLUMN "pricing_source" text;

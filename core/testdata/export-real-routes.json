@@ -1,0 +1,617 @@
+[
+  {
+    "method": "GET",
+    "path": "/",
+    "handlerName": "serveBookmarkList"
+  },
+  {
+    "method": "GET",
+    "path": "/_test/echo-ua",
+    "handlerName": "serveImportHeaderEcho"
+  },
+  {
+    "method": "GET",
+    "path": "/_test/import-redirect",
+    "handlerName": "serveImportRedirectFixture"
+  },
+  {
+    "method": "GET",
+    "path": "/add",
+    "handlerName": "addBookmarkFromLink"
+  },
+  {
+    "method": "GET",
+    "path": "/api/actions",
+    "handlerName": "listActions"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/blocks/:id",
+    "handlerName": "deleteArticleBlock"
+  },
+  {
+    "method": "POST",
+    "path": "/api/blocks/:id/actions",
+    "handlerName": "runBlockAction"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/blocks/:id/language",
+    "handlerName": "updateBlockLanguage"
+  },
+  {
+    "method": "GET",
+    "path": "/api/blocks/:id/notes",
+    "handlerName": "listBlockNotes"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/blocks/:id/notes/:kind",
+    "handlerName": "clearBlockNote"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/blocks/:id/notes/manual",
+    "handlerName": "saveBlockManualNote"
+  },
+  {
+    "method": "POST",
+    "path": "/api/blocks/merge",
+    "handlerName": "mergeArticleBlocks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks",
+    "handlerName": "listBookmarks"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks",
+    "handlerName": "createBookmark"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bookmarks/:id",
+    "handlerName": "deleteBookmark"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/bookmarks/:id",
+    "handlerName": "updateBookmark"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id{[0-9]+}",
+    "handlerName": "getBookmark"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks/:id/actions",
+    "handlerName": "runDocumentAction"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/chat",
+    "handlerName": "listDocumentChat"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks/:id/chat",
+    "handlerName": "askDocumentChat"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bookmarks/:id/chat/:messageId",
+    "handlerName": "deleteDocumentChatPair"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/export.md",
+    "handlerName": "exportMarkdown"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/highlights",
+    "handlerName": "listHighlights"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks/:id/highlights",
+    "handlerName": "createHighlight"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/links",
+    "handlerName": "listArticleLinks"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks/:id/links/fetch",
+    "handlerName": "fetchArticleLink"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/notes",
+    "handlerName": "listDocumentNotes"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bookmarks/:id/notes/:kind",
+    "handlerName": "clearDocumentNote"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks/:id/refetch",
+    "handlerName": "refetchBookmark"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/summary",
+    "handlerName": "getSummaryStatus"
+  },
+  {
+    "method": "POST",
+    "path": "/api/bookmarks/:id/tags",
+    "handlerName": "addBookmarkTag"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bookmarks/:id/tags/:tagId",
+    "handlerName": "removeBookmarkTag"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/stats",
+    "handlerName": "getBookmarkStats"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/highlights/:id",
+    "handlerName": "deleteHighlight"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/highlights/:id",
+    "handlerName": "updateHighlight"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/sites/:domain",
+    "handlerName": "deleteSite"
+  },
+  {
+    "method": "GET",
+    "path": "/api/tags",
+    "handlerName": "listTags"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/tags/:id",
+    "handlerName": "deleteTag"
+  },
+  {
+    "method": "GET",
+    "path": "/api/tags/stats",
+    "handlerName": "getTagStats"
+  },
+  {
+    "method": "GET",
+    "path": "/doc/:id",
+    "handlerName": "redirectLegacyDocLink"
+  },
+  {
+    "method": "GET",
+    "path": "/read/:id",
+    "handlerName": "serveReader"
+  },
+  {
+    "method": "GET",
+    "path": "/api/directions",
+    "handlerName": "getDirections"
+  },
+  {
+    "method": "GET",
+    "path": "/api/sailing-js",
+    "handlerName": "serveSailingJs"
+  },
+  {
+    "method": "GET",
+    "path": "/api/weather",
+    "handlerName": "getWeather"
+  },
+  {
+    "method": "GET",
+    "path": "/api/weather-grid",
+    "handlerName": "getWeatherGrid"
+  },
+  {
+    "method": "GET",
+    "path": "/_health/deploy",
+    "handlerName": "getDeployMetadata"
+  },
+  {
+    "method": "GET",
+    "path": "/api/annotations",
+    "handlerName": "listAnnotations"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id",
+    "handlerName": "getBookmark"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/assets/:assetId",
+    "handlerName": "serveBookmarkAsset"
+  },
+  {
+    "method": "GET",
+    "path": "/api/bookmarks/:id/summary/audio",
+    "handlerName": "getSummaryAudio"
+  },
+  {
+    "method": "GET",
+    "path": "/api/brief",
+    "handlerName": "listBriefFeed"
+  },
+  {
+    "method": "GET",
+    "path": "/api/discover",
+    "handlerName": "listDiscoverShelves"
+  },
+  {
+    "method": "POST",
+    "path": "/api/import/page",
+    "handlerName": "importPageFromClient"
+  },
+  {
+    "method": "GET",
+    "path": "/api/search",
+    "handlerName": "searchEverything"
+  },
+  {
+    "method": "GET",
+    "path": "/api/search/index",
+    "handlerName": "getSearchIndexStatus"
+  },
+  {
+    "method": "POST",
+    "path": "/api/search/index/rebuild",
+    "handlerName": "rebuildSearchIndexEndpoint"
+  },
+  {
+    "method": "POST",
+    "path": "/api/tags/retag",
+    "handlerName": "retagLibrary"
+  },
+  {
+    "method": "GET",
+    "path": "/api/usage",
+    "handlerName": "getAiUsage"
+  },
+  {
+    "method": "GET",
+    "path": "/brief",
+    "handlerName": "serveBriefPage"
+  },
+  {
+    "method": "GET",
+    "path": "/notes",
+    "handlerName": "serveNotesPage"
+  },
+  {
+    "method": "GET",
+    "path": "/search",
+    "handlerName": "serveSearchPage"
+  },
+  {
+    "method": "GET",
+    "path": "/usage",
+    "handlerName": "serveUsagePage"
+  },
+  {
+    "method": "GET",
+    "path": "/_test/skill-fixture",
+    "handlerName": "serveSkillFixture"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent",
+    "handlerName": "agentManifest"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent/actions",
+    "handlerName": "agentListActions"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/actions/run",
+    "handlerName": "agentRunAction"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/block-feedback/:id/reply",
+    "handlerName": "agentReplyBlockFeedback"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/block-feedback/:id/resolve",
+    "handlerName": "agentResolveBlockFeedback"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/comments/:id/reply",
+    "handlerName": "agentReplyComment"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/comments/:id/resolve",
+    "handlerName": "agentResolveComment"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/documents",
+    "handlerName": "agentCreateDocument"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent/documents/:id",
+    "handlerName": "agentGetDocument"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent/documents/:id/block-feedback",
+    "handlerName": "agentListBlockFeedback"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent/documents/:id/comments",
+    "handlerName": "agentListComments"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent/documents/:id/events",
+    "handlerName": "agentGetEvents"
+  },
+  {
+    "method": "GET",
+    "path": "/api/agent/documents/:id/feedback",
+    "handlerName": "agentGetFeedback"
+  },
+  {
+    "method": "POST",
+    "path": "/api/agent/documents/:id/update",
+    "handlerName": "agentUpdateDocument"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/annotations/:id",
+    "handlerName": "deleteAnnotation"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/annotations/:id",
+    "handlerName": "updateAnnotationStatus"
+  },
+  {
+    "method": "POST",
+    "path": "/api/annotations/:id/messages",
+    "handlerName": "postAnnotationMessage"
+  },
+  {
+    "method": "POST",
+    "path": "/api/annotations/:id/resolve",
+    "handlerName": "resolveAnnotationRealtime"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/block-feedback/:id",
+    "handlerName": "resolveBlockFeedback"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/blocks/:id",
+    "handlerName": "updateBlock"
+  },
+  {
+    "method": "GET",
+    "path": "/api/blocks/:id/feedback",
+    "handlerName": "listBlockFeedback"
+  },
+  {
+    "method": "POST",
+    "path": "/api/blocks/:id/feedback",
+    "handlerName": "postBlockFeedback"
+  },
+  {
+    "method": "POST",
+    "path": "/api/blocks/:id/merge",
+    "handlerName": "mergeParagraphs"
+  },
+  {
+    "method": "POST",
+    "path": "/api/blocks/:id/split",
+    "handlerName": "splitParagraph"
+  },
+  {
+    "method": "POST",
+    "path": "/api/blocks/:id/summarize",
+    "handlerName": "summarizeBlock"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/blocks/:id/summary",
+    "handlerName": "clearBlockSummary"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents",
+    "handlerName": "listDocuments"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents",
+    "handlerName": "createDocument"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/documents/:id",
+    "handlerName": "deleteDocument"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id",
+    "handlerName": "getDocument"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/documents/:id",
+    "handlerName": "updateDocument"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/actions",
+    "handlerName": "runDocumentAction"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/agent",
+    "handlerName": "getAgentPanel"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/annotations",
+    "handlerName": "listAnnotations"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/annotations",
+    "handlerName": "createAnnotation"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/blocks",
+    "handlerName": "createBlock"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/blocks/reorder",
+    "handlerName": "reorderBlocks"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/export.html",
+    "handlerName": "exportHtml"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/export.md",
+    "handlerName": "exportMarkdown"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/handoff",
+    "handlerName": "sendHandoff"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/history/redo",
+    "handlerName": "redoHistory"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/history/undo",
+    "handlerName": "undoHistory"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/notes",
+    "handlerName": "listDocumentNotes"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/documents/:id/notes/:kind",
+    "handlerName": "clearDocumentNote"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/:id/skills/toggle",
+    "handlerName": "toggleDocumentSkill"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/sync",
+    "handlerName": "getDocumentSync"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/versions",
+    "handlerName": "listVersions"
+  },
+  {
+    "method": "GET",
+    "path": "/api/documents/:id/versions/:vid/diff",
+    "handlerName": "getVersionDiff"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/import",
+    "handlerName": "importDocument"
+  },
+  {
+    "method": "POST",
+    "path": "/api/documents/import-url",
+    "handlerName": "importDocumentFromUrl"
+  },
+  {
+    "method": "POST",
+    "path": "/api/proposals/:id/accept",
+    "handlerName": "acceptProposal"
+  },
+  {
+    "method": "POST",
+    "path": "/api/proposals/:id/reject",
+    "handlerName": "rejectProposal"
+  },
+  {
+    "method": "GET",
+    "path": "/api/skills",
+    "handlerName": "listSkills"
+  },
+  {
+    "method": "POST",
+    "path": "/api/skills",
+    "handlerName": "createSkill"
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/skills/:id",
+    "handlerName": "deleteSkill"
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/skills/:id",
+    "handlerName": "updateSkill"
+  },
+  {
+    "method": "POST",
+    "path": "/api/skills/import",
+    "handlerName": "importSkill"
+  },
+  {
+    "method": "POST",
+    "path": "/api/versions/:id/restore",
+    "handlerName": "restoreVersion"
+  },
+  {
+    "method": "GET",
+    "path": "/mcp",
+    "handlerName": "mcpInfo"
+  },
+  {
+    "method": "POST",
+    "path": "/mcp",
+    "handlerName": "mcpHandler"
+  }
+]

@@ -1,0 +1,1 @@
+DROP TABLE "_genie_env_vars" CASCADE;

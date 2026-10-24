@@ -1,0 +1,56 @@
+{
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "tasks": {
+    "mcp": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/mcp-main.ts",
+    "lsp": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/lsp-main.ts",
+    "orchestrator": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/orchestrator-main.ts",
+    "opentide": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/cli.ts",
+    "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys",
+    "lint": "deno lint",
+    "export:opentide": "deno run --allow-read --allow-write --allow-run --allow-env scripts/export-opentide.ts",
+    "package:opentide": "deno run --allow-read --allow-write --allow-run --allow-env scripts/package-opentide.ts",
+    "check:open": "deno run --allow-read --allow-write --allow-run --allow-net --allow-env scripts/check-open-standalone.ts",
+    "shim:generate": "deno run --allow-read --allow-write --allow-run --allow-env scripts/generate-export-context-shim.ts",
+    "router:generate": "deno run --allow-read --allow-write --allow-run scripts/generate-export-router.ts",
+    "validation:generate": "deno run --allow-read --allow-write --allow-run scripts/generate-export-validation.ts",
+    "db:generate": "deno run --allow-read --allow-write --allow-env --allow-net --allow-sys npm:drizzle-kit@0 generate",
+    "docs:generate": "deno run --allow-read --allow-write core/docs/generate.ts"
+  },
+  "imports": {
+    "hono": "npm:hono@4",
+    "esbuild": "npm:esbuild@0.25",
+    "@anthropic-ai/sdk": "npm:@anthropic-ai/sdk@0",
+    "ai": "npm:ai@7",
+    "ai/test": "npm:ai@7/test",
+    "@ai-sdk/anthropic": "npm:@ai-sdk/anthropic@4",
+    "@ai-sdk/openai": "npm:@ai-sdk/openai@4",
+    "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@1/",
+    "playwright": "npm:playwright@1",
+    "typescript": "npm:typescript@5",
+    "drizzle-orm": "npm:drizzle-orm@0",
+    "drizzle-kit": "npm:drizzle-kit@0",
+    "@electric-sql/pglite": "npm:@electric-sql/pglite@0.4.5",
+    "postgres": "npm:postgres@3",
+    "ajv": "npm:ajv@8",
+    "ajv/standalone": "npm:ajv@8/dist/standalone/index.js",
+    "@std/assert": "jsr:@std/assert@1"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "lint": {
+    "exclude": [
+      "whitepaper/build",
+      "spike"
+    ],
+    "rules": {
+      "exclude": [
+        "no-window",
+        "no-window-prefix",
+        "require-await"
+      ]
+    }
+  }
+}

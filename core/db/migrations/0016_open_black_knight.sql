@@ -1,0 +1,1 @@
+ALTER TABLE "_genie_schema_migrations" ADD COLUMN "changeset_id" text;
