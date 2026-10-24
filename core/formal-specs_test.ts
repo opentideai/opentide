@@ -15,6 +15,7 @@ import { verifyFormalSpecMarker } from "./qc.ts";
 import { Kernel } from "./registries.ts";
 import { currentFingerprints, fingerprintScope } from "./fingerprint.ts";
 import { runFormalSpecVerification } from "./tools/dispatch.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 const SCOPE = "handler:processOrder";
 
@@ -748,7 +749,7 @@ async function withManager(
   fn: (mgr: ChangesetManager) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-formal-",
   });
   try {
@@ -762,7 +763,7 @@ async function withProjectKernel(
   fn: (kernel: Kernel) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-formal-kernel-",
   });
   const db = await Database.create({ driver: "pglite" });

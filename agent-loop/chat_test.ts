@@ -47,6 +47,7 @@ import {
   setKernelSettings,
   setRecommendedModels,
 } from "../core/config.ts";
+import { TEST_TMP_DIR } from "../core/test-home_test.ts";
 
 Deno.test("buildUserContentBlocks surfaces image attachments as visual context", () => {
   const blocks = buildUserContentBlocks("What is happening on screen?", [{
@@ -786,7 +787,7 @@ Deno.test("commitStep lands a real step checkpoint and swallows NOTHING_TO_COMMI
   const db = await Database.create({ driver: "pglite" });
   const kernel = new Kernel(db);
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-checkpoint-test-",
   });
   try {

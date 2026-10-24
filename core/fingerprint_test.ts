@@ -8,12 +8,13 @@ import {
   hashSource,
   resolveScopeSource,
 } from "./fingerprint.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function withKernel(
   fn: (kernel: Kernel) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-fingerprint-",
   });
   const db = await Database.create({ driver: "pglite" });

@@ -6,6 +6,7 @@ import { diagnoseDynamicSchemaRestore } from "./dynamic-schema-restore-diagnosti
 import { doctorProject } from "./project-doctor.ts";
 import { acquireProjectLock } from "./project-lock.ts";
 import { getProjectPaths } from "./project-manager.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
@@ -46,7 +47,7 @@ async function withProject(
   fn: (projectDir: string) => Promise<void> | void,
 ): Promise<void> {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-doctor-",
   });
   try {

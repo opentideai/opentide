@@ -85,7 +85,7 @@ import {
   type ImportClassifierResult,
 } from "./codebase/index.ts";
 import type { ColumnDef, MigrationEntry, SchemaEntry } from "./types.ts";
-import { isolateHome } from "./test-home_test.ts";
+import { isolateHome, TEST_TMP_DIR } from "./test-home_test.ts";
 
 // Chat only initialises with a provider key; these tests use a fake chat.
 isolateHome({ anthropicApiKey: "sk-ant-test-not-a-real-key" });
@@ -462,7 +462,7 @@ Deno.test("isAllowedWebSocketRequest rejects unparseable origin", () => {
 
 Deno.test("POST /api/language/ai-completions records inline_completion usage", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-inline-completion-",
   });
   const home = await Deno.makeTempDir({ prefix: "genie-inline-home-" });
@@ -763,7 +763,7 @@ Deno.test("POST /api/config/models/pricing/refresh defaults to report-only", asy
 
 Deno.test("POST /api/config/models/pricing/refresh records pricing usage when project ledger is available", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-pricing-refresh-project-",
   });
   const home = await Deno.makeTempDir({
@@ -971,7 +971,7 @@ Deno.test({
     const db = await Database.create({ driver: "pglite" });
     const kernel = new Kernel(db, { composition: testStoreComposition() });
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-usage-created-at-",
     });
     const createdAt = "2026-09-05T16:25:15.663Z";
@@ -1046,7 +1046,7 @@ Deno.test({
   name: "GET /api/codebase serves the assisted classification merged graph",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-codebase-assist-",
     });
     const paths = getProjectPaths(projectDir);
@@ -1431,11 +1431,11 @@ async function withResetDbProject(
 ): Promise<void> {
   const prevHome = Deno.env.get("HOME");
   const home = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-reset-db-home-",
   });
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-reset-db-project-",
   });
   let projectPath = "";
@@ -1639,7 +1639,7 @@ Deno.test({
     "recovery chat works without an open project while normal chat remains project-gated",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-recovery-ws-",
     });
     writeFileSync(
@@ -1830,7 +1830,7 @@ Deno.test({
   name: "projects duplicate: current project returns 409",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-project-duplicate-current-",
     });
     const current = createProject(baseDir, "Current Duplicate App");
@@ -1861,7 +1861,7 @@ Deno.test({
   name: "projects rename: current project returns 409",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-project-rename-current-",
     });
     const current = createProject(baseDir, "Current Rename App");
@@ -1894,7 +1894,7 @@ Deno.test({
   name: "projects duplicate: non-current project returns 201 and path/name",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-project-duplicate-route-",
     });
     const current = createProject(baseDir, "Current Route App");
@@ -1932,7 +1932,7 @@ Deno.test({
   name: "projects rename: non-current project returns 200 and path/name",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-project-rename-route-",
     });
     const current = createProject(baseDir, "Current Route Rename App");
@@ -1991,7 +1991,7 @@ Deno.test({
     "projects duplicate/rename: missing project or destination collision returns 409",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-project-route-conflict-",
     });
     const source = createProject(baseDir, "Conflict Source App");
@@ -2551,7 +2551,7 @@ Deno.test({
     "project import restores committed dynamic schemas when data directory is absent",
   fn: async () => {
     const parentDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-import-schema-restore-",
     });
     const projectDir = join(parentDir, "cloned-docs-app");
@@ -2693,7 +2693,7 @@ Deno.test({
     "preview-port endpoints expose boot fallback, persist prefs, and probe availability",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-preview-port-",
     });
     const paths = getProjectPaths(projectDir);
@@ -2859,7 +2859,7 @@ Deno.test({
     "GET /api/codebase serves null before indexing and the cached graph after",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-codebase-",
     });
     const paths = getProjectPaths(projectDir);
@@ -2947,7 +2947,7 @@ Deno.test({
     "GET /api/documents surfaces the read-only document store (list, detail, refs, content)",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-",
     });
     const paths = getProjectPaths(projectDir);
@@ -3216,7 +3216,7 @@ Deno.test({
     "POST /api/documents/:id/pin toggles Tier-2 residency and validates its inputs",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-pin-",
     });
     const paths = getProjectPaths(projectDir);
@@ -3364,7 +3364,7 @@ Deno.test({
     "POST /api/documents creates a text document (user path) and validates its inputs",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-create-",
     });
     const paths = getProjectPaths(projectDir);
@@ -3545,7 +3545,7 @@ Deno.test({
     "PUT /api/documents/:id writes a new immutable version (idempotent) and validates its inputs",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-update-",
     });
     const paths = getProjectPaths(projectDir);
@@ -3692,7 +3692,7 @@ Deno.test({
     "DELETE /api/documents/:id archives (soft-deletes) a document — idempotent tombstone, versions preserved",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-archive-",
     });
     const paths = getProjectPaths(projectDir);
@@ -3821,7 +3821,7 @@ Deno.test({
     "POST /api/documents/:id/scope promotes session→project (metadata-only), idempotent, rejects demotion/tombstone",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-promote-",
     });
     const paths = getProjectPaths(projectDir);
@@ -3957,7 +3957,7 @@ Deno.test({
     "GET /api/documents/:id/raw streams bytes inline for images, downloads unsafe kinds, pins versions",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-raw-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4111,7 +4111,7 @@ Deno.test({
     "POST /api/documents (multipart) uploads a binary doc, closing the Slice-8 read loop, and validates it (Slice 9)",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-documents-upload-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4318,7 +4318,7 @@ Deno.test({
     "dev-server control: status is idle and start is refused for a registry-native project",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-devserver-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4407,7 +4407,7 @@ Deno.test({
     "dev-server control: start spawns a source-backed dev server the app preview proxies to, then stop clears it",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-devserver-e2e-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4537,7 +4537,7 @@ Deno.test({
     "source-edit control: apply writes disk + re-indexes the graph; undo restores bytes; registry-native is refused",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-source-edit-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4697,7 +4697,7 @@ Deno.test({
   name: "source-edit control: a registry-native project refuses file edits",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-source-edit-native-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4772,7 +4772,7 @@ Deno.test({
     "project-files control: registry-native project previews and applies text files",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-project-files-native-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4867,7 +4867,7 @@ Deno.test({
     "UI metadata endpoints write local state and preserve legacy history meta",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-ui-state-",
     });
     const paths = getProjectPaths(projectDir);
@@ -4962,7 +4962,7 @@ Deno.test({
   name: "chat draft endpoints persist per-session local state",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-chat-drafts-",
     });
     const paths = getProjectPaths(projectDir);
@@ -5075,7 +5075,7 @@ Deno.test({
   name: "chat drafts preserve unrelated local-state keys and cap stored text",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-chat-draft-state-",
     });
     const paths = getProjectPaths(projectDir);
@@ -6627,7 +6627,7 @@ Deno.test({
   name: "project doctor and data fixture endpoints expose project workflow",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-control-project-",
     });
     mkdirSync(join(projectDir, ".opentide"), { recursive: true });
@@ -6788,7 +6788,7 @@ Deno.test({
   fn: async () => {
     if (!gitAvailable()) return;
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-control-git-",
     });
     mkdirSync(join(projectDir, ".opentide"), { recursive: true });
@@ -7789,7 +7789,7 @@ Deno.test({
     "commands control: list and run are refused for a registry-native project",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-commands-gate-",
     });
     const paths = getProjectPaths(projectDir);
@@ -7858,7 +7858,7 @@ Deno.test({
     "commands control: source-backed lists, runs, records verification, selects related tests, cancels",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "genie-control-commands-e2e-",
     });
     const paths = getProjectPaths(projectDir);

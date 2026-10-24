@@ -8,6 +8,7 @@ import type {
   StoredMessage,
   TurnUsage,
 } from "./types.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 // Parity tests run the SAME sequence of operations against a file-backed and a
 // DB-backed SessionManager and assert observable results match. Volatile fields
@@ -84,7 +85,7 @@ async function onBoth<T>(
   fn: (mgr: SessionManager) => Promise<T>,
 ): Promise<{ file: T; db: T }> {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-parity-",
   });
   const conn = await createDatabase({ driver: "pglite" });

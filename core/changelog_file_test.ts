@@ -2,12 +2,13 @@ import { assertEquals } from "@std/assert";
 import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Changelog } from "./changelog.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function withFileLog(
   fn: (log: Changelog, historyDir: string) => Promise<void>,
 ): Promise<void> {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-changelog-",
   });
   const log = new Changelog(historyDir);

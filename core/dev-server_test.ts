@@ -12,7 +12,7 @@ import {
   writeProjectMode,
 } from "./project-manager.ts";
 import { createEmptyCodebaseGraph } from "./codebase/types.ts";
-import { isolateHome } from "./test-home_test.ts";
+import { isolateHome, TEST_TMP_DIR } from "./test-home_test.ts";
 
 isolateHome();
 
@@ -86,7 +86,7 @@ Deno.test({
     "DevServerManager: start detects the port, proxies, serves, and stops clean",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-devserver-run-",
     });
     const { kernel, db } = await makeKernel();
@@ -142,7 +142,7 @@ Deno.test({
     "resolveDevRunConfig: registry-native never resolves a command (mode gating)",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-devserver-gate-",
     });
     const { kernel, db } = await makeKernel();
@@ -202,7 +202,7 @@ Deno.test({
   name: "resolveDevRunConfig: source-backed with no command is an error",
   fn: async () => {
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-devserver-nocmd-",
     });
     const { kernel, db } = await makeKernel();

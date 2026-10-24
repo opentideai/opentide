@@ -16,10 +16,11 @@ import {
   type SourceFileSnapshot,
 } from "./codebase/source-edit.ts";
 import { MAX_FILE_CONTENT_BYTES } from "./config.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function tempProject(): Promise<string> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-project-files-",
   });
   mkdirSync(join(dir, "docs"), { recursive: true });
@@ -173,7 +174,7 @@ Deno.test("project text files refuse traversal, protected files, ignored dirs, a
 Deno.test("project text files refuse symlink escapes", async () => {
   const root = await tempProject();
   const outside = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-project-files-out-",
   });
   try {

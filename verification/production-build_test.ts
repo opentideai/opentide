@@ -394,7 +394,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const report = await runProductionBuild(kernel, projectDir);
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         // The default targets (deno-source only) still run the five core gates in
         // order, then append node/binary as trailing skip rows and the trailing
         // route_parity skip (only deno-source probed → nothing to compare).
@@ -489,7 +489,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const report = await runProductionBuild(kernel, projectDir);
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         assertEquals(gateNames(report.gates), [
           GATE_MANIFEST,
           GATE_DETERMINISM,
@@ -572,7 +572,7 @@ Deno.test({
         await seedCommittedLock(kernel, projectDir);
         const report = await runProductionBuild(kernel, projectDir);
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         // The lock gate ran (not skipped) between type_check and app_smoke.
         const lock = report.gates[3]!;
         assertEquals(lock.gate, GATE_DEPENDENCY_LOCK);
@@ -677,7 +677,7 @@ Deno.test({
           targets,
         );
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         assertEquals(gateNames(report.gates), [
           GATE_MANIFEST,
           GATE_DETERMINISM,
@@ -737,7 +737,7 @@ Deno.test({
           targets,
         );
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         // node was not selected → both its gates skip; binary was → it runs.
         const nodeLock = report.gates[6]!;
         assertEquals(nodeLock.gate, GATE_NODE_DEPENDENCY_LOCK);
@@ -793,7 +793,7 @@ Deno.test({
           targets,
         );
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         // node_dependency_lock ran (not skipped) and passed, before node_smoke.
         const nodeLock = report.gates[6]!;
         assertEquals(nodeLock.gate, GATE_NODE_DEPENDENCY_LOCK);
@@ -942,7 +942,11 @@ Deno.test({
               targets,
             );
 
-            assertEquals(report.ok, true);
+            assertEquals(
+              report.ok,
+              true,
+              JSON.stringify(report).slice(0, 4000),
+            );
             const nodeLock = report.gates[6]!;
             assertEquals(nodeLock.gate, GATE_NODE_DEPENDENCY_LOCK);
             assertEquals(nodeLock.status, "passed");
@@ -1064,7 +1068,7 @@ Deno.test("runProductionBuild skips (not fails) a selected node target whose too
       );
 
       // A missing toolchain is a clean skip, so the whole build still passes.
-      assertEquals(report.ok, true);
+      assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
       assertEquals(report.gates.length, 10);
 
       // Both Node-scoped gates were selected but the toolchain is absent → each is
@@ -1119,7 +1123,7 @@ Deno.test("runProductionBuild checks selection before the toolchain probe for no
         () => Promise.reject(new Error("probe must not run")),
       );
 
-      assertEquals(report.ok, true);
+      assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
       // Both Node-scoped gates skip for non-selection, never consulting the
       // (throwing) probe — each checks selection FIRST. node_dependency_lock is the
       // first to face the choice, so its clean skip proves the ordering too.
@@ -1383,7 +1387,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const report = await runProductionBuild(kernel, projectDir);
 
-        assertEquals(report.ok, true);
+        assertEquals(report.ok, true, JSON.stringify(report).slice(0, 4000));
         assertEquals(report.artifact !== undefined, true);
         assertEquals(report.routeSmoke?.status, "warning");
         assertEquals(report.routeSmoke?.routesProbed, 1);
@@ -1451,7 +1455,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const result = await runDenoSmokeGate(kernel, projectDir);
 
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           // openapi.json is emitted (schema-bearing routes), so it is checked.
@@ -1523,7 +1527,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const result = await runNodeSmokeGate(kernel, projectDir);
 
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           assertEquals(result.data.openApiChecked, true);
@@ -1554,7 +1558,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const result = await runNodeSmokeGate(kernel, projectDir);
 
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           // No openapi.json in the Node artifact → the OpenAPI check was waived.
@@ -1623,7 +1627,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const result = await runBinarySmokeGate(kernel, projectDir);
 
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           assertEquals(result.data.openApiChecked, true);
@@ -1656,7 +1660,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const result = await runBinarySmokeGate(kernel, projectDir);
 
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           // No openapi.json in the export → the OpenAPI check was waived.
@@ -1935,7 +1939,7 @@ Deno.test({
         assertEquals(typeCheck.ok, true);
 
         const result = await runDenoSmokeGate(kernel, projectDir);
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           assertEquals(result.data.routeSmoke.status, "passed");
@@ -1974,7 +1978,7 @@ Deno.test({
       await withProjectDir(async (projectDir) => {
         const result = await runNodeSmokeGate(kernel, projectDir);
 
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.healthStatus, 200);
           assertEquals(result.data.versionChecked, true);
@@ -2063,7 +2067,7 @@ Deno.test({
       await withUserHono3(kernel, async () => {
         await withProjectDir(async (projectDir) => {
           const result = await runDenoSmokeGate(kernel, projectDir);
-          assertEquals(result.ok, true);
+          assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
           if (result.ok) {
             assertEquals(result.data.healthStatus, 200);
             assertEquals(result.data.routeSmoke.status, "passed");
@@ -2086,7 +2090,7 @@ Deno.test({
       await withUserHono3(kernel, async () => {
         await withProjectDir(async (projectDir) => {
           const result = await runNodeSmokeGate(kernel, projectDir);
-          assertEquals(result.ok, true);
+          assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
           if (result.ok) {
             assertEquals(result.data.healthStatus, 200);
             assertEquals(result.data.routeSmoke.status, "passed");
@@ -2108,7 +2112,7 @@ Deno.test({
       populateRejectsBadBody(kernel);
       await withProjectDir(async (projectDir) => {
         const result = await runNodeSmokeGate(kernel, projectDir);
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.routesProbed, 1);
           assertEquals(result.data.skipped.length, 0);
@@ -2132,7 +2136,7 @@ Deno.test({
       populateRejectsBadBody(kernel);
       await withProjectDir(async (projectDir) => {
         const result = await runBinarySmokeGate(kernel, projectDir);
-        assertEquals(result.ok, true);
+        assertEquals(result.ok, true, JSON.stringify(result).slice(0, 4000));
         if (result.ok) {
           assertEquals(result.data.routesProbed, 1);
           assertEquals(result.data.skipped.length, 0);

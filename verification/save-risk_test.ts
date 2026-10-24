@@ -5,12 +5,13 @@ import { Kernel } from "../core/registries.ts";
 import { testStoreComposition } from "./test-stores.ts";
 import type { ChangesetPlan, FormalSpecEnforcement } from "../core/types.ts";
 import { defaultSaveRiskPolicy } from "./save-risk.ts";
+import { TEST_TMP_DIR } from "../core/test-home_test.ts";
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 
 async function withKernel(fn: (kernel: Kernel) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-save-risk-",
   });
   const db = await Database.create({ driver: "pglite" });

@@ -7,10 +7,11 @@ import {
   recoveryToolNames,
 } from "./recovery-chat.ts";
 import { getProjectPaths } from "./project-manager.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function withProject(fn: (projectDir: string) => Promise<void>) {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-recovery-chat-",
   });
   try {

@@ -40,7 +40,7 @@ import {
 } from "./project-manager.ts";
 import { APP_PORT_AUTO } from "./config.ts";
 import { SecretsStore } from "./secrets.ts";
-import { isolateHome } from "./test-home_test.ts";
+import { isolateHome, TEST_TMP_DIR } from "./test-home_test.ts";
 
 isolateHome();
 
@@ -77,7 +77,7 @@ function gitAvailable(): boolean {
 
 Deno.test("createProject writes source-control friendly project scaffold", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-project-scaffold-",
   });
 
@@ -151,7 +151,7 @@ Deno.test("createProject writes source-control friendly project scaffold", async
 // project directly into the container instead of a subdirectory.
 Deno.test("createProject: a fully non-ASCII name gets a real subdirectory (F-02)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-nonascii-",
   });
   const created: string[] = [];
@@ -179,7 +179,7 @@ Deno.test("createProject: a fully non-ASCII name gets a real subdirectory (F-02)
 // long names are length-capped.
 Deno.test("createProject: slug transliterates accents and caps length (F-01)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-slug-",
   });
   const created: string[] = [];
@@ -200,7 +200,7 @@ Deno.test("createProject: slug transliterates accents and caps length (F-01)", a
 
 Deno.test("duplicateProject copies hidden files, git data, local data, and caches", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-duplicate-full-",
   });
   let duplicatePath = "";
@@ -269,7 +269,7 @@ Deno.test("duplicateProject copies hidden files, git data, local data, and cache
 
 Deno.test("duplicateProject increments Copy 1 and Copy 2 on collisions", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-duplicate-increment-",
   });
   const created: string[] = [];
@@ -294,7 +294,7 @@ Deno.test("duplicateProject increments Copy 1 and Copy 2 on collisions", async (
 
 Deno.test("duplicateProject updates only copied manifest identity fields", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-duplicate-manifest-",
   });
   let duplicatePath = "";
@@ -340,7 +340,7 @@ Deno.test("duplicateProject updates only copied manifest identity fields", async
 
 Deno.test("duplicateProject leaves the source project unchanged", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-duplicate-source-",
   });
   let duplicatePath = "";
@@ -374,11 +374,11 @@ Deno.test("duplicateProject leaves the source project unchanged", async () => {
 Deno.test("duplicateProject removes copied folder when registry write fails", async () => {
   const oldHome = Deno.env.get("HOME");
   const home = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-duplicate-rollback-home-",
   });
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-duplicate-rollback-",
   });
   const tideDir = join(home, ".config", "opentide");
@@ -415,7 +415,7 @@ Deno.test("duplicateProject removes copied folder when registry write fails", as
 
 Deno.test("renameProject updates manifest and registry path/name", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-rename-basic-",
   });
   let renamedPath = "";
@@ -452,7 +452,7 @@ Deno.test("renameProject updates manifest and registry path/name", async () => {
 
 Deno.test("renameProject preserves manifest keys and registry lastOpenedAt", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-rename-preserve-",
   });
   let renamedPath = "";
@@ -489,7 +489,7 @@ Deno.test("renameProject preserves manifest keys and registry lastOpenedAt", asy
 
 Deno.test("renameProject rejects invalid folder names without changing source", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-rename-invalid-",
   });
   try {
@@ -513,7 +513,7 @@ Deno.test("renameProject rejects invalid folder names without changing source", 
 
 Deno.test("renameProject rejects destination collision without moving or rewriting source", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-rename-collision-",
   });
   try {
@@ -550,7 +550,7 @@ Deno.test("renameProject rejects destination collision without moving or rewriti
 
 Deno.test("renameProject rolls back when manifest write fails after folder move", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-rename-rollback-",
   });
   let sourcePath = "";
@@ -594,7 +594,7 @@ Deno.test("renameProject rolls back when manifest write fails after folder move"
 
 Deno.test("SecretsStore.moveProjectSecrets moves stored secrets between path identities", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-secrets-move-",
   });
   const oldPath = join(baseDir, "old-project");
@@ -626,7 +626,7 @@ Deno.test("SecretsStore.moveProjectSecrets moves stored secrets between path ide
 
 Deno.test("renameProject migrates secrets and external backups", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-rename-resources-",
   });
   let oldPath = "";
@@ -695,7 +695,7 @@ Deno.test("renameProject migrates secrets and external backups", async () => {
 // writes must be atomic (no stray .tmp, target fully written).
 Deno.test("registry: corrupt file degrades to empty and is quarantined (F-09)", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-registry-",
   });
   try {
@@ -732,7 +732,7 @@ Deno.test("registry: corrupt file degrades to empty and is quarantined (F-09)", 
 // SyntaxError. Throws before the registry is touched.
 Deno.test("openProject: corrupt manifest throws a clear error (F-09)", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-manifest-",
   });
   try {
@@ -752,7 +752,7 @@ Deno.test("openProject: corrupt manifest throws a clear error (F-09)", async () 
 
 Deno.test("importProject: adopts an existing directory in place as source-backed", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-import-",
   });
   try {
@@ -787,7 +787,7 @@ Deno.test("importProject: adopts an existing directory in place as source-backed
 
 Deno.test("importProject: defaults the name to the folder and never nests", async () => {
   const parent = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-import-base-",
   });
   const projectDir = join(parent, "my-existing-app");
@@ -811,7 +811,7 @@ Deno.test("importProject: defaults the name to the folder and never nests", asyn
 
 Deno.test("importProject: re-adopting a registry-native project flips it to source-backed", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-import-flip-",
   });
   try {
@@ -833,7 +833,7 @@ Deno.test("importProject: re-adopting a registry-native project flips it to sour
 // write → read, and the write is atomic (no stray .tmp on success).
 Deno.test("previewPort: write/read round-trips auto and a fixed port (A2)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-preview-roundtrip-",
   });
   try {
@@ -864,7 +864,7 @@ Deno.test("previewPort: write/read round-trips auto and a fixed port (A2)", asyn
 // and any unknown/future key must survive unclobbered.
 Deno.test("previewPort: write preserves other manifest keys (A2)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-preview-preserve-",
   });
   try {
@@ -894,7 +894,7 @@ Deno.test("previewPort: write preserves other manifest keys (A2)", async () => {
 // error and the manifest is left byte-for-byte unchanged.
 Deno.test("previewPort: invalid fixed port rejected, manifest unchanged (A2)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-preview-invalid-",
   });
   try {
@@ -923,7 +923,7 @@ Deno.test("previewPort: invalid fixed port rejected, manifest unchanged (A2)", a
 // reads back as the default so existing projects are unaffected.
 Deno.test("projectMode: new projects default to registry-native and round-trip", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-mode-roundtrip-",
   });
   try {
@@ -957,7 +957,7 @@ Deno.test("projectMode: new projects default to registry-native and round-trip",
 // the default, and writing mode preserves every other key.
 Deno.test("projectMode: absent field defaults; write preserves other keys", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-mode-legacy-",
   });
   try {
@@ -996,7 +996,7 @@ Deno.test("projectMode: absent field defaults; write preserves other keys", asyn
 // as auto — never throws.
 Deno.test("previewPort: corrupt/missing field reads back as auto (A2)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-preview-corrupt-",
   });
   try {
@@ -1040,7 +1040,7 @@ Deno.test("previewPort: corrupt/missing field reads back as auto (A2)", async ()
 // bloat the manifest with a redundant "auto", and openProject must still work.
 Deno.test("previewPort: new manifest omits the field, defaults to auto (A2)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-preview-default-",
   });
   try {
@@ -1078,7 +1078,7 @@ Deno.test("resolvePreviewPort encodes fixed > flag > auto precedence (A2)", () =
 
 Deno.test("runConfig: absent field reads null; write/read round-trips (Slice 3)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-runconfig-roundtrip-",
   });
   try {
@@ -1116,7 +1116,7 @@ Deno.test("runConfig: absent field reads null; write/read round-trips (Slice 3)"
 
 Deno.test("runConfig: write preserves other manifest keys (Slice 3)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-runconfig-preserve-",
   });
   try {
@@ -1148,7 +1148,7 @@ Deno.test("runConfig: write preserves other manifest keys (Slice 3)", async () =
 
 Deno.test("runConfig: invalid config rejected, manifest untouched (Slice 3)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-runconfig-invalid-",
   });
   try {
@@ -1179,7 +1179,7 @@ Deno.test("runConfig: invalid config rejected, manifest untouched (Slice 3)", as
 
 Deno.test("runConfig: corrupt/ill-typed field reads back as null (Slice 3)", async () => {
   const baseDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-runconfig-corrupt-",
   });
   try {

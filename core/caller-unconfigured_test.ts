@@ -8,6 +8,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 function gitAvailable(): boolean {
   try {
@@ -38,7 +39,7 @@ Deno.test("D9 caller audit: git-message falls back (no provider call) when the m
 
   const home = await Deno.makeTempDir({ prefix: "genie-unconfigured-caller-" });
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-unconfigured-git-",
   });
   const oldHome = Deno.env.get("HOME");

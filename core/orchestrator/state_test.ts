@@ -9,10 +9,11 @@ import {
   readOrchestratorState,
   writeOrchestratorState,
 } from "./state.ts";
+import { TEST_TMP_DIR } from "../test-home_test.ts";
 
 async function withTempDir(fn: (dir: string) => void): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "orchestrator-state-",
   });
   try {

@@ -10,6 +10,7 @@ import {
   PROJECT_SCOPE,
 } from "../core/fingerprint.ts";
 import { buildVerificationOverview } from "./verification-overview.ts";
+import { TEST_TMP_DIR } from "../core/test-home_test.ts";
 
 const HANDLER_SOURCE_A =
   "export const marker = 'v1'; export default () => new Response();";
@@ -20,7 +21,7 @@ async function withKernel(
   fn: (kernel: Kernel) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-overview-",
   });
   const db = await Database.create({ driver: "pglite" });

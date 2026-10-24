@@ -2,10 +2,11 @@ import { assertEquals } from "@std/assert";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { LocalStateStore } from "./local-state.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 Deno.test("local state stores UI metadata in an ignored cache file", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-local-state-",
   });
   const path = join(dir, ".opentide", "caches", "local-state.json");

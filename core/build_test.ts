@@ -1130,7 +1130,8 @@ Deno.test({
         cwd: outDir,
         env: { PORT: String(port) },
         stdout: "null",
-        stderr: "null",
+        // A boot failure only shows up here; the fetch just times out.
+        stderr: "inherit",
       }).spawn();
 
       try {

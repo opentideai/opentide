@@ -8,12 +8,13 @@ import {
   importDataFixture,
   resetDataTables,
 } from "./data-fixtures.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function withProjectDb(
   fn: (db: Database, projectDir: string) => Promise<void>,
 ): Promise<void> {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-fixtures-",
   });
   const db = await Database.create({
@@ -137,7 +138,7 @@ Deno.test("deleteDataFixture validates names before removal", () => {
 
 Deno.test("schema state plus fixture rows rebuild local data", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-fixtures-rebuild-",
   });
   const schemaDir = join(projectDir, ".opentide", "state", "schemas");

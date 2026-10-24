@@ -38,6 +38,10 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # Node builds declare engines.node >=24; the runners default to older.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - name: Git identity (scaffolded projects make a first commit)
         run: |
           git config --global user.name "OpenTide CI"

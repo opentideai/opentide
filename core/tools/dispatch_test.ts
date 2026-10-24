@@ -51,6 +51,7 @@ import {
   type ImportClassifierRequest,
   type ImportClassifierResult,
 } from "../codebase/index.ts";
+import { TEST_TMP_DIR } from "../test-home_test.ts";
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 
@@ -375,7 +376,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-doctor-",
       });
       kernel.projectDir = projectDir;
@@ -405,7 +406,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-fixtures-",
       });
       kernel.projectDir = projectDir;
@@ -1637,7 +1638,7 @@ Deno.test({
       try {
         await withKernel(async (kernel) => {
           const projectDir = await Deno.makeTempDir({
-            dir: "/private/tmp",
+            dir: TEST_TMP_DIR,
             prefix: "genie-dispatch-git-",
           });
           try {
@@ -2160,7 +2161,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-export-check-",
       });
       kernel.projectDir = projectDir;
@@ -4460,7 +4461,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-evidence-",
       });
       kernel.projectDir = projectDir;
@@ -4527,7 +4528,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-evidence-idem-",
       });
       kernel.projectDir = projectDir;
@@ -4607,7 +4608,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-evidence-mint-",
       });
       kernel.projectDir = projectDir;
@@ -4712,7 +4713,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-runevi-",
       });
       kernel.projectDir = projectDir;
@@ -4803,7 +4804,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-runevi-idem-",
       });
       kernel.projectDir = projectDir;
@@ -4909,7 +4910,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-runevi-e2e-",
       });
       kernel.projectDir = projectDir;
@@ -6073,7 +6074,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-export-out-",
       });
       kernel.projectDir = projectDir;
@@ -6154,7 +6155,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const projectDir = await Deno.makeTempDir({
-        dir: "/private/tmp",
+        dir: TEST_TMP_DIR,
         prefix: "tideide-dispatch-export-guard-",
       });
       kernel.projectDir = projectDir;

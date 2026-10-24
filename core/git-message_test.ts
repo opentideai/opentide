@@ -12,6 +12,7 @@ import {
   setUtilityModelUsageRecorderForTest,
 } from "./utility-model.ts";
 import type { RecordModelUsageInput } from "./types.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 function seedModelCache(home: string, model: string, provider: string): void {
   const dir = join(home, ".config", "opentide");
@@ -56,7 +57,7 @@ function configureGitIdentity(dir: string): void {
 
 async function withTempProject<T>(fn: (dir: string) => Promise<T> | T) {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-git-message-test-",
   });
   try {

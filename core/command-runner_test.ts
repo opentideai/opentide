@@ -15,7 +15,7 @@ import {
   type ProjectCommand,
 } from "./codebase/types.ts";
 import { collectDescendantPids, delay } from "./process-tree.ts";
-import { isolateHome } from "./test-home_test.ts";
+import { isolateHome, TEST_TMP_DIR } from "./test-home_test.ts";
 
 isolateHome();
 
@@ -62,7 +62,7 @@ async function setup(command: string): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-command-runner-",
   });
   const db = await Database.create({ driver: "pglite" });
@@ -91,7 +91,7 @@ Deno.test({
   name: "resolveProjectCommand: mode gating, missing graph, and allow-list",
   fn: async () => {
     const dir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-command-resolve-",
     });
     const db = await Database.create({ driver: "pglite" });

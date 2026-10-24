@@ -7,6 +7,7 @@ import {
   type ChangesetPlan,
 } from "../verification/changesets.ts";
 import { Changelog } from "./changelog.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 const PLAN: ChangesetPlan = {
   summary: "Do work",
@@ -44,7 +45,7 @@ async function withHistoryCopies(
   ) => Promise<void>,
 ): Promise<void> {
   const root = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-history-merge-",
   });
   const base = join(root, "base");

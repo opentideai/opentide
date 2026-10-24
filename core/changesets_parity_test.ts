@@ -7,6 +7,7 @@ import {
   ChangesetManager,
   type ChangesetPlan,
 } from "../verification/changesets.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 // Parity tests run the SAME sequence of operations against a file-backed and a
 // DB-backed ChangesetManager and assert observable results match. Volatile
@@ -121,7 +122,7 @@ async function onBoth<T>(
   fn: (mgr: ChangesetManager) => Promise<T>,
 ): Promise<{ file: T; db: T }> {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-parity-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -291,7 +292,7 @@ Deno.test("parity: amendPlan appends scope and resets to planning", async () => 
 
 Deno.test("parity: amendPlan rejects non in-progress statuses", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-amend-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -764,7 +765,7 @@ Deno.test("parity: completeStaleChangesets sweeps planning to abandoned", async 
 
 Deno.test("parity: complete from planning throws (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -791,7 +792,7 @@ Deno.test("parity: complete from planning throws (both backends)", async () => {
 
 Deno.test("parity: complete from approved throws (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -819,7 +820,7 @@ Deno.test("parity: complete from approved throws (both backends)", async () => {
 
 Deno.test("parity: complete without verification throws (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -848,7 +849,7 @@ Deno.test("parity: complete without verification throws (both backends)", async 
 
 Deno.test("parity: approve after abandon throws (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -876,7 +877,7 @@ Deno.test("parity: approve after abandon throws (both backends)", async () => {
 
 Deno.test("parity: updatePlan after approve throws (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -904,7 +905,7 @@ Deno.test("parity: updatePlan after approve throws (both backends)", async () =>
 
 Deno.test("parity: updateStep when not in_progress throws (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });
@@ -1067,7 +1068,7 @@ Deno.test("parity: pruneLedger keeps the newest N", async () => {
 
 Deno.test("parity: not-found operations throw (both backends)", async () => {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-cs-guard-",
   });
   const conn = await createDatabase({ driver: "pglite" });

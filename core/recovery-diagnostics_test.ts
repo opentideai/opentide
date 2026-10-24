@@ -8,6 +8,7 @@ import {
   recoveryInitialMessage,
 } from "./recovery-diagnostics.ts";
 import type { PersistedState } from "./persistence.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 function emptyState(): PersistedState {
   return {
@@ -53,11 +54,11 @@ async function withRecoveryProject(
 ): Promise<void> {
   const prevHome = Deno.env.get("HOME");
   const home = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-recovery-home-",
   });
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-recovery-project-",
   });
   try {

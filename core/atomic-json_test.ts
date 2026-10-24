@@ -8,10 +8,11 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { readJsonQuarantine, writeJsonAtomic } from "./atomic-json.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function withTempDir(fn: (dir: string) => void): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "atomic-json-",
   });
   try {

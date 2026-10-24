@@ -1,6 +1,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { ReplSession } from "./terminal.ts";
 import type { Kernel } from "./registries.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 function stubRegistry() {
   return {
@@ -64,7 +65,7 @@ Deno.test("REPL ask shorthand awaits a bare ask call with trailing semicolon", a
 
 Deno.test("REPL shell command uses true shell semantics in cwd", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-shell-",
   });
   try {

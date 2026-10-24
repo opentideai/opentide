@@ -7,6 +7,7 @@ import {
   type RecentRecord,
   type TurnGroup,
 } from "./changelog.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 // DDL copied from kernel/db/changelog_test.ts so the DB-backed Changelog has the
 // same schema the production DB migrations create.
@@ -40,7 +41,7 @@ async function withBoth<T>(
   scenario: (log: Changelog) => Promise<T>,
 ): Promise<{ file: T; db: T }> {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-changelog-parity-",
   });
   const conn = await createDatabase({ driver: "pglite" });

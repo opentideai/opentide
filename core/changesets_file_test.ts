@@ -5,6 +5,7 @@ import {
   ChangesetManager,
   type ChangesetPlan,
 } from "../verification/changesets.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 const PLAN: ChangesetPlan = {
   summary: "Build the feature",
@@ -53,7 +54,7 @@ async function withFileChangesets(
   fn: (mgr: ChangesetManager, historyDir: string) => Promise<void>,
 ): Promise<void> {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-changesets-",
   });
   const mgr = new ChangesetManager(historyDir);

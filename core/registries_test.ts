@@ -25,6 +25,7 @@ Deno.test("isSafePathSegment rejects traversal and separators (F-08)", () => {
 });
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 Deno.test("AssetMap serialize/restore roundtrip for small assets", () => {
   const assets = new AssetMap();
@@ -117,7 +118,7 @@ Deno.test("ConfigMap rejects non-JSON-serializable values", () => {
 
 Deno.test("KernelLog persists entries and clear state", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-kernel-log-",
   });
   const filePath = join(dir, "logs.json");
@@ -154,7 +155,7 @@ Deno.test("KernelLog persists entries and clear state", async () => {
 
 Deno.test("KernelLog debounces log() writes and flushes on save()", async () => {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-kernel-log-debounce-",
   });
   const filePath = join(dir, "logs.json");

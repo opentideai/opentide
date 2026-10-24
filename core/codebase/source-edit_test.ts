@@ -15,10 +15,11 @@ import {
   writeSourceSnapshot,
 } from "./source-edit.ts";
 import { MAX_FILE_CONTENT_BYTES } from "../config.ts";
+import { TEST_TMP_DIR } from "../test-home_test.ts";
 
 async function tempProject(): Promise<string> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-source-edit-",
   });
   mkdirSync(join(dir, "src"), { recursive: true });
@@ -209,7 +210,7 @@ Deno.test("path escapes are refused (traversal, absolute, ignored dir)", async (
 Deno.test("a symlinked directory that escapes the root is refused", async () => {
   const root = await tempProject();
   const outside = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-source-edit-out-",
   });
   try {

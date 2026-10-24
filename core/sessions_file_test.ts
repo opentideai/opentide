@@ -3,12 +3,13 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { SessionManager } from "./sessions.ts";
 import type { TurnUsage } from "./types.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 async function withFileSessions(
   fn: (mgr: SessionManager, historyDir: string) => Promise<void>,
 ): Promise<void> {
   const historyDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-history-",
   });
   const mgr = new SessionManager(historyDir);

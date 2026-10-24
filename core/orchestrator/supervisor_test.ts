@@ -11,6 +11,7 @@ import {
   type SupervisorConfig,
 } from "./supervisor.ts";
 import { readOrchestratorState } from "./state.ts";
+import { TEST_TMP_DIR } from "../test-home_test.ts";
 
 // --- test doubles ----------------------------------------------------------
 
@@ -177,7 +178,7 @@ async function withTempState(
   fn: (statePath: string) => Promise<void>,
 ): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "orchestrator-sup-",
   });
   try {

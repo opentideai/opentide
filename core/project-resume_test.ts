@@ -9,7 +9,7 @@ import {
 } from "./project-manager.ts";
 import { loadProject, unloadProject } from "./project-loader.ts";
 import { compileHandler, initCompiler, stopCompiler } from "./compiler.ts";
-import { isolateHome } from "./test-home_test.ts";
+import { isolateHome, TEST_TMP_DIR } from "./test-home_test.ts";
 
 isolateHome();
 
@@ -21,7 +21,7 @@ Deno.test({
   fn: async () => {
     await initCompiler();
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-resume-",
     });
     const entry = createProject(baseDir, "Resume App");
@@ -172,7 +172,7 @@ Deno.test({
   fn: async () => {
     await initCompiler();
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-unload-",
     });
     const entry = createProject(baseDir, "Unload App");
@@ -198,7 +198,7 @@ Deno.test({
   fn: async () => {
     await initCompiler();
     const baseDir = await Deno.makeTempDir({
-      dir: "/private/tmp",
+      dir: TEST_TMP_DIR,
       prefix: "tideide-load-doctor-",
     });
     const entry = createProject(baseDir, "Load Doctor App");

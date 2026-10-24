@@ -13,6 +13,12 @@ import { mountAuditRoutes } from "../verification/audit-routes.ts";
 import type { RouteMounter } from "./route-mount.ts";
 import type { ChatRuntime } from "./chat-contract.ts";
 import type { ProjectContext } from "./project-loader.ts";
+import { isolateHome } from "./test-home_test.ts";
+
+// The control server builds the chat only when a provider key is configured,
+// so this file gets a throwaway HOME with a dummy one rather than relying on
+// the developer's real key (CI has none).
+isolateHome({ anthropicApiKey: "sk-ant-test-not-a-real-key" });
 
 async function makeProjectContext(): Promise<
   { ctx: ProjectContext; db: Database; dir: string }

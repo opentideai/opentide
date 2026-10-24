@@ -5,10 +5,11 @@ import { Database } from "../core/db.ts";
 import { Kernel } from "../core/registries.ts";
 import type { Attestation, ChangesetPlan } from "./changesets.ts";
 import { backfillVerificationLedger } from "./verification-ledger.ts";
+import { TEST_TMP_DIR } from "../core/test-home_test.ts";
 
 async function withKernel(fn: (kernel: Kernel) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-ledger-",
   });
   const db = await Database.create({ driver: "pglite" });

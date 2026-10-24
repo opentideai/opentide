@@ -17,6 +17,7 @@ import {
   gitSetRemote,
   gitStatus,
 } from "./git.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 function gitAvailable(): boolean {
   try {
@@ -44,7 +45,7 @@ function runGit(cwd: string, args: string[]): void {
 
 async function withTempProject<T>(fn: (dir: string) => Promise<T> | T) {
   const dir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "tideide-git-test-",
   });
   try {

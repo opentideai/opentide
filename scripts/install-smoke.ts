@@ -64,6 +64,8 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
+// Runs a command and returns its stdout. stderr is kept for the failure
+// message only: a first run prints dependency downloads there.
 async function run(
   command: string,
   args: string[],
@@ -77,10 +79,15 @@ async function run(
     stdout: "piped",
     stderr: "piped",
   }).output();
-  const text = new TextDecoder().decode(out.stdout) +
-    new TextDecoder().decode(out.stderr);
-  if (!out.success) fail(`${command} ${args.join(" ")}\n${text}`);
-  return text;
+  const stdout = new TextDecoder().decode(out.stdout);
+  if (!out.success) {
+    fail(
+      `${command} ${args.join(" ")}\n${stdout}${
+        new TextDecoder().decode(out.stderr)
+      }`,
+    );
+  }
+  return stdout;
 }
 
 function denoDir(): string {

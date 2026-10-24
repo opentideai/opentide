@@ -96,7 +96,8 @@ cd todo-export && deno task start
 
 You get an entry point, a router, the handlers with their request validation, a
 schema seed and generated API docs. `opentide build` makes a deployable build
-for Deno or Node. The flags are in [docs/opentide-cli.md](docs/opentide-cli.md).
+for Deno or Node (Node 24 or later). The flags are in
+[docs/opentide-cli.md](docs/opentide-cli.md).
 
 ## Good to know
 

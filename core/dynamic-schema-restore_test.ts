@@ -8,6 +8,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database, DynamicSchemaRestoreError, referencedTables } from "./db.ts";
 import type { ColumnDef, MigrationEntry, SchemaEntry } from "./types.ts";
+import { TEST_TMP_DIR } from "./test-home_test.ts";
 
 const emptyColumns: ColumnDef[] = [];
 
@@ -84,7 +85,7 @@ Deno.test("referencedTables normalizes PostgreSQL identifiers", () => {
 
 Deno.test("dynamic schema restore creates base tables before cross-table ALTER migrations", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-restore-",
   });
   const dataDir = join(projectDir, "data");
@@ -159,7 +160,7 @@ Deno.test("dynamic schema restore creates base tables before cross-table ALTER m
 
 Deno.test("dynamic schema restore rolls back base creates when post-base migration fails with context", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-restore-rollback-",
   });
   const dataDir = join(projectDir, "data");
@@ -216,7 +217,7 @@ Deno.test("dynamic schema restore rolls back base creates when post-base migrati
 
 Deno.test("dynamic schema restore uses single CREATE TABLE fallback without migration file", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-fallback-",
   });
   const dataDir = join(projectDir, "data");
@@ -246,7 +247,7 @@ Deno.test("dynamic schema restore uses single CREATE TABLE fallback without migr
 
 Deno.test("dynamic schema restore rejects multi-statement fallback without migration file", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-bad-fallback-",
   });
   const dataDir = join(projectDir, "data");
@@ -280,7 +281,7 @@ Deno.test("dynamic schema restore rejects multi-statement fallback without migra
 
 Deno.test("dynamic schema restore defers foreign keys for cyclic base table references", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-cycle-",
   });
   const dataDir = join(projectDir, "data");
@@ -360,7 +361,7 @@ Deno.test("dynamic schema restore defers foreign keys for cyclic base table refe
 
 Deno.test("dynamic schema restore defers cyclic base foreign keys with quoted identifiers", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-quoted-cycle-",
   });
   const dataDir = join(projectDir, "data");
@@ -435,7 +436,7 @@ Deno.test("dynamic schema restore defers cyclic base foreign keys with quoted id
 
 Deno.test("dynamic schema restore preserves implicit FK names for later migrations", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-cycle-drop-fk-",
   });
   const dataDir = join(projectDir, "data");
@@ -481,7 +482,7 @@ Deno.test("dynamic schema restore preserves implicit FK names for later migratio
 
 Deno.test("dynamic schema restore does not collide unnamed FKs with retained constraints", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-cycle-name-collision-",
   });
   const dataDir = join(projectDir, "data");
@@ -531,7 +532,7 @@ Deno.test("dynamic schema restore does not collide unnamed FKs with retained con
 
 Deno.test("dynamic schema restore rejects unsupported cyclic foreign-key syntax clearly", async () => {
   const projectDir = await Deno.makeTempDir({
-    dir: "/private/tmp",
+    dir: TEST_TMP_DIR,
     prefix: "genie-dynamic-schema-unsupported-cycle-",
   });
   const dataDir = join(projectDir, "data");
