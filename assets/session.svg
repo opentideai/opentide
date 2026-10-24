@@ -4,9 +4,9 @@
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; }
     .dim { fill: #64748b; }
     .txt { fill: #cbd5e1; }
-    .tool { fill: #7dd3fc; }
+    .tool { fill: #8EC9E8; }
     .ok { fill: #4ade80; }
-    .att { fill: #a5b4fc; }
+    .att { fill: #F2A03D; }
     .you { fill: #f8fafc; font-weight: 600; }
     .line { opacity: 0; animation: in 0.35s ease-out forwards; }
     @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -19,8 +19,8 @@
   </style>
   <defs>
     <linearGradient id="win" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0b1222"/>
-      <stop offset="1" stop-color="#060a14"/>
+      <stop offset="0" stop-color="#0e1836"/>
+      <stop offset="1" stop-color="#0a1230"/>
     </linearGradient>
   </defs>
 
@@ -49,9 +49,9 @@
     <g class="line l11"><text x="28" y="444"><tspan class="tool">● complete_changeset</tspan><tspan x="300" class="ok">✓ ready · completed · stateFlushed: true</tspan></text></g>
 
     <g class="line l12">
-      <rect x="28" y="476" width="944" height="52" rx="10" fill="#052e2b" stroke="#134e4a"/>
+      <rect x="28" y="476" width="944" height="52" rx="10" fill="#16294f" stroke="#2a4a7a"/>
       <text x="48" y="508"><tspan class="ok">✓</tspan><tspan x="72" class="txt">Todos API is live, tested and on disk. Export it any time:</tspan><tspan dx="10" class="tool">opentide export</tspan></text>
-      <rect x="940" y="494" width="10" height="20" fill="#5eead4" class="cursor"/>
+      <rect x="940" y="494" width="10" height="20" fill="#8EC9E8" class="cursor"/>
     </g>
   </g>
 </svg>

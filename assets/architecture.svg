@@ -7,19 +7,19 @@
   </style>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#050816"/>
-      <stop offset="1" stop-color="#072431"/>
+      <stop offset="0" stop-color="#0a1230"/>
+      <stop offset="1" stop-color="#14254f"/>
     </linearGradient>
     <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0c2a3d"/>
-      <stop offset="1" stop-color="#081a28"/>
+      <stop offset="0" stop-color="#132650"/>
+      <stop offset="1" stop-color="#0d1a3c"/>
     </linearGradient>
     <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5eead4"/>
-      <stop offset="1" stop-color="#818cf8"/>
+      <stop offset="0" stop-color="#8EC9E8"/>
+      <stop offset="1" stop-color="#F2A03D"/>
     </linearGradient>
     <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0 0 L10 5 L0 10 z" fill="#5eead4"/>
+      <path d="M0 0 L10 5 L0 10 z" fill="#8EC9E8"/>
     </marker>
     <pattern id="dots" width="26" height="26" patternUnits="userSpaceOnUse">
       <circle cx="2" cy="2" r="1.1" fill="#94a3b8" fill-opacity="0.1"/>
@@ -51,46 +51,46 @@
   </g>
 
   <!-- MCP links -->
-  <g fill="none" stroke="#5eead4" stroke-width="2" stroke-opacity="0.8">
+  <g fill="none" stroke="#8EC9E8" stroke-width="2" stroke-opacity="0.8">
     <path class="flow" d="M270 132 C 320 132, 330 250, 382 250" marker-end="url(#arrow)"/>
     <path class="flow" d="M270 214 C 320 214, 330 250, 382 250"/>
     <path class="flow" d="M270 296 C 320 296, 330 250, 382 250"/>
     <path class="flow" d="M270 378 C 320 378, 330 250, 382 250"/>
   </g>
-  <g class="mono" font-size="13" fill="#5eead4">
-    <rect x="290" y="84" width="72" height="24" rx="12" fill="#042f2e" stroke="#134e4a"/>
+  <g class="mono" font-size="13" fill="#8EC9E8">
+    <rect x="290" y="84" width="72" height="24" rx="12" fill="#16294f" stroke="#2a4a7a"/>
     <text x="326" y="101" text-anchor="middle">MCP</text>
   </g>
 
   <!-- Core -->
   <g transform="translate(390 64)">
     <rect width="440" height="392" rx="20" fill="url(#core)" stroke="url(#edge)" stroke-width="2"/>
-    <text x="28" y="48" class="mono" font-size="22" font-weight="700" fill="#5eead4">opentide serve</text>
+    <text x="28" y="48" class="mono" font-size="22" font-weight="700" fill="#8EC9E8">opentide serve</text>
     <text x="28" y="74" class="ui" font-size="14" fill="#94a3b8">one server per project · no model · no API key</text>
 
     <g class="ui" font-size="15">
       <g transform="translate(28 100)">
-        <rect width="384" height="58" rx="12" fill="#0b1222" stroke="#1e293b"/>
+        <rect width="384" height="58" rx="12" fill="#0e1836" stroke="#1e293b"/>
         <text x="18" y="25" font-weight="700" fill="#f1f5f9">Changesets</text>
         <text x="18" y="45" fill="#94a3b8" font-size="13">plan → build → verify → complete, one writer at a time</text>
       </g>
       <g transform="translate(28 168)">
-        <rect width="384" height="58" rx="12" fill="#0b1222" stroke="#1e293b"/>
+        <rect width="384" height="58" rx="12" fill="#0e1836" stroke="#1e293b"/>
         <text x="18" y="25" font-weight="700" fill="#f1f5f9">Verification gate</text>
         <text x="18" y="45" fill="#94a3b8" font-size="13">server-minted attestations; no evidence, no completion</text>
       </g>
       <g transform="translate(28 236)">
-        <rect width="384" height="58" rx="12" fill="#0b1222" stroke="#1e293b"/>
+        <rect width="384" height="58" rx="12" fill="#0e1836" stroke="#1e293b"/>
         <text x="18" y="25" font-weight="700" fill="#f1f5f9">Live registries</text>
         <text x="18" y="45" fill="#94a3b8" font-size="13">routes · handlers · schemas · templates · tests</text>
       </g>
       <g transform="translate(28 304)">
-        <rect width="186" height="58" rx="12" fill="#0b1222" stroke="#1e293b"/>
+        <rect width="186" height="58" rx="12" fill="#0e1836" stroke="#1e293b"/>
         <text x="18" y="25" font-weight="700" fill="#f1f5f9">Postgres</text>
         <text x="18" y="45" fill="#94a3b8" font-size="13">PGlite, or yours</text>
       </g>
       <g transform="translate(226 304)">
-        <rect width="186" height="58" rx="12" fill="#0b1222" stroke="#1e293b"/>
+        <rect width="186" height="58" rx="12" fill="#0e1836" stroke="#1e293b"/>
         <text x="18" y="25" font-weight="700" fill="#f1f5f9">Undo &amp; rewind</text>
         <text x="18" y="45" fill="#94a3b8" font-size="13">per change, per turn</text>
       </g>
@@ -98,7 +98,7 @@
   </g>
 
   <!-- Outputs -->
-  <g fill="none" stroke="#818cf8" stroke-width="2" stroke-opacity="0.85">
+  <g fill="none" stroke="#F2A03D" stroke-width="2" stroke-opacity="0.85">
     <path class="flow" d="M830 170 C 880 170, 880 150, 926 150" marker-end="url(#arrow)"/>
     <path class="flow" d="M830 350 C 880 350, 880 370, 926 370" marker-end="url(#arrow)"/>
   </g>
@@ -116,7 +116,7 @@
     <g transform="translate(934 318)">
       <rect width="210" height="104" rx="16" fill="#0f172a" stroke="#334155"/>
       <text x="22" y="38" font-size="18" font-weight="700" fill="#f1f5f9">Your app</text>
-      <text x="22" y="66" class="mono" font-size="14" fill="#a5b4fc">opentide export</text>
+      <text x="22" y="66" class="mono" font-size="14" fill="#F2A03D">opentide export</text>
       <text x="22" y="88" font-size="13" fill="#94a3b8">plain Deno or Node</text>
     </g>
   </g>
