@@ -271,8 +271,18 @@ See [docs/lsp-connect.md](lsp-connect.md).
 ## mcp — MCP server
 
 ```sh
-opentide mcp --project /path/to/project [--standalone | --http [--port N]]
+opentide mcp [--project /path/to/project] [--standalone | --http [--port N]]
 ```
+
+It serves `--project`, or without it the current directory. Either must hold an
+`opentide.json`; it never creates one. When it doesn't:
+
+- **Run from a terminal, or with `--http`:** it exits 2 and names the directory.
+- **Started by a client on stdio:** it connects with no tools and no prompts,
+  and its instructions tell the agent the directory isn't a project and how to
+  scaffold one. A client that starts it in every directory, like the Claude Code
+  plugin, or on the wrong folder, like the Claude Desktop extension, shows it
+  connected, not failed.
 
 See [docs/mcp-connect.md](mcp-connect.md) for the transports, per-client configs
 (`--print-config claude-code|codex|cursor`), surface versioning and security.

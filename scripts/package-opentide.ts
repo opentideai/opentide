@@ -3,12 +3,14 @@
 //
 //   deno task package:opentide [--out <dir>]
 //
-// writes <out>/opentide-<version>.tar.gz and its .sha256 (default out: dist/).
+// writes <out>/opentide-<version>.tar.gz and its .sha256, and the Claude Desktop
+// extension <out>/opentide.mcpb (default out: dist/).
 // The tarball unpacks to opentide-<version>/ and holds exactly what the public
 // repo does at the same commit. It is cut from HEAD, so commit first.
 import { dirname, join, normalize } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
 import { warnIfDirty, writeOpenTree } from "./export-opentide.ts";
+import { buildExtension, EXTENSION_DIR } from "./claude-desktop-extension.ts";
 
 const REPO_ROOT = normalize(
   join(dirname(new URL(import.meta.url).pathname), ".."),
@@ -44,7 +46,12 @@ async function sha256Hex(path: string): Promise<string> {
     .join("");
 }
 
-export async function packageOpenTide(outDir: string): Promise<string> {
+export interface ReleaseFiles {
+  tarball: string;
+  extension: string;
+}
+
+export async function packageOpenTide(outDir: string): Promise<ReleaseFiles> {
   const staging = await Deno.makeTempDir({ prefix: "opentide-package-" });
   try {
     const top = `opentide-${OPENTIDE_VERSION}`;
@@ -57,7 +64,11 @@ export async function packageOpenTide(outDir: string): Promise<string> {
       `${tarball}.sha256`,
       `${await sha256Hex(tarball)}  ${name}\n`,
     );
-    return tarball;
+    const extension = await buildExtension(
+      join(staging, top, EXTENSION_DIR),
+      outDir,
+    );
+    return { tarball, extension };
   } finally {
     await Deno.remove(staging, { recursive: true });
   }
@@ -71,6 +82,6 @@ function readOutDir(args: string[]): string {
 
 if (import.meta.main) {
   await warnIfDirty();
-  const tarball = await packageOpenTide(readOutDir(Deno.args));
-  console.log(`${tarball}\n${tarball}.sha256`);
+  const { tarball, extension } = await packageOpenTide(readOutDir(Deno.args));
+  console.log(`${tarball}\n${tarball}.sha256\n${extension}`);
 }

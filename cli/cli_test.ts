@@ -420,3 +420,105 @@ Deno.test("opentide serve --project boots the headless REST core (no key)", asyn
     await Deno.remove(parent, { recursive: true }).catch(() => {});
   }
 });
+
+// The environment without INIT_CWD. `deno task test` sets it to the repo root,
+// and a spawned `deno task` keeps an inherited one, so the child would look for
+// a project there instead of in its cwd.
+function envWithoutInitCwd(): Record<string, string> {
+  const { INIT_CWD: _inherited, ...env } = Deno.env.toObject();
+  return env;
+}
+
+Deno.test("opentide mcp --http outside a project names the directory, exit 2", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "opentide-mcp-noproject-" });
+  try {
+    const { code, stdout, stderr } = await new Deno.Command("deno", {
+      args: [
+        "task",
+        "--config",
+        `${REPO_ROOT}/deno.json`,
+        "opentide",
+        "mcp",
+        "--http",
+      ],
+      cwd: dir,
+      env: envWithoutInitCwd(),
+      clearEnv: true,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const err = new TextDecoder().decode(stderr);
+    assertEquals(code, 2);
+    assertEquals(new TextDecoder().decode(stdout), "");
+    assertStringIncludes(
+      err,
+      `${await Deno.realPath(dir)} is not an OpenTide project`,
+    );
+    assertStringIncludes(err, "--project");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("opentide mcp on stdio outside a project connects with no tools", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "opentide-mcp-noproject-" });
+  try {
+    const child = new Deno.Command("deno", {
+      args: ["task", "--config", `${REPO_ROOT}/deno.json`, "opentide", "mcp"],
+      cwd: dir,
+      env: envWithoutInitCwd(),
+      clearEnv: true,
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+    const messages = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "cli-test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/list" },
+    ];
+    const writer = child.stdin.getWriter();
+    await writer.write(
+      new TextEncoder().encode(
+        messages.map((m) => JSON.stringify(m)).join("\n") + "\n",
+      ),
+    );
+    // Read until both responses are in, then hang up like a client would.
+    const responses = new Map<number, Record<string, unknown>>();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    for await (const chunk of child.stdout) {
+      buffered += decoder.decode(chunk, { stream: true });
+      const lines = buffered.split("\n");
+      buffered = lines.pop() ?? "";
+      for (const line of lines.filter((l) => l.trim())) {
+        const msg = JSON.parse(line);
+        responses.set(msg.id, msg.result);
+      }
+      if (responses.has(1) && responses.has(2)) break;
+    }
+    await writer.close();
+    const { code } = await child.status;
+    await child.stderr.cancel().catch(() => {});
+
+    const init = responses.get(1) as { instructions: string };
+    assertStringIncludes(
+      init.instructions,
+      `${await Deno.realPath(dir)} is not an OpenTide project`,
+    );
+    assertStringIncludes(init.instructions, "opentide scaffold");
+    assertEquals(responses.get(2), { tools: [] });
+    assertEquals(code, 0);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

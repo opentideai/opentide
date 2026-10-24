@@ -45,7 +45,16 @@ Deno.test({
   const dest = await Deno.makeTempDir({ prefix: "opentide-tree-test-" });
   try {
     await writeOpenTree(dest);
-    for (const path of ["README.md", ".gitignore", "LICENSE", "cli/cli.ts"]) {
+    for (
+      const path of [
+        "README.md",
+        ".gitignore",
+        "LICENSE",
+        "cli/cli.ts",
+        ".claude-plugin/marketplace.json",
+        "plugins/opentide/.mcp.json",
+      ]
+    ) {
       assert(existsSync(join(dest, path)), `missing ${path}`);
     }
     for (const doc of MIRROR_DOCS) assert(existsSync(join(dest, doc)), doc);

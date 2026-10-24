@@ -109,6 +109,41 @@ rather than holding the token. Without `--project`, the stdio form carries a
 
 ## Claude Code
 
+### The plugin
+
+```sh
+claude plugin install opentide --marketplace opentideai/opentide
+```
+
+On Claude Code older than 2.1.275, inside a session:
+
+```text
+/plugin marketplace add opentideai/opentide
+/plugin install opentide@opentide
+```
+
+It installs for your user, not one project. Claude Code starts its server in the
+directory you launch it from, and `opentide mcp` serves that directory when it
+holds an `opentide.json`.
+
+- **The server** shows in `/mcp` as `plugin:opentide:opentide`. Its tools are
+  named `mcp__plugin_opentide_opentide__<verb>`.
+- **The commands** are the server's four prompts, as `/opentide:start`,
+  `/opentide:change <goal>`, `/opentide:land [changeset_id]` and
+  `/opentide:recover`. Only you can run them; Claude doesn't invoke them on its
+  own.
+- **Outside an OpenTide project** the server connects with no tools and no
+  prompts. Its instructions, a few lines, tell Claude the directory isn't a
+  project and how to scaffold one.
+- **Without `opentide` installed** the server shows as failed. The plugin looks
+  for `opentide` on your PATH, then at `~/.opentide/bin/opentide`, and otherwise
+  exits with the install command on stderr. `claude mcp list` shows only
+  `Connection closed`.
+
+Don't also `claude mcp add` the same project: every tool would load twice.
+
+### Without the plugin
+
 Project-scoped config lives in `.mcp.json` at your project root. `type` is
 explicit; HTTP requires it.
 
@@ -143,15 +178,18 @@ explicit; HTTP requires it.
 Or via the CLI:
 
 ```sh
-# stdio (everything after -- is the spawn command)
-claude mcp add opentide -- /Users/you/.opentide/bin/opentide mcp --project /abs/path/to/project
+# stdio, run from the project directory (everything after -- is the spawn command)
+cd /abs/path/to/project && claude mcp add opentide -- opentide mcp
 
 # http
 claude mcp add --transport http opentide http://127.0.0.1:3005/mcp \
   --header "Authorization: Bearer $OPENTIDE_MCP_TOKEN"
 ```
 
-`.mcp.json` has no per-server `cwd`, so the command must be an absolute path.
+`claude mcp add` registers the server for the directory it's run in, and Claude
+Code starts it there, so `opentide mcp` finds the project without `--project`.
+`.mcp.json` has no per-server `cwd`, so a command written there must be an
+absolute path.
 
 ## Codex
 
@@ -231,8 +269,40 @@ transport from `command` vs `url`.
 
 ## Claude Desktop
 
-Claude Desktop reads `claude_desktop_config.json` (Settings → Developer → Edit
-Config). Print the entry and merge its `mcpServers` into that file:
+### The extension
+
+Download `opentide.mcpb` from the latest release:
+
+```
+https://github.com/opentideai/opentide/releases/latest/download/opentide.mcpb
+```
+
+Double-click it, or in Claude Desktop use Settings → Extensions → Advanced
+settings → Install Extension…, and pick it. Desktop asks for **Project folder**:
+choose the folder with `opentide.json` in it. To switch projects, change that
+field in the extension's settings.
+
+- It bundles no runtime. A small Node script, run on Desktop's own Node, starts
+  `~/.opentide/bin/opentide mcp --project <folder>` (`$OPENTIDE_HOME/bin` if you
+  set it). Desktop doesn't use your shell's PATH, so an `opentide` installed
+  anywhere else isn't found.
+- OpenTide not installed: the extension still shows as running, with one tool,
+  `opentide_setup`. Ask Claude to do anything with OpenTide and it gives you the
+  install command. Install, then turn the extension off and on in Settings →
+  Extensions.
+- A `~` at the start of **Project folder** is expanded to your home folder.
+- A folder that isn't a project: the server connects with no tools, and tells
+  Claude which folder it was given.
+- The extension isn't signed, so Desktop shows it as unverified when you install
+  it.
+- macOS and Linux only, like `install.sh`.
+- Checked in Claude Desktop: install, the settings form, and the not-installed
+  path. Not yet run end to end against a project.
+
+### Without the extension
+
+Claude Desktop also reads `claude_desktop_config.json` (Settings → Developer →
+Edit Config). Print the entry and merge its `mcpServers` into that file:
 
 ```sh
 opentide mcp --print-config claude-desktop --project /abs/path/to/project
@@ -241,7 +311,7 @@ opentide mcp --print-config claude-desktop --project /abs/path/to/project
 It launches local stdio servers only; `--http` still prints the stdio form. The
 command is the launcher's absolute path, because a desktop app doesn't inherit
 your shell's PATH. Restart Claude Desktop after editing. One entry serves one
-project. Not yet run end to end.
+project.
 
 ## Any other MCP client
 

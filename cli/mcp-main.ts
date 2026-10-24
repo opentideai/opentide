@@ -8,14 +8,17 @@ import { resolve } from "node:path";
 import { initCompiler, stopCompiler } from "../core/compiler.ts";
 import {
   getMcpTransportArgs,
+  invocationCwd,
   type McpTransportArgs,
   openAssembly,
+  resolveProjectPath,
   type StackAssembly,
 } from "./assembly.ts";
 import { loadProject, unloadProject } from "../core/project-loader.ts";
 import { serveMcpStdio } from "../mcp/mcp-server.ts";
 import { serveMcpHttp } from "../mcp/mcp-http.ts";
 import { runMcpBridge } from "../mcp/mcp-bridge.ts";
+import { serveNoProjectStdio } from "../mcp/mcp-no-project.ts";
 import {
   connectConfigTarget,
   generateConnectConfig,
@@ -41,13 +44,14 @@ const USAGE =
   `opentide mcp — outbound MCP server (external agents drive the core)
 
 USAGE:
-  deno task mcp --project <path> [--standalone | --http [--port N]]
-  deno task mcp --print-config <${
+  opentide mcp [--project <path>] [--standalone | --http [--port N]]
+  opentide mcp --print-config <${
     MCP_CLIENTS.join("|")
   }> [--project <path>] [--http [--port N]]
 
 OPTIONS:
-  -p, --project <path>       Project to serve (required to serve; embedded in a printed stdio config).
+  -p, --project <path>       Project to serve (default: the current directory, if it has an opentide.json;
+                             embedded in a printed stdio config).
       --standalone           Load the project in this process instead of bridging to its serve process.
       --http                 Serve streamable-HTTP on 127.0.0.1:<port> instead of stdio.
       --port <N>             HTTP port (default ${MCP_HTTP_PORT}).
@@ -129,7 +133,7 @@ export async function serveMcp(
 ): Promise<void> {
   redirectStdoutToStderr();
   const args = getMcpTransportArgs(MCP_HTTP_PORT, argv);
-  const { projectPath, http, port } = args;
+  const { http, port } = args;
 
   if (args.help) {
     console.error(USAGE);
@@ -137,10 +141,19 @@ export async function serveMcp(
   }
   if (args.printConfig !== null) printConfigAndExit(args);
 
-  if (!projectPath) {
-    console.error(USAGE);
-    Deno.exit(2);
+  const cwd = invocationCwd();
+  const project = resolveProjectPath(args.projectPath, cwd);
+  if (!project.ok) {
+    console.error(`${project.error.message}\n${project.error.suggestion}`);
+    // A person at a terminal gets the error. A client gets a server with no
+    // tools that says why: the plugin, started in whatever directory Claude Code
+    // was opened in, and the Desktop extension, pointed at the wrong folder.
+    if (http || Deno.stdin.isTerminal()) Deno.exit(2);
+    console.error("  Serving with no tools until it's started in a project.");
+    await serveNoProjectStdio(resolve(args.projectPath ?? cwd));
+    Deno.exit(0);
   }
+  const projectPath = project.data;
 
   if (!http && !args.standalone) Deno.exit(await runMcpBridge(projectPath));
 

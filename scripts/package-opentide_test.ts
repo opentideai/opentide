@@ -2,6 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import { join } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
 import { packageOpenTide, tarballName } from "./package-opentide.ts";
+import { EXTENSION_FILE } from "./claude-desktop-extension.ts";
 
 async function tarList(tarball: string): Promise<string[]> {
   const out = await new Deno.Command("tar", {
@@ -27,7 +28,8 @@ Deno.test({
 }, async () => {
   const out = await Deno.makeTempDir({ prefix: "opentide-package-" });
   try {
-    const tarball = await packageOpenTide(out);
+    const { tarball, extension } = await packageOpenTide(out);
+    assertEquals(extension, join(out, EXTENSION_FILE));
     assertEquals(tarball, join(out, tarballName()));
     const entries = await tarList(tarball);
     const prefix = `opentide-${OPENTIDE_VERSION}/`;

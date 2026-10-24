@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "opentide": {
+      "command": "sh",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/bin/opentide-mcp"
+      ]
+    }
+  }
+}

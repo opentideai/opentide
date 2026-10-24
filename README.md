@@ -55,7 +55,7 @@ only need `curl`. Open a new terminal after installing.
 ```sh
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
 opentide scaffold ~/apps "Todo App" && cd ~/apps/todo-app
-claude mcp add opentide -- opentide mcp --project "$PWD"
+claude mcp add opentide -- opentide mcp
 claude
 ```
 
@@ -81,8 +81,20 @@ is running.
 **Claude Code** (registers it for that project's directory)
 
 ```sh
-cd ~/apps/todo-app && claude mcp add opentide -- opentide mcp --project "$PWD"
+cd ~/apps/todo-app && claude mcp add opentide -- opentide mcp
 ```
+
+**Claude Code plugin** (the server in every OpenTide project, plus
+`/opentide:start`, `/opentide:change`, `/opentide:land` and `/opentide:recover`)
+
+```sh
+claude plugin install opentide --marketplace opentideai/opentide
+```
+
+Needs Claude Code 2.1.275 or later. Older versions take two steps inside a
+session: `/plugin marketplace add opentideai/opentide`, then
+`/plugin install opentide@opentide`. Outside an OpenTide project the server
+still connects, with no tools.
 
 **Codex** (the CLI and the IDE extension share `~/.codex/config.toml`)
 
@@ -90,11 +102,11 @@ cd ~/apps/todo-app && claude mcp add opentide -- opentide mcp --project "$PWD"
 codex mcp add opentide -- opentide mcp --project ~/apps/todo-app
 ```
 
-**Claude Desktop** (paste into Settings → Developer → Edit Config)
-
-```sh
-opentide mcp --print-config claude-desktop --project ~/apps/todo-app
-```
+**Claude Desktop**: download
+[`opentide.mcpb`](https://github.com/opentideai/opentide/releases/latest/download/opentide.mcpb),
+double-click it, and pick your project folder when Desktop asks. It runs the
+OpenTide you installed above; if that's missing, ask Claude to use OpenTide and
+it tells you how to install it.
 
 **Cursor** (paste into `.cursor/mcp.json`)
 

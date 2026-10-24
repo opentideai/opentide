@@ -15,7 +15,7 @@
 //   deno task check:open            full gate (tests take several minutes)
 //   deno task check:open --quick    scan + typecheck + boots only
 //   deno task check:open --keep     leave the temp copy behind for inspection
-import { cpSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, normalize, relative } from "node:path";
 
 // The open set: what the public OpenTide repository contains. The export mirror
@@ -52,12 +52,25 @@ export const OPEN_FILES: readonly string[] = [
   "scripts/package-opentide.ts",
   "scripts/package-opentide_test.ts",
   "scripts/install-smoke.ts",
+  "scripts/claude-plugin.ts",
+  "scripts/claude-plugin_test.ts",
+  "scripts/claude-desktop-extension.ts",
+  "scripts/claude-desktop-extension_test.ts",
   // `deno task db:generate` reads it.
   "drizzle.config.ts",
   // The one backend test that lives outside a layer folder. Everything else in
   // tests/ exercises ide/ code (approval-flow_full_app_test drives the built IDE)
   // and ships with the IDE.
   "tests/layer-subsets_test.ts",
+];
+
+// The Claude Code plugin, its marketplace file and the Claude Desktop extension's
+// sources. Here they live under mirror/, which the export copies over the public
+// root; the copy puts them at its root, where the public repo has them.
+export const CLIENT_PACKAGE_PATHS: readonly string[] = [
+  ".claude-plugin",
+  "plugins",
+  "claude-desktop",
 ];
 
 // Verbs only the closed agent can serve. The open MCP surface must not list them.
@@ -100,6 +113,11 @@ function copyOpenSet(dest: string): void {
     const target = join(dest, file);
     mkdirSync(dirname(target), { recursive: true });
     cpSync(join(REPO_ROOT, file), target);
+  }
+  const mirror = join(REPO_ROOT, "mirror");
+  const overlay = existsSync(join(mirror, "plugins")) ? mirror : REPO_ROOT;
+  for (const path of CLIENT_PACKAGE_PATHS) {
+    cpSync(join(overlay, path), join(dest, path), { recursive: true });
   }
 }
 

@@ -6,7 +6,7 @@
 // The tree is cut from HEAD, so uncommitted edits never leave this repo:
 //   - the open set (scripts/check-open-standalone.ts);
 //   - the docs in MIRROR_DOCS;
-//   - mirror/, copied over the root (README.md, .gitignore);
+//   - mirror/, copied over the root (README, CI, art, the Claude Code plugin);
 //   - deno.json, keeping only the tasks whose files are in the tree.
 //
 // <dir> must be empty, or a checkout of the public repo: then everything but
@@ -14,16 +14,26 @@
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
-import { OPEN_FILES, OPEN_FOLDERS } from "./check-open-standalone.ts";
+import {
+  CLIENT_PACKAGE_PATHS,
+  OPEN_FILES,
+  OPEN_FOLDERS,
+} from "./check-open-standalone.ts";
 
 const REPO_ROOT = normalize(
   join(dirname(new URL(import.meta.url).pathname), ".."),
 );
 
-// Files only the public repo has: its README and .gitignore. Copied over the
-// root of the tree.
+// Files only the public repo has: its README, .gitignore, CI, art and the Claude
+// Code plugin. Copied over the root of the tree.
 const OVERLAY_DIR = "mirror";
-const OVERLAY_FILES: readonly string[] = ["README.md", ".gitignore"];
+const OVERLAY_FILES: readonly string[] = [
+  "README.md",
+  ".gitignore",
+  ".github",
+  "assets",
+  ...CLIENT_PACKAGE_PATHS,
+];
 
 // The docs the public repo ships. Everything else in docs/ is internal.
 export const MIRROR_DOCS: readonly string[] = [

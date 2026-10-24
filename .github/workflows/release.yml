@@ -45,4 +45,5 @@ jobs:
             --generate-notes \
             "release/opentide-$VERSION.tar.gz" \
             "release/opentide-$VERSION.tar.gz.sha256" \
+            release/opentide.mcpb \
             release/install.sh

@@ -44,8 +44,11 @@ import type {
 } from "../core/control-server.ts";
 import type { ProjectContext } from "../core/project-loader.ts";
 import type { ExportProjectOptions } from "../core/export.ts";
-import { APP_PORT_AUTO } from "../core/config.ts";
+import { APP_PORT_AUTO, LAUNCHER_ENV } from "../core/config.ts";
 import { parseArgs } from "node:util";
+import { resolve } from "node:path";
+import type { Result } from "../core/types.ts";
+import { hasProjectManifest } from "../core/project-layout.ts";
 
 // Parse the headless serve entry args (--project/-p + --port + --app-port +
 // --ui-dist) for main.ts and the `opentide serve` dispatcher. --port mirrors
@@ -256,6 +259,42 @@ export function getMcpTransportArgs(
     printConfig: values["print-config"] ?? null,
     help: Boolean(values.help),
   };
+}
+
+// The project a command serves: `--project` when given, else the directory it
+// was run from. Either way it must hold a project manifest; this never creates
+// one. A client
+// that spawns the server in the project (Claude Code, Codex, a plugin's fixed
+// .mcp.json) then needs no path in its config.
+export function resolveProjectPath(
+  projectPath: string | null,
+  cwd: string,
+  isProject: (dir: string) => boolean = hasProjectManifest,
+): Result<string> {
+  const dir = resolve(projectPath ?? cwd);
+  if (isProject(dir)) return { ok: true, data: dir };
+  return {
+    ok: false,
+    error: {
+      code: "NO_PROJECT",
+      message: `${dir} is not an OpenTide project (no opentide.json).`,
+      suggestion: "Run it from a project directory, pass --project <path>, " +
+        "or create one with `opentide scaffold <dir> <name>`.",
+    },
+  };
+}
+
+// The directory the user ran the command from. `deno task` runs from the
+// config's directory and records the caller's in INIT_CWD. The installed
+// launcher runs `deno run` from where it was called, so its cwd is already
+// right, and an INIT_CWD it sees was inherited from some unrelated npm or deno
+// task further up.
+export function invocationCwd(
+  env: (name: string) => string | undefined = (name) => Deno.env.get(name),
+  cwd: string = Deno.cwd(),
+): string {
+  if (env(LAUNCHER_ENV) !== undefined) return cwd;
+  return env("INIT_CWD") ?? cwd;
 }
 
 // The `opentide lsp` composition root's args. Stage 0 is stdio-only

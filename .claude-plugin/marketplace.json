@@ -1,0 +1,12 @@
+{
+  "name": "opentide",
+  "owner": { "name": "OpenTide", "url": "https://github.com/opentideai" },
+  "description": "The OpenTide plugin for Claude Code.",
+  "plugins": [
+    {
+      "name": "opentide",
+      "source": "./plugins/opentide",
+      "description": "Build and change a running OpenTide app from Claude Code: every change goes through a verified, reversible changeset."
+    }
+  ]
+}

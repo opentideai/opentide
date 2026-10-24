@@ -1,5 +1,5 @@
 {
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "Apache-2.0",
   "tasks": {
     "mcp": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/mcp-main.ts",
@@ -14,6 +14,7 @@
     "check:open": "deno run --allow-read --allow-write --allow-run --allow-net --allow-env scripts/check-open-standalone.ts",
     "shim:generate": "deno run --allow-read --allow-write --allow-run --allow-env scripts/generate-export-context-shim.ts",
     "router:generate": "deno run --allow-read --allow-write --allow-run scripts/generate-export-router.ts",
+    "plugin:generate": "deno run --allow-read --allow-write --allow-env scripts/claude-plugin.ts",
     "validation:generate": "deno run --allow-read --allow-write --allow-run scripts/generate-export-validation.ts",
     "db:generate": "deno run --allow-read --allow-write --allow-env --allow-net --allow-sys npm:drizzle-kit@0 generate",
     "docs:generate": "deno run --allow-read --allow-write core/docs/generate.ts"
@@ -45,7 +46,9 @@
     "exclude": [
       "core/db/migrations/",
       "mirror/assets/",
-      "assets/"
+      "assets/",
+      "mirror/plugins/opentide/commands/",
+      "plugins/opentide/commands/"
     ]
   },
   "lint": {

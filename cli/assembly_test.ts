@@ -1,9 +1,12 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
+import { resolve } from "node:path";
 import {
   getBuildArgs,
   getExportArgs,
   getOrchestratorArgs,
   getServeArgs,
+  invocationCwd,
+  resolveProjectPath,
 } from "./assembly.ts";
 import { APP_PORT_AUTO } from "../core/config.ts";
 
@@ -108,4 +111,46 @@ Deno.test("getServeArgs: --ui-dist is captured; absent yields null", () => {
   ]);
   assertEquals(all.uiDist, "/dist");
   assertEquals(all.port, 3101);
+});
+
+Deno.test("resolveProjectPath: --project wins over the cwd, made absolute", () => {
+  const r = resolveProjectPath("rel/app", "/elsewhere", () => true);
+  assertEquals(r.ok && r.data, resolve("rel/app"));
+});
+
+Deno.test("resolveProjectPath: no --project uses a cwd holding a manifest", () => {
+  const r = resolveProjectPath(null, "/work/app", (d) => d === "/work/app");
+  assertEquals(r.ok && r.data, "/work/app");
+});
+
+Deno.test("resolveProjectPath: a --project without a manifest is NO_PROJECT", () => {
+  const r = resolveProjectPath(
+    "/work/empty",
+    "/work/app",
+    (d) => d === "/work/app",
+  );
+  assertEquals(r.ok, false);
+  if (!r.ok) assertStringIncludes(r.error.message, "/work/empty");
+});
+
+Deno.test("resolveProjectPath: no --project and no manifest is NO_PROJECT", () => {
+  const r = resolveProjectPath(null, "/work/empty", () => false);
+  assertEquals(r.ok, false);
+  if (!r.ok) {
+    assertEquals(r.error.code, "NO_PROJECT");
+    assertStringIncludes(r.error.message, "/work/empty");
+  }
+});
+
+Deno.test("invocationCwd: INIT_CWD under deno task, the real cwd under the installed launcher", () => {
+  const env = (vars: Record<string, string>) => (name: string) => vars[name];
+  assertEquals(invocationCwd(env({}), "/here"), "/here");
+  assertEquals(invocationCwd(env({ INIT_CWD: "/caller" }), "/repo"), "/caller");
+  assertEquals(
+    invocationCwd(
+      env({ INIT_CWD: "/some/npm/script", OPENTIDE_LAUNCHER: "/bin/opentide" }),
+      "/here",
+    ),
+    "/here",
+  );
 });

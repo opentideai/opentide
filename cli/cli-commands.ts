@@ -62,7 +62,7 @@ runs the same commands.
 
 EXAMPLES:
   opentide serve    --project /path/to/project [--port <n>] [--app-port <n>]
-  opentide mcp      --project /path/to/project [--standalone | --http]
+  opentide mcp      [--project /path/to/project] [--standalone | --http]
   opentide lsp      --project /path/to/project
   opentide scaffold ./parent-dir "My App"
   opentide build    --project /path/to/project [--target node|deno] [--include-seed-data]

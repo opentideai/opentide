@@ -1,0 +1,16 @@
+#!/bin/sh
+# Starts the OpenTide MCP server for Claude Code. Claude Code runs it in the
+# directory it was started in, which `opentide mcp` serves when that directory
+# holds an opentide.json.
+if command -v opentide >/dev/null 2>&1; then
+  exec opentide mcp "$@"
+fi
+installed="${OPENTIDE_HOME:-$HOME/.opentide}/bin/opentide"
+if [ -x "$installed" ]; then
+  exec "$installed" mcp "$@"
+fi
+cat >&2 <<'MSG'
+OpenTide isn't installed. Install it, then restart Claude Code:
+  curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
+MSG
+exit 127
