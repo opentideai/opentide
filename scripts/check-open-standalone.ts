@@ -49,6 +49,7 @@ export const OPEN_FILES: readonly string[] = [
   "scripts/export-opentide_test.ts",
   "scripts/package-opentide.ts",
   "scripts/package-opentide_test.ts",
+  "scripts/install-smoke.ts",
   // `deno task db:generate` reads it.
   "drizzle.config.ts",
   // The one backend test that lives outside a layer folder. Everything else in

@@ -56,15 +56,38 @@ run an external `deno` anyway.
 
 ## Release
 
+1. Set `OPENTIDE_VERSION` in `core/config.ts` and commit.
+2. Tag and push:
+
+   ```sh
+   git tag v0.1.1 && git push origin v0.1.1
+   ```
+
+The `Release` workflow (`.github/workflows/release.yml`) checks that the tag
+matches the version, runs the install smoke, packages, and creates the GitHub
+release with the tarball, its `.sha256` and `install.sh` attached.
+
+To do it by hand:
+
 ```sh
-deno task package:opentide [--out <dir>]
+deno task smoke:install                    # package, install, build, export: the new-user path
+deno task package:opentide [--out <dir>]   # dist/opentide-<version>.tar.gz + .sha256
 ```
 
-Writes `dist/opentide-<version>.tar.gz` and its `.sha256` from HEAD with
-`git archive`: the open set from `scripts/check-open-standalone.ts`, which
-includes `install.sh`. Uncommitted changes are not packaged; it warns when there
-are any. The version is `OPENTIDE_VERSION` in `core/config.ts`. Upload the
-tarball, the `.sha256` and `install.sh` to a GitHub release tagged `v<version>`.
+Packaging cuts from HEAD, so uncommitted changes are left out; it warns when
+there are any.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+
+| Job                 | Runs on       | What                                      |
+| ------------------- | ------------- | ----------------------------------------- |
+| Lint and type-check | Ubuntu        | `deno lint`, `deno check` over the source |
+| Tests               | Ubuntu, macOS | `deno task test`                          |
+| Install smoke       | Ubuntu, macOS | `deno task smoke:install`                 |
+
+Formatting isn't enforced yet: 37 files aren't `deno fmt` clean.
 
 ## Commands
 

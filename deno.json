@@ -9,6 +9,7 @@
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys",
     "lint": "deno lint",
     "export:opentide": "deno run --allow-read --allow-write --allow-run --allow-env scripts/export-opentide.ts",
+    "smoke:install": "deno run --allow-net --allow-read --allow-write --allow-run --allow-env --allow-sys scripts/install-smoke.ts",
     "package:opentide": "deno run --allow-read --allow-write --allow-run --allow-env scripts/package-opentide.ts",
     "check:open": "deno run --allow-read --allow-write --allow-run --allow-net --allow-env scripts/check-open-standalone.ts",
     "shim:generate": "deno run --allow-read --allow-write --allow-run --allow-env scripts/generate-export-context-shim.ts",

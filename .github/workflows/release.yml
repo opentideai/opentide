@@ -1,0 +1,45 @@
+name: Release
+
+# Push a tag v<version> matching OPENTIDE_VERSION in core/config.ts. The smoke
+# runs first; the release is created only if it passes.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Git identity
+        run: |
+          git config --global user.name "OpenTide CI"
+          git config --global user.email "ci@opentide.invalid"
+      - name: Tag matches the version
+        run: |
+          version="$(deno eval --quiet 'import { OPENTIDE_VERSION } from "./core/config.ts"; console.log(OPENTIDE_VERSION)')"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match OPENTIDE_VERSION $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - run: deno task smoke:install
+      - run: deno task package:opentide --out release
+      - run: cp install.sh release/
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "OpenTide $VERSION" \
+            --generate-notes \
+            "release/opentide-$VERSION.tar.gz" \
+            "release/opentide-$VERSION.tar.gz.sha256" \
+            release/install.sh
