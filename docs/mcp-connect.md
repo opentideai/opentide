@@ -155,6 +155,16 @@ claude mcp add --transport http opentide http://127.0.0.1:3005/mcp \
 
 ## Codex
 
+The quickest way is Codex's own CLI, which writes `~/.codex/config.toml` for
+you:
+
+```sh
+codex mcp add opentide -- ~/.opentide/bin/opentide mcp --project /abs/path/to/project
+```
+
+The Codex CLI and the IDE extension read the same file. Whether the Codex
+desktop app does too hasn't been checked.
+
 Config lives in `~/.codex/config.toml`, one `[mcp_servers.<name>]` table per
 server. Codex infers the transport from the keys present — `command` ⇒ stdio,
 `url` ⇒ streamable-HTTP — there is no `type` field.
@@ -218,6 +228,20 @@ transport from `command` vs `url`.
   }
 }
 ```
+
+## Claude Desktop
+
+Claude Desktop reads `claude_desktop_config.json` (Settings → Developer → Edit
+Config). Print the entry and merge its `mcpServers` into that file:
+
+```sh
+opentide mcp --print-config claude-desktop --project /abs/path/to/project
+```
+
+It launches local stdio servers only; `--http` still prints the stdio form. The
+command is the launcher's absolute path, because a desktop app doesn't inherit
+your shell's PATH. Restart Claude Desktop after editing. One entry serves one
+project. Not yet run end to end.
 
 ## Any other MCP client
 

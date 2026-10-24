@@ -157,10 +157,25 @@ Deno.test("every client × transport emits parseable output", () => {
   }
 });
 
+Deno.test("claude-desktop: stdio mcpServers even when --http is asked for", () => {
+  for (const transport of ["stdio", "http"] as const) {
+    const config = JSON.parse(
+      generateConnectConfig("claude-desktop", {
+        transport,
+        projectPath: ABS_PROJECT,
+      }),
+    ) as { mcpServers: { opentide: { command: string; args: string[] } } };
+    const server = config.mcpServers.opentide;
+    assert(server.command.length > 0);
+    assertEquals(server.args.slice(-2), ["--project", ABS_PROJECT]);
+  }
+});
+
 Deno.test("isMcpClient guards the client set", () => {
   assert(isMcpClient("claude-code"));
   assert(isMcpClient("codex"));
   assert(isMcpClient("cursor"));
+  assert(isMcpClient("claude-desktop"));
   assertFalse(isMcpClient("vscode"));
   assertFalse(isMcpClient(""));
 });

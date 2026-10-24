@@ -45,13 +45,13 @@ running app that keeps it honest:
 
 ## Quick start
 
-The installer brings everything it needs; you only need `curl`.
+The installer brings everything it needs and puts `opentide` on your PATH. You
+only need `curl`. Open a new terminal after installing.
 
 ```sh
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
-export PATH="$HOME/.opentide/bin:$PATH"
 opentide scaffold ~/apps "Todo App" && cd ~/apps/todo-app
-opentide mcp --print-config claude-code --project "$PWD" > .mcp.json
+claude mcp add opentide -- opentide mcp --project "$PWD"
 claude
 ```
 
@@ -74,25 +74,28 @@ OpenTide works with any coding agent that speaks MCP. Each config below starts a
 small stdio bridge, which attaches to the project's server or starts one if none
 is running.
 
-**Claude Code**
+**Claude Code** (registers it for that project's directory)
 
 ```sh
-cd ~/apps/todo-app
-opentide mcp --print-config claude-code --project "$PWD" > .mcp.json
-# or register it once with the CLI:
-claude mcp add opentide -- opentide mcp --project "$PWD"
+cd ~/apps/todo-app && claude mcp add opentide -- opentide mcp --project "$PWD"
 ```
 
-**Codex**
+**Codex** (the CLI and the IDE extension share `~/.codex/config.toml`)
 
 ```sh
-opentide mcp --print-config codex --project ~/apps/todo-app >> ~/.codex/config.toml
+codex mcp add opentide -- opentide mcp --project ~/apps/todo-app
 ```
 
-**Cursor**
+**Claude Desktop** (paste into Settings → Developer → Edit Config)
 
 ```sh
-opentide mcp --print-config cursor --project ~/apps/todo-app   # paste into .cursor/mcp.json
+opentide mcp --print-config claude-desktop --project ~/apps/todo-app
+```
+
+**Cursor** (paste into `.cursor/mcp.json`)
+
+```sh
+opentide mcp --print-config cursor --project ~/apps/todo-app
 ```
 
 **Any other MCP client** (Windsurf, VS Code, Zed, Cline, your own): add a stdio
@@ -108,10 +111,6 @@ what the agent is told on connect.
 
 ## What you get
 
-<table>
-<tr>
-<td width="50%" valign="top">
-
 ### <img src="assets/icons/bugs.svg" width="22" height="22" align="top" alt=""> Fewer bugs
 
 The agent can't call a change finished on its own say-so.
@@ -125,9 +124,6 @@ The agent can't call a change finished on its own say-so.
   way it is, so it doesn't undo a fix.
 - `opentide build` boots the build and smoke-tests its routes before you ship.
 
-</td>
-<td width="50%" valign="top">
-
 ### <img src="assets/icons/review.svg" width="22" height="22" align="top" alt=""> Review in minutes
 
 Every change is a **changeset**: a title, a plan with steps, acceptance
@@ -139,11 +135,6 @@ criteria, a verification plan, and the evidence that it was met.
 - `project_status` gives one verdict on the project's health, and
   `get_changeset_context` shows a change's plan and progress.
 - The gate runs advisory, graduated or strict. You decide how hard it bites.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
 
 ### <img src="assets/icons/tokens.svg" width="22" height="22" align="top" alt=""> Spend fewer tokens
 
@@ -158,9 +149,6 @@ Most agent tokens go on rediscovering your code. Here the agent asks.
 - Claude Code loads OpenTide's tools on demand, so 109 tools don't sit in every
   prompt.
 
-</td>
-<td valign="top">
-
 ### <img src="assets/icons/live.svg" width="22" height="22" align="top" alt=""> See it working right away
 
 No build-and-restart loop between "written" and "running".
@@ -170,11 +158,6 @@ No build-and-restart loop between "written" and "running".
 - The agent checks its own UI work with browser screenshots and scripted UI
   tests (`screenshot_app`, `test_app`) against the running app.
 - Open `localhost` and click around while it's still working.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
 
 ### <img src="assets/icons/undo.svg" width="22" height="22" align="top" alt=""> Never lose work
 
@@ -186,9 +169,6 @@ Agents go off the rails. Getting back is one call.
 - Agent crashed, restarted, or you ran `/clear` mid-change? The next session
   calls `adopt_changeset` and carries on with the plan and progress intact.
 - `take_snapshot` and `restore_snapshot` for anything bigger.
-
-</td>
-<td valign="top">
 
 ### <img src="assets/icons/parallel.svg" width="22" height="22" align="top" alt=""> Go faster in parallel
 
@@ -202,11 +182,6 @@ Two agents, one project, no merge hell.
   conflicts named. No silent overwrites.
 - One writer at a time on main, enforced, so agents can't trample each other.
 
-</td>
-</tr>
-<tr>
-<td valign="top">
-
 ### <img src="assets/icons/own.svg" width="22" height="22" align="top" alt=""> Own the result
 
 - `opentide export` writes a standalone Node app, and `opentide build` makes a
@@ -216,9 +191,6 @@ Two agents, one project, no merge hell.
 - No model inside and no API key. It works with the agent subscription you
   already have.
 
-</td>
-<td valign="top">
-
 ### <img src="assets/icons/safe.svg" width="22" height="22" align="top" alt=""> Safe by default
 
 - The server listens on loopback only and needs a per-project bearer token.
@@ -227,10 +199,6 @@ Two agents, one project, no merge hell.
   and deprecations, with upgrade advice.
 - Projects live in Git, and machine-local state stays out of commits. See
   [docs/project-storage.md](docs/project-storage.md).
-
-</td>
-</tr>
-</table>
 
 ## How it works
 

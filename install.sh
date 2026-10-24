@@ -14,6 +14,7 @@
 #   OPENTIDE_INSTALL_TARBALL   install from this local tarball instead of downloading
 #   OPENTIDE_INSTALL_REPO      GitHub owner/repo to download from
 #   OPENTIDE_HOME              where everything goes (default: ~/.opentide)
+#   OPENTIDE_NO_MODIFY_PATH=1  don't add the launcher to your shell's PATH
 set -eu
 
 REPO="${OPENTIDE_INSTALL_REPO:-opentideai/opentide}"
@@ -47,6 +48,41 @@ fetch_verified() {
     fail "no checksum published for $1"
   [ "$(sha256 "$2")" = "$(echo "$sum" | cut -d ' ' -f 1)" ] ||
     fail "checksum mismatch for $1"
+}
+
+# The shell config file that puts $1 on PATH for new terminals, for the user's
+# login shell. Empty for a shell we don't know.
+shell_config() {
+  case "$(basename "${SHELL:-}")" in
+    zsh) echo "${ZDOTDIR:-$HOME}/.zshrc" ;;
+    bash)
+      if [ -f "$HOME/.bashrc" ] || [ "$(uname -s)" != Darwin ]; then
+        echo "$HOME/.bashrc"
+      else
+        echo "$HOME/.bash_profile"
+      fi
+      ;;
+    fish) echo "${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/opentide.fish" ;;
+  esac
+}
+
+# Adds $1 to PATH in the user's shell config, once.
+add_to_path() {
+  config="$(shell_config)"
+  if [ -z "$config" ]; then
+    echo "Add $1 to your PATH to run opentide."
+    return
+  fi
+  if [ -f "$config" ] && grep -qF "$1" "$config"; then
+    return
+  fi
+  mkdir -p "$(dirname "$config")"
+  case "$config" in
+    *.fish) line="fish_add_path \"$1\"" ;;
+    *) line="export PATH=\"$1:\$PATH\"" ;;
+  esac
+  printf '\n# opentide\n%s\n' "$line" >>"$config"
+  echo "Added $1 to your PATH in $config."
 }
 
 runtime_target() {
@@ -141,11 +177,16 @@ chmod +x "$launcher"
 installed="$("$launcher" --version 2>>"$log")" ||
   fail "the installed opentide does not run; see $log"
 echo "Installed: $launcher ($installed)"
+
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *)
-    echo
-    echo "Add it to your PATH, e.g. in ~/.zshrc or ~/.bashrc:"
-    echo "  export PATH=\"$bin_dir:\$PATH\""
+    if [ "${OPENTIDE_NO_MODIFY_PATH:-}" = 1 ]; then
+      echo "Add $bin_dir to your PATH to run opentide."
+    else
+      add_to_path "$bin_dir"
+      echo "Open a new terminal, or run this one now:"
+      echo "  export PATH=\"$bin_dir:\$PATH\""
+    fi
     ;;
 esac

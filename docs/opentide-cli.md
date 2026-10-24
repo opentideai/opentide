@@ -16,8 +16,9 @@ and never uses one already on your machine.
 
 ```sh
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
-export PATH="$HOME/.opentide/bin:$PATH"   # add this to ~/.zshrc or ~/.bashrc
 ```
+
+Open a new terminal afterwards so `opentide` is on your PATH.
 
 Tested on macOS and Linux (CI runs the install smoke on both). On Windows, run
 it under WSL: the installer is a POSIX shell script and native Windows hasn't
@@ -38,17 +39,21 @@ What it does, all under `~/.opentide`:
 - downloads its dependencies against the lockfile it shipped with (the log goes
   to `install.log`);
 - writes the `opentide` launcher to `bin/opentide`, with the permissions of the
-  `opentide` task minus `--env`.
+  `opentide` task minus `--env`;
+- adds `~/.opentide/bin` to your PATH, once, in the config file for your login
+  shell: `~/.zshrc`, `~/.bashrc` (or `~/.bash_profile` on macOS), or fish's
+  `conf.d/opentide.fish`. For any other shell it prints the line to add.
 
 Rerunning it installs the latest release over the old launcher. Old versions
 stay in `~/.opentide/versions/` until you delete them.
 
-| Variable                   | Effect                                         |
-| -------------------------- | ---------------------------------------------- |
-| `OPENTIDE_INSTALL_VERSION` | Install this version instead of the latest.    |
-| `OPENTIDE_INSTALL_TARBALL` | Install from a local tarball; no download.     |
-| `OPENTIDE_INSTALL_REPO`    | GitHub `owner/repo` to download releases from. |
-| `OPENTIDE_HOME`            | Where everything goes (default `~/.opentide`). |
+| Variable                    | Effect                                         |
+| --------------------------- | ---------------------------------------------- |
+| `OPENTIDE_INSTALL_VERSION`  | Install this version instead of the latest.    |
+| `OPENTIDE_INSTALL_TARBALL`  | Install from a local tarball; no download.     |
+| `OPENTIDE_INSTALL_REPO`     | GitHub `owner/repo` to download releases from. |
+| `OPENTIDE_HOME`             | Where everything goes (default `~/.opentide`). |
+| `OPENTIDE_NO_MODIFY_PATH=1` | Leave your shell config alone.                 |
 
 `opentide --version` prints the installed version. Once installed,
 `opentide mcp --print-config <client>` emits configs that run the launcher, so

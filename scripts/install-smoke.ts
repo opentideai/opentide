@@ -211,6 +211,16 @@ async function requestExportedApp(
   }
 }
 
+// install.sh puts the launcher on PATH in the shell config, exactly once.
+async function expectPathLineOnce(
+  config: string,
+  binDir: string,
+): Promise<void> {
+  const text = await Deno.readTextFile(config).catch(() => "");
+  const count = text.split(binDir).length - 1;
+  if (count !== 1) fail(`${config} names ${binDir} ${count} times, not once`);
+}
+
 // A directory holding a `deno` that fails loudly, to put first on PATH.
 async function denoTrap(root: string): Promise<string> {
   const dir = join(root, "deno-trap");
@@ -244,11 +254,18 @@ async function main(): Promise<void> {
   step("packaging HEAD");
   await packageOpenTide(join(root, "release"));
   step("running install.sh");
-  await run("sh", [join(REPO_ROOT, "install.sh")], {
+  const installEnv = {
     ...env,
+    SHELL: "/bin/zsh",
     OPENTIDE_INSTALL_TARBALL: join(root, "release", tarballName()),
-  });
-  const launcher = join(home, ".opentide", "bin", "opentide");
+  };
+  await run("sh", [join(REPO_ROOT, "install.sh")], installEnv);
+  const binDir = join(home, ".opentide", "bin");
+  await expectPathLineOnce(join(home, ".zshrc"), binDir);
+  step("installing again: same PATH line, no duplicate");
+  await run("sh", [join(REPO_ROOT, "install.sh")], installEnv);
+  await expectPathLineOnce(join(home, ".zshrc"), binDir);
+  const launcher = join(binDir, "opentide");
   const version = (await run(launcher, ["--version"], env)).trim();
   if (version !== `opentide ${OPENTIDE_VERSION}`) {
     fail(`--version printed "${version}"`);

@@ -24,9 +24,10 @@ import {
 
 // The external clients whose connect config we can emit. The three Phase-3-Slice-D
 // targets (OpenTide §7): Claude Code, Codex, Cursor.
-export type McpClient = "claude-code" | "codex" | "cursor";
+export type McpClient = "claude-code" | "claude-desktop" | "codex" | "cursor";
 export const MCP_CLIENTS: readonly McpClient[] = [
   "claude-code",
+  "claude-desktop",
   "codex",
   "cursor",
 ];
@@ -110,6 +111,17 @@ function cursorConfig(opts: ConnectOptions, name: string): string {
   return JSON.stringify({ mcpServers: { [name]: server } }, null, 2);
 }
 
+// Claude Desktop — `claude_desktop_config.json`. The same `mcpServers` shape as
+// Cursor's stdio form. It launches local stdio servers only (remote servers are
+// added in its UI as connectors), so --http still prints the stdio form.
+function claudeDesktopConfig(opts: ConnectOptions, name: string): string {
+  return JSON.stringify(
+    { mcpServers: { [name]: stdioInvocation(opts.projectPath) } },
+    null,
+    2,
+  );
+}
+
 // Codex — `~/.codex/config.toml`, one `[mcp_servers.<name>]` table. Transport is
 // inferred from `command` (stdio) vs `url` (streamable-HTTP); there is no `type`
 // key. Codex supports `cwd`, so from a clone the stdio form pins it to the repo
@@ -146,6 +158,8 @@ export function connectConfigTarget(client: McpClient): string {
   switch (client) {
     case "claude-code":
       return ".mcp.json (project scope) — or run `claude mcp add`";
+    case "claude-desktop":
+      return "Claude Desktop's claude_desktop_config.json (Settings → Developer → Edit Config); stdio only";
     case "codex":
       return "~/.codex/config.toml";
     case "cursor":
@@ -162,6 +176,8 @@ export function generateConnectConfig(
   switch (client) {
     case "claude-code":
       return claudeCodeConfig(opts, name);
+    case "claude-desktop":
+      return claudeDesktopConfig(opts, name);
     case "codex":
       return codexConfig(opts, name);
     case "cursor":
