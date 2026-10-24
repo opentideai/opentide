@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="440" viewBox="0 0 1280 440" role="img" aria-label="OpenTide: agents build it live, then they prove it works">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050816"/>
+      <stop offset="0.55" stop-color="#071a2e"/>
+      <stop offset="1" stop-color="#03303a"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="0.5" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#a5b4fc"/>
+    </linearGradient>
+    <linearGradient id="wave1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#22d3ee" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="wave2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2dd4bf" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#2dd4bf" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#2dd4bf" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="wave3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#818cf8" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#818cf8" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#818cf8" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1.2" fill="#94a3b8" fill-opacity="0.12"/>
+    </pattern>
+    <clipPath id="card">
+      <rect width="1280" height="440" rx="24"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#card)">
+    <rect width="1280" height="440" fill="url(#bg)"/>
+    <rect width="1280" height="440" fill="url(#dots)"/>
+    <ellipse cx="380" cy="190" rx="420" ry="220" fill="url(#glow)"/>
+
+    <!-- Tide: three swells drifting past each other -->
+    <g>
+      <path d="M-1280 330 Q-1120 290 -960 330 T-640 330 T-320 330 T0 330 T320 330 T640 330 T960 330 T1280 330 T1600 330 T1920 330 T2240 330 T2560 330"
+            fill="none" stroke="url(#wave1)" stroke-width="3">
+        <animateTransform attributeName="transform" type="translate" from="0 0" to="640 0" dur="14s" repeatCount="indefinite"/>
+      </path>
+      <path d="M-1280 360 Q-1100 320 -920 360 T-560 360 T-200 360 T160 360 T520 360 T880 360 T1240 360 T1600 360 T1960 360 T2320 360"
+            fill="none" stroke="url(#wave2)" stroke-width="2.5">
+        <animateTransform attributeName="transform" type="translate" from="0 0" to="720 0" dur="19s" repeatCount="indefinite"/>
+      </path>
+      <path d="M-1280 392 Q-1140 362 -1000 392 T-720 392 T-440 392 T-160 392 T120 392 T400 392 T680 392 T960 392 T1240 392 T1520 392 T1800 392 T2080 392"
+            fill="none" stroke="url(#wave3)" stroke-width="2">
+        <animateTransform attributeName="transform" type="translate" from="560 0" to="0 0" dur="23s" repeatCount="indefinite"/>
+      </path>
+    </g>
+
+    <!-- Mark -->
+    <g transform="translate(96 108)">
+      <rect width="76" height="76" rx="20" fill="#0b2436" stroke="#5eead4" stroke-opacity="0.45"/>
+      <path d="M14 46 Q24 34 34 46 T54 46 T74 46" fill="none" stroke="#5eead4" stroke-width="5" stroke-linecap="round"/>
+      <path d="M14 58 Q24 48 34 58 T54 58 T74 58" fill="none" stroke="#7dd3fc" stroke-opacity="0.6" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="54" cy="24" r="7" fill="#a5b4fc"/>
+    </g>
+
+    <text x="196" y="172" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+          font-size="88" font-weight="800" letter-spacing="-3" fill="url(#word)">OpenTide</text>
+
+    <text x="98" y="250" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+          font-size="38" font-weight="700" fill="#f1f5f9" letter-spacing="-0.5">Your agent builds it live.</text>
+    <text x="98" y="298" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+          font-size="38" font-weight="700" fill="#5eead4" letter-spacing="-0.5">Then it proves it works.</text>
+
+    <!-- Live badge, right side -->
+    <g transform="translate(930 92)" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15">
+      <rect width="254" height="184" rx="16" fill="#020617" fill-opacity="0.72" stroke="#1e293b"/>
+      <circle cx="26" cy="28" r="6" fill="#22c55e">
+        <animate attributeName="opacity" values="1;0.25;1" dur="1.6s" repeatCount="indefinite"/>
+      </circle>
+      <text x="42" y="33" fill="#86efac">live  :3001</text>
+      <text x="22" y="70" fill="#94a3b8">GET /api/todos</text>
+      <text x="200" y="70" fill="#22c55e">200</text>
+      <text x="22" y="98" fill="#94a3b8">POST /api/todos</text>
+      <text x="200" y="98" fill="#22c55e">201</text>
+      <text x="22" y="126" fill="#94a3b8">run_tests</text>
+      <text x="200" y="126" fill="#22c55e">3/3</text>
+      <text x="22" y="160" fill="#a5b4fc">✓ attested · att_7f3c</text>
+    </g>
+  </g>
+</svg>

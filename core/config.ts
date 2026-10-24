@@ -268,7 +268,7 @@ export function appPreviewUrl(port: number, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.0";
+export const OPENTIDE_VERSION = "0.1.1";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
@@ -285,7 +285,7 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // tool names + input schemas an external agent pins against (OpenTide §10). This
 // is deliberately DISTINCT from the two other versions in play:
 //   - the MCP protocol version — the spec, negotiated by the SDK at connect();
-//   - MCP_SERVER_VERSION (0.1.0) — the OpenTide server BUILD/impl maturity.
+//   - MCP_SERVER_VERSION (= OPENTIDE_VERSION) — the OpenTide server BUILD/impl maturity.
 // The surface can be stable (1.x) while the impl is still early (0.x); versioning
 // the surface separately is exactly what lets pinned integrations survive impl
 // churn. The surface reached its stable shape in Phase 3 Slice F1 (122 verbs) and

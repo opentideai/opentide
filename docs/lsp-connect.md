@@ -153,11 +153,11 @@ The advertised capability surface is a stable contract: once a client pins
 against it, it should not change silently. Three _distinct_ versions are in play
 on the `initialize` result — don't conflate them:
 
-| Version                                              | What it identifies                                                                               | Where it lives                                             | Who bumps it         |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------- |
-| **LSP protocol version**                             | the wire spec itself                                                                             | negotiated by the client/SDK                               | the LSP spec         |
-| **Server version** (`LSP_SERVER_VERSION`, `0.1.0`)   | the OpenTide **build**                                                                           | `initialize` → `serverInfo.version` (`opentide` / version) | the OpenTide release |
-| **Surface version** (`LSP_SURFACE_VERSION`, `2.0.0`) | the **advertised capability contract** — which providers / commands / `opentide/*` notifications | `initialize` → `capabilities.opentideSurface`              | this policy          |
+| Version                                                         | What it identifies                                                                               | Where it lives                                             | Who bumps it         |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- | -------------------- |
+| **LSP protocol version**                                        | the wire spec itself                                                                             | negotiated by the client/SDK                               | the LSP spec         |
+| **Server version** (`LSP_SERVER_VERSION`, = `OPENTIDE_VERSION`) | the OpenTide **build**                                                                           | `initialize` → `serverInfo.version` (`opentide` / version) | the OpenTide release |
+| **Surface version** (`LSP_SURFACE_VERSION`, `2.0.0`)            | the **advertised capability contract** — which providers / commands / `opentide/*` notifications | `initialize` → `capabilities.opentideSurface`              | this policy          |
 
 The surface can be at `2.x` while the build is at `0.x` — versioning them
 separately is what lets a pinned integration survive server churn (the same

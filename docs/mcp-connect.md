@@ -536,11 +536,11 @@ The MCP tool surface is a stable external contract: once agents pin against the
 tool names and input schemas, those can't change silently. Three _distinct_
 versions are in play — don't conflate them:
 
-| Version                                                   | What it identifies                                      | Where it lives                                | Who bumps it         |
-| --------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- | -------------------- |
-| **MCP protocol version**                                  | the wire spec itself                                    | negotiated by the SDK at `connect()`          | the MCP spec / SDK   |
-| **Server version** (`MCP_SERVER_VERSION`, `0.1.0`)        | the OpenTide **build**                                  | handshake `serverInfo` (`opentide` / version) | the OpenTide release |
-| **Tool-surface version** (`MCP_SURFACE_VERSION`, `6.3.0`) | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
+| Version                                                         | What it identifies                                      | Where it lives                                | Who bumps it         |
+| --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- | -------------------- |
+| **MCP protocol version**                                        | the wire spec itself                                    | negotiated by the SDK at `connect()`          | the MCP spec / SDK   |
+| **Server version** (`MCP_SERVER_VERSION`, = `OPENTIDE_VERSION`) | the OpenTide **build**                                  | handshake `serverInfo` (`opentide` / version) | the OpenTide release |
+| **Tool-surface version** (`MCP_SURFACE_VERSION`, `6.3.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
 
 The surface can be at `6.x` while the build is at `0.x` — versioning it
 separately is what lets a pinned integration survive server churn.

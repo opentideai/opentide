@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="560" viewBox="0 0 1000 560" role="img" aria-label="A Claude Code session building a todos API in OpenTide: plan, build, test, attest, complete">
+  <style>
+    .ui { font-family: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; }
+    .dim { fill: #64748b; }
+    .txt { fill: #cbd5e1; }
+    .tool { fill: #7dd3fc; }
+    .ok { fill: #4ade80; }
+    .att { fill: #a5b4fc; }
+    .you { fill: #f8fafc; font-weight: 600; }
+    .line { opacity: 0; animation: in 0.35s ease-out forwards; }
+    @keyframes in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .l1 { animation-delay: 0.4s; } .l2 { animation-delay: 1.4s; } .l3 { animation-delay: 2.2s; }
+    .l4 { animation-delay: 2.9s; } .l5 { animation-delay: 3.6s; } .l6 { animation-delay: 4.3s; }
+    .l7 { animation-delay: 5.0s; } .l8 { animation-delay: 5.9s; } .l9 { animation-delay: 6.8s; }
+    .l10 { animation-delay: 7.7s; } .l11 { animation-delay: 8.6s; } .l12 { animation-delay: 9.5s; }
+    .cursor { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+  </style>
+  <defs>
+    <linearGradient id="win" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1222"/>
+      <stop offset="1" stop-color="#060a14"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0.5" y="0.5" width="999" height="559" rx="16" fill="url(#win)" stroke="#1e293b"/>
+  <rect x="0.5" y="0.5" width="999" height="44" rx="16" fill="#0f172a"/>
+  <rect x="0.5" y="28" width="999" height="17" fill="#0f172a"/>
+  <circle cx="26" cy="22" r="7" fill="#f87171"/>
+  <circle cx="50" cy="22" r="7" fill="#fbbf24"/>
+  <circle cx="74" cy="22" r="7" fill="#4ade80"/>
+  <text x="500" y="28" text-anchor="middle" class="ui" font-size="14" fill="#94a3b8">claude — ~/apps/todo-app — opentide</text>
+
+  <g class="mono">
+    <g class="line l1"><text x="28" y="88"><tspan class="dim">&gt;</tspan><tspan x="48" class="you">Add a todos API: create, list, complete. Backed by a table, with tests.</tspan></text></g>
+
+    <g class="line l2"><text x="28" y="132"><tspan class="tool">● create_changeset</tspan><tspan x="300" class="txt">"Todos API" · 4 steps · 3 criteria</tspan></text></g>
+    <g class="line l3"><text x="28" y="164"><tspan class="tool">● define_schema</tspan><tspan x="300" class="txt">todos (id, title, done, created_at)</tspan></text></g>
+    <g class="line l4"><text x="28" y="196"><tspan class="tool">● define_handler</tspan><tspan x="300" class="txt">createTodo · listTodos · completeTodo</tspan></text></g>
+    <g class="line l5"><text x="28" y="228"><tspan class="tool">● register_route</tspan><tspan x="300" class="txt">POST · GET /api/todos · PATCH /api/todos/:id</tspan></text></g>
+    <g class="line l6"><text x="28" y="260"><tspan x="48" class="dim">↳ live on http://localhost:3001 — no build, no restart</tspan></text></g>
+    <g class="line l7"><text x="28" y="292"><tspan class="tool">● define_test</tspan><tspan x="300" class="txt">test_create · test_list · test_complete</tspan></text></g>
+
+    <g class="line l8"><text x="28" y="336"><tspan class="tool">● run_tests</tspan><tspan x="300" class="ok">3/3 passed</tspan></text></g>
+    <g class="line l9"><text x="28" y="368"><tspan x="48" class="dim">↳</tspan><tspan x="72" class="att">attestation att_7f3c… minted by the server</tspan></text></g>
+    <g class="line l10"><text x="28" y="400"><tspan class="tool">● record_verification_run</tspan><tspan x="300" class="txt">3 criteria ← att_7f3c</tspan></text></g>
+
+    <g class="line l11"><text x="28" y="444"><tspan class="tool">● complete_changeset</tspan><tspan x="300" class="ok">✓ ready · completed · stateFlushed: true</tspan></text></g>
+
+    <g class="line l12">
+      <rect x="28" y="476" width="944" height="52" rx="10" fill="#052e2b" stroke="#134e4a"/>
+      <text x="48" y="508"><tspan class="ok">✓</tspan><tspan x="72" class="txt">Todos API is live, tested and on disk. Export it any time:</tspan><tspan dx="10" class="tool">opentide export</tspan></text>
+      <rect x="940" y="494" width="10" height="20" fill="#5eead4" class="cursor"/>
+    </g>
+  </g>
+</svg>
