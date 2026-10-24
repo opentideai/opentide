@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-label="Live: changes land in a running app. Proven: completion needs evidence the server minted. Yours: export a plain Deno or Node app.">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" role="img" aria-label="Fewer bugs: nothing lands without tests the server ran. Less review: every change comes with its plan and its proof. Fewer tokens: the agent asks the app instead of rereading your code.">
   <style>
     .ui { font-family: ui-sans-serif, -apple-system, 'Segoe UI', Inter, Helvetica, Arial, sans-serif; }
     .pulse { animation: pulse 2.2s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
@@ -11,53 +11,53 @@
     </linearGradient>
   </defs>
 
-  <!-- LIVE -->
+  <!-- FEWER BUGS -->
   <g transform="translate(0 0)">
     <rect x="1" y="1" width="382" height="278" rx="22" fill="url(#card)" stroke="#164e63"/>
     <g transform="translate(32 34)">
       <rect width="60" height="60" rx="16" fill="#083344"/>
-      <path d="M33 10 L18 34 H30 L26 50 L43 24 H31 Z" fill="#22d3ee" class="pulse"/>
+      <path d="M30 10 L46 16 V30 C46 40 39 47 30 51 C21 47 14 40 14 30 V16 Z" fill="none" stroke="#22d3ee" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M22 30 L28 36 L39 24" fill="none" stroke="#22d3ee" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" class="pulse"/>
     </g>
-    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Live</text>
+    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Fewer bugs</text>
     <text class="ui" font-size="17" fill="#94a3b8">
-      <tspan x="32" y="176">Every handler, route and schema</tspan>
-      <tspan x="32" y="202">lands in a running app the moment</tspan>
-      <tspan x="32" y="228">the agent writes it. No build step,</tspan>
-      <tspan x="32" y="254">no restart, no “works on my branch”.</tspan>
+      <tspan x="32" y="176">A change can’t close until tests the</tspan>
+      <tspan x="32" y="202">server itself ran cover every promise</tspan>
+      <tspan x="32" y="228">in the plan. Builds are booted and</tspan>
+      <tspan x="32" y="254">smoke-tested before you ship.</tspan>
     </text>
   </g>
 
-  <!-- PROVEN -->
+  <!-- LESS REVIEW -->
   <g transform="translate(408 0)">
     <rect x="1" y="1" width="382" height="278" rx="22" fill="url(#card)" stroke="#134e4a"/>
     <g transform="translate(32 34)">
       <rect width="60" height="60" rx="16" fill="#042f2e"/>
-      <path d="M30 10 L46 16 V30 C46 40 39 47 30 51 C21 47 14 40 14 30 V16 Z" fill="none" stroke="#5eead4" stroke-width="3.5" stroke-linejoin="round"/>
-      <path d="M22 30 L28 36 L39 24" fill="none" stroke="#5eead4" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" class="pulse"/>
+      <path d="M18 10 H36 L44 18 V50 H18 Z" fill="none" stroke="#5eead4" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M24 34 L29 39 L38 28" fill="none" stroke="#5eead4" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" class="pulse"/>
     </g>
-    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Proven</text>
+    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Less review</text>
     <text class="ui" font-size="17" fill="#94a3b8">
-      <tspan x="32" y="176">“Done” needs receipts. Test runs and</tspan>
-      <tspan x="32" y="202">type checks are attested by the server,</tspan>
-      <tspan x="32" y="228">and the gate won’t close a change</tspan>
-      <tspan x="32" y="254">until the evidence covers the plan.</tspan>
+      <tspan x="32" y="176">Every change arrives with its plan,</tspan>
+      <tspan x="32" y="202">acceptance criteria and evidence, and</tspan>
+      <tspan x="32" y="228">every edit records why it was made.</tspan>
+      <tspan x="32" y="254">Read the proof, not a 900-line diff.</tspan>
     </text>
   </g>
 
-  <!-- YOURS -->
+  <!-- FEWER TOKENS -->
   <g transform="translate(816 0)">
     <rect x="1" y="1" width="382" height="278" rx="22" fill="url(#card)" stroke="#312e81"/>
     <g transform="translate(32 34)">
       <rect width="60" height="60" rx="16" fill="#1e1b4b"/>
-      <path d="M30 12 V38 M19 28 L30 39 L41 28" fill="none" stroke="#a5b4fc" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" class="pulse"/>
-      <path d="M15 42 V47 H45 V42" fill="none" stroke="#a5b4fc" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M33 10 L18 34 H30 L26 50 L43 24 H31 Z" fill="#a5b4fc" class="pulse"/>
     </g>
-    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Yours</text>
+    <text x="32" y="138" class="ui" font-size="34" font-weight="800" fill="#f8fafc">Fewer tokens</text>
     <text class="ui" font-size="17" fill="#94a3b8">
-      <tspan x="32" y="176">One command exports a plain Deno</tspan>
-      <tspan x="32" y="202">or Node app you can deploy anywhere.</tspan>
-      <tspan x="32" y="228">No runtime to rent, no lock-in. Bring</tspan>
-      <tspan x="32" y="254">the agent you already pay for.</tspan>
+      <tspan x="32" y="176">The agent asks the app for its routes,</tspan>
+      <tspan x="32" y="202">handlers and schemas instead of</tspan>
+      <tspan x="32" y="228">rereading files, edits one function</tspan>
+      <tspan x="32" y="254">at a time, and gets exact errors back.</tspan>
     </text>
   </g>
 </svg>

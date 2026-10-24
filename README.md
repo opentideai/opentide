@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="OpenTide: your agent builds it live, then it proves it works" width="100%">
+  <img src="assets/hero.svg" alt="OpenTide: let your coding agent ship real apps. Fewer bugs, less review, fewer tokens." width="100%">
 </p>
 
 <p align="center">
@@ -12,34 +12,39 @@
 
 <p align="center">
   <b><a href="#quick-start">Quick start</a></b> ·
+  <b><a href="#what-you-get">What you get</a></b> ·
   <b><a href="#how-it-works">How it works</a></b> ·
-  <b><a href="#everything-it-does">Features</a></b> ·
   <b><a href="#ship-it">Ship it</a></b> ·
   <b><a href="#docs">Docs</a></b>
 </p>
 
 ---
 
-**Coding agents are fast. Then you spend the afternoon finding out what they
-actually did.**
+**You asked your agent for a feature. It said "done". Now you're reading 900
+lines of diff, running the tests it didn't run, and finding the bug it didn't
+mention.**
 
-OpenTide flips that. Plug in Claude Code, Codex or Cursor, and your agent stops
-editing files in the dark. It builds inside a **running app**: every handler,
-route and table it creates is serving requests seconds later. And when it says
-_done_, it has to **prove it**, with test runs and type checks the server
-witnessed and recorded, not ones the agent typed into a summary.
+OpenTide is the workspace that fixes that. Connect Claude Code, Codex or Cursor
+over MCP and your agent builds inside a running app that keeps it honest:
 
-When you're happy, one command hands you a **plain Deno or Node app**. No
-platform to rent. No lock-in. No model inside, no API key. Bring the agent you
-already pay for.
+- 🐛 **Fewer bugs reach you.** A change can't be marked done until tests the
+  server ran itself cover every point in the plan.
+- 👀 **You review in minutes, not hours.** Every change comes with its plan, its
+  acceptance criteria and its evidence. You check the proof instead of
+  reverse-engineering the diff.
+- 🪙 **You spend fewer tokens.** The agent asks the app what exists instead of
+  rereading your codebase, edits one function at a time, and gets errors that
+  say exactly what to fix.
+- 🔓 **You own the result.** One command exports a plain Deno or Node app. No
+  platform fee, no lock-in, no API key. Bring the agent you already pay for.
 
 <p align="center">
-  <img src="assets/pillars.svg" alt="Live, Proven, Yours" width="100%">
+  <img src="assets/pillars.svg" alt="Fewer bugs, less review, fewer tokens" width="100%">
 </p>
 
 ## Quick start
 
-You need [Deno 2](https://deno.com). Then it's four commands:
+You need [Deno 2](https://deno.com). Four commands:
 
 ```sh
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
@@ -48,19 +53,18 @@ opentide mcp --print-config claude-code --project "$PWD" > .mcp.json
 claude
 ```
 
-Now ask for something real:
+Ask for something real:
 
 > _Add a todos API with create, list and complete, backed by a table, with
 > tests._
 
 <p align="center">
-  <img src="assets/session.svg" alt="A Claude Code session: plan, build live, test, attest, complete" width="88%">
+  <img src="assets/session.svg" alt="A Claude Code session: plan, build, test, attest, complete" width="88%">
 </p>
 
-The agent opens a changeset with a plan and acceptance criteria. It builds the
-schema, handlers and routes straight into the running app, writes the tests,
-runs them, cites the server's attestation as evidence, and closes the change,
-which is flushed to disk for you to commit.
+What you get back isn't a summary to take on faith. It's a finished change with
+a plan, passing tests the server witnessed, and the evidence linked to each
+acceptance criterion, already saved to files you commit.
 
 <details>
 <summary><b>Codex, Cursor, or any other MCP client</b></summary>
@@ -79,6 +83,132 @@ told on connect: [docs/mcp-connect.md](docs/mcp-connect.md).
 
 </details>
 
+## What you get
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🐛 Fewer bugs reach you
+
+The agent can't call a change finished on its own say-so.
+
+- `complete_changeset` refuses until every acceptance criterion is backed by
+  evidence.
+- Evidence must cite **attestations** that the server mints when it runs
+  `run_tests`, `check_export_types` or `verify_formal_specs`. Edit the code
+  afterwards and the attestation goes stale.
+- Before an agent edits something, `search_changes` tells it why the code is the
+  way it is, so it doesn't undo a fix.
+- `opentide build` boots the build and smoke-tests its routes before you ship.
+
+</td>
+<td width="50%" valign="top">
+
+### 👀 You review in minutes
+
+Every change is a **changeset**: a title, a plan with steps, acceptance
+criteria, a verification plan, and the evidence that it was met.
+
+- You read what was intended and what was proven, not a wall of diff.
+- Every edit records its rationale, searchable later with `search_changes` and
+  `get_change`.
+- `project_status` gives you one verdict on the project's health, and
+  `get_changeset_context` shows a change's plan and progress.
+- The gate runs advisory, graduated or strict. You decide how hard it bites.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🪙 You spend fewer tokens
+
+Most agent tokens go on rediscovering your code. Here the agent asks.
+
+- `list_routes`, `list_handlers` and `list_schemas` return the app's structure
+  directly, with no file crawling or grep loops.
+- Edits are per entity: one handler, one route, one schema. The agent doesn't
+  rewrite whole files to change one function.
+- Errors are structured and specific. A mistyped argument comes back as
+  `INVALID_ARGUMENTS` naming the right key, so it's fixed on the first retry.
+- Claude Code loads OpenTide's tools on demand, so 109 tools don't sit in every
+  prompt.
+
+</td>
+<td valign="top">
+
+### ⚡ You see it working right away
+
+No build-and-restart loop between "written" and "running".
+
+- A handler is serving the moment it's defined. A route is on the preview port
+  the moment it's registered. A schema change has run the moment it lands.
+- The agent checks its own UI work with browser screenshots and scripted UI
+  tests (`screenshot_app`, `test_app`) against the running app.
+- You open `localhost` and click around while it's still working.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### ⏪ You never lose work
+
+Agents go off the rails. Getting back is one call.
+
+- `undo_change` and `undo_turn` step back one change or a whole agent turn.
+- Abandoning a changeset **rewinds** the code, schema and files to where they
+  started, and your app's data stays.
+- Agent crashed, restarted, or you ran `/clear` mid-change? The next session
+  calls `adopt_changeset` and carries on with the plan and progress intact.
+- `take_snapshot` and `restore_snapshot` for anything bigger.
+
+</td>
+<td valign="top">
+
+### 🔀 You go faster in parallel
+
+Two agents, one project, no merge hell.
+
+- `start_task` forks the project for a second agent, with its own server and
+  preview.
+- `merge_task` replays the fork onto main and completes it only if main's own
+  tests pass.
+- If two forks change the same thing, the second merge is refused with the
+  conflicts named. You never get a silent overwrite.
+- One writer at a time on main, enforced, so agents can't trample each other.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🔓 You own the result
+
+- `opentide export` writes a standalone Deno app, and `opentide build` makes a
+  deployable Deno or Node build.
+- Apache-2.0, runs on your machine, uses your Postgres (PGlite locally, or any
+  Postgres via `OPENTIDE_DB_URL`).
+- No model inside and no API key. It works with the agent subscription you
+  already have.
+
+</td>
+<td valign="top">
+
+### 🔒 Safe by default
+
+- The server listens on loopback only and needs a per-project bearer token.
+- Secrets go through `define_secret`, never into code.
+- `check_package_security` checks installed packages for known vulnerabilities
+  and deprecations, with upgrade advice.
+- Projects live in Git, and machine-local state stays out of commits. See
+  [docs/project-storage.md](docs/project-storage.md).
+
+</td>
+</tr>
+</table>
+
 ## How it works
 
 <p align="center">
@@ -88,92 +218,7 @@ told on connect: [docs/mcp-connect.md](docs/mcp-connect.md).
 One `opentide serve` per project holds the app. Its routes, handlers, schemas,
 templates, migrations and tests live in a project database the server owns, and
 they hot-swap the moment they're defined. Agents drive it through **109 MCP
-tools**. Any number of them can connect; one at a time holds the pen.
-
-## Everything it does
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 🌊 Builds live
-
-Define a handler and it's serving. Register a route and it's on the preview
-port. Alter a table and the migration has run. No build step, no restart, no
-waiting to find out whether it works.
-
-</td>
-<td width="50%" valign="top">
-
-### 🧾 Proof the agent can't fake
-
-`run_tests`, `check_export_types` and `verify_formal_specs` mint
-**attestations** on the server. Evidence has to cite them, and editing the code
-afterwards makes them stale. `complete_changeset` stays shut until every
-criterion in the plan is covered.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### 📋 Changesets, not chaos
-
-Every change starts as a plan: steps, acceptance criteria, a verification plan.
-Each step is tracked. The readiness gate runs advisory, graduated or strict: you
-decide how hard it bites.
-
-</td>
-<td valign="top">
-
-### ⏪ Real undo
-
-`undo_change` and `undo_turn` step back one change or one agent turn. Abandoning
-a changeset **rewinds** code, schema and files to where they started, and your
-app's data stays put.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### 🔀 Parallel agents, no merge hell
-
-`start_task` forks the project so a second agent can build alongside the first.
-`merge_task` replays the fork onto main under main's own tests. If the two
-collide, it refuses and names the conflict.
-
-</td>
-<td valign="top">
-
-### 🧰 The tools agents wish they had
-
-Blast radius before a rename. Test coverage. Lint. Dependency security checks.
-Browser screenshots and scripted UI tests against the running app. Git.
-Snapshots. Generated API docs.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### 🔌 Survives `/clear`
-
-Agent crashed, restarted or lost its context mid-change? The next one calls
-`adopt_changeset` and picks up the work, plan and progress included.
-
-</td>
-<td valign="top">
-
-### ✍️ Editors too
-
-`opentide lsp` serves completion, hover, go-to-definition and rename for the
-app's code, so your editor sees what the agent built.
-[docs/lsp-connect.md](docs/lsp-connect.md)
-
-</td>
-</tr>
-</table>
+tools**. Any number can connect; one at a time holds the pen.
 
 ## See it running
 
@@ -194,16 +239,13 @@ cd todo-export && deno task start
 
 You get a standalone app: an entry point, a router, the handlers with their
 request validation, a schema seed and generated API docs. `opentide build` makes
-a deployable build for **Deno or Node** (Node 24+), and its gates boot the build
-and smoke-test the routes before you ship.
+a deployable build for **Deno or Node** (Node 24+).
 
 ## Good to know
 
 - **Work lives in memory until it's flushed.** `complete_changeset` flushes it
   to `.opentide/state/`, which you commit. If it reports `stateFlushed: false`,
   the work exists only in the running server.
-- **Projects live in Git.** What's shared and what stays local:
-  [docs/project-storage.md](docs/project-storage.md).
 - **Platforms.** macOS and Linux run the full test suite and the install smoke
   in CI on every push. On Windows, use WSL; native Windows hasn't been run.
 - **It's 0.1.** Expect rough edges, and please
