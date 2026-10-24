@@ -115,8 +115,8 @@ for Deno or Node (Node 24 or later). The flags are in
 
 ## Platforms
 
-- **macOS:** tested on Apple silicon.
-- **Linux:** should work; it isn't tested yet.
+- **macOS and Linux:** CI runs the test suite and the install smoke on both, on
+  every push (macOS on Apple silicon, Linux on Ubuntu).
 - **Windows:** use WSL. The installer is a POSIX shell script, and native
   Windows hasn't been run.
 
