@@ -67,7 +67,9 @@ export function parseGenieUri(uri: string): Result<GenieDocumentRef> {
   const runtimeId = match[1]!;
   // Reuse the service's own path parser for the plural→singular + name split, so
   // the URI and the virtual FS can never disagree on how a folder maps to a type.
-  const parsed = parseEntityPath(`${VIRTUAL_ROOT}/${match[2]!}/${match[3]!}.ts`);
+  const parsed = parseEntityPath(
+    `${VIRTUAL_ROOT}/${match[2]!}/${match[3]!}.ts`,
+  );
   if (!parsed) {
     return {
       ok: false,

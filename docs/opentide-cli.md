@@ -89,13 +89,11 @@ there are any.
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request:
 
-| Job                 | Runs on       | What                                      |
-| ------------------- | ------------- | ----------------------------------------- |
-| Lint and type-check | Ubuntu        | `deno lint`, `deno check` over the source |
-| Tests               | Ubuntu, macOS | `deno task test`                          |
-| Install smoke       | Ubuntu, macOS | `deno task smoke:install`                 |
-
-Formatting isn't enforced yet: 37 files aren't `deno fmt` clean.
+| Job                         | Runs on       | What                                          |
+| --------------------------- | ------------- | --------------------------------------------- |
+| Format, lint and type-check | Ubuntu        | `deno fmt --check`, `deno lint`, `deno check` |
+| Tests                       | Ubuntu, macOS | `deno task test`                              |
+| Install smoke               | Ubuntu, macOS | `deno task smoke:install`                     |
 
 ## Commands
 

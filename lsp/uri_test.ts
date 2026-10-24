@@ -64,12 +64,14 @@ Deno.test("entity names containing dots round-trip", () => {
 });
 
 Deno.test("non-genie URIs are rejected with a Result error", () => {
-  for (const bad of [
-    "file:///tmp/x.ts",
-    "opentide://typescript/handlers/getUsers.js",
-    "opentide://onlyhost",
-    "not a uri",
-  ]) {
+  for (
+    const bad of [
+      "file:///tmp/x.ts",
+      "opentide://typescript/handlers/getUsers.js",
+      "opentide://onlyhost",
+      "not a uri",
+    ]
+  ) {
     const parsed = parseGenieUri(bad);
     assert(!parsed.ok, `expected ${bad} to be rejected`);
     assertEquals(parsed.error.code, "INVALID_ENTITY_URI");

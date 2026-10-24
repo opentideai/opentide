@@ -44,15 +44,25 @@ function v4Usage(
   };
 }
 
-type UnifiedFinish = "stop" | "length" | "content-filter" | "tool-calls" | "error" | "other";
+type UnifiedFinish =
+  | "stop"
+  | "length"
+  | "content-filter"
+  | "tool-calls"
+  | "error"
+  | "other";
 
-function v4Finish(unified: UnifiedFinish, usage: V4Part = v4Usage(10, 5)): V4Part {
+function v4Finish(
+  unified: UnifiedFinish,
+  usage: V4Part = v4Usage(10, 5),
+): V4Part {
   return { type: "finish", usage, finishReason: { unified, raw: unified } };
 }
 
 function mockModel(chunks: V4Part[]): LanguageModel {
   return new MockLanguageModelV4({
-    doStream: () => Promise.resolve({ stream: simulateReadableStream({ chunks }) }),
+    doStream: () =>
+      Promise.resolve({ stream: simulateReadableStream({ chunks }) }),
   }) as unknown as LanguageModel;
 }
 
@@ -72,7 +82,9 @@ async function collect(
   req: TurnRequest,
 ): Promise<ProviderEvent[]> {
   const events: ProviderEvent[] = [];
-  for await (const ev of provider.streamTurn(req, new AbortController().signal)) {
+  for await (
+    const ev of provider.streamTurn(req, new AbortController().signal)
+  ) {
     events.push(ev);
   }
   return events;
@@ -100,15 +112,25 @@ function normalize(events: ProviderEvent[]): unknown[] {
 
 const BASE_REQ = {
   system: "You are a test agent.",
-  messages: [{ role: "user" as const, content: [{ type: "text" as const, text: "hi" }] }],
+  messages: [{
+    role: "user" as const,
+    content: [{ type: "text" as const, text: "hi" }],
+  }],
   tools: [] as NeutralTool[],
 };
 
 // Each scenario is one scripted V4 stream fed to both providers. The model ids differ
 // (claude-* vs gpt-*) but the emitted usage carries the request's own model, so the
 // comparison substitutes a shared placeholder for the model field.
-function assertProviderParity(chunks: V4Part[], req: Partial<TurnRequest> = {}) {
-  const anthropicReq: TurnRequest = { model: "claude-opus-4-8", ...BASE_REQ, ...req };
+function assertProviderParity(
+  chunks: V4Part[],
+  req: Partial<TurnRequest> = {},
+) {
+  const anthropicReq: TurnRequest = {
+    model: "claude-opus-4-8",
+    ...BASE_REQ,
+    ...req,
+  };
   const openaiReq: TurnRequest = { model: "gpt-5", ...BASE_REQ, ...req };
   return Promise.all([
     collect(anthropicOver(chunks), anthropicReq),
@@ -160,9 +182,19 @@ Deno.test("parity — tool round-trip: identical ProviderEvent contract on both 
 });
 
 Deno.test("parity — every finishReason maps identically on both providers", async () => {
-  const cases: UnifiedFinish[] = ["stop", "length", "content-filter", "tool-calls", "error", "other"];
+  const cases: UnifiedFinish[] = [
+    "stop",
+    "length",
+    "content-filter",
+    "tool-calls",
+    "error",
+    "other",
+  ];
   for (const unified of cases) {
-    await assertProviderParity([{ type: "stream-start", warnings: [] }, v4Finish(unified)]);
+    await assertProviderParity([
+      { type: "stream-start", warnings: [] },
+      v4Finish(unified),
+    ]);
   }
 });
 
@@ -189,7 +221,10 @@ Deno.test("parity — reasoning: same event stream, provider tag intentionally d
   // difference, which is exactly what makes cross-provider replay drop foreign internals.
   const aComplete = a.find((e) => e.type === "message_complete");
   const oComplete = o.find((e) => e.type === "message_complete");
-  assert(aComplete?.type === "message_complete" && oComplete?.type === "message_complete");
+  assert(
+    aComplete?.type === "message_complete" &&
+      oComplete?.type === "message_complete",
+  );
   assertEquals(aComplete.reasoning?.[0]?.provider, "anthropic");
   assertEquals(oComplete.reasoning?.[0]?.provider, "openai");
 });

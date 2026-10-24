@@ -118,11 +118,13 @@ function planDetailLines(plan: Changeset["plan"]): string[] {
     ),
     `attestations: ${(plan.attestations ?? []).length}`,
     ...(plan.changeClass
-      ? [`change class: ${plan.changeClass.effective}${
-        plan.changeClass.escalated
-          ? ` (escalated from ${plan.changeClass.declared}: ${plan.changeClass.reason})`
-          : ""
-      }`]
+      ? [
+        `change class: ${plan.changeClass.effective}${
+          plan.changeClass.escalated
+            ? ` (escalated from ${plan.changeClass.declared}: ${plan.changeClass.reason})`
+            : ""
+        }`,
+      ]
       : []),
   ];
 }

@@ -737,7 +737,9 @@ export const ORCHESTRATOR_ROUTE_DEFS: readonly RouteDef[] = [
           schema: PROJECT_VIEW_SCHEMA,
         },
         "400": { description: "Missing or invalid name/path" },
-        "409": { description: "An OpenTide project already exists at that path" },
+        "409": {
+          description: "An OpenTide project already exists at that path",
+        },
       },
     },
     handler: handleCreate,

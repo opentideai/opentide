@@ -1762,7 +1762,9 @@ Deno.test(
         const turn = all.filter((r) => r.turnId === renamed.turnId);
         assertEquals(turn.length, 3);
         assert(!turn.some((r) => r.action === "delete"));
-        assert(!turn.some((r) => r.key === "computeTax" && r.action === "create"));
+        assert(
+          !turn.some((r) => r.key === "computeTax" && r.action === "create"),
+        );
 
         // A success toast was pushed.
         assert(

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { testComposition } from "../../cli/test-composition.ts";
 import { deleteChangesetSnapshot } from "../changeset-snapshots.ts";
-import { OPENTIDE_DB_URL_ENV, MAX_OPEN_TASKS } from "../config.ts";
+import { MAX_OPEN_TASKS, OPENTIDE_DB_URL_ENV } from "../config.ts";
 import { startControlServer } from "../control-server.ts";
 import {
   getProjectPaths,

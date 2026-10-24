@@ -1,7 +1,11 @@
 // @layer verification — audit dispatch. The model-backed audit runs through the
 // audit-provider hook (audit-provider.ts); this module no longer imports the agent.
 import type { Kernel } from "../core/registries.ts";
-import type { AgentAuditConfig, AuditCategory, AuditResult } from "../core/types.ts";
+import type {
+  AgentAuditConfig,
+  AuditCategory,
+  AuditResult,
+} from "../core/types.ts";
 import { BUILTIN_AUDIT_CATEGORIES } from "../core/types.ts";
 import { BUILTIN_AUDIT_CONFIGS } from "./audit-configs.ts";
 
@@ -66,4 +70,3 @@ function errorAuditResult(
     error,
   };
 }
-

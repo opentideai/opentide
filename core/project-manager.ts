@@ -348,7 +348,8 @@ export function writeProjectPreviewPort(
       ok: false,
       error: {
         code: "PROJECT_NOT_FOUND",
-        message: `No OpenTide project manifest (${PROJECT_FILE}) at ${projectDir}`,
+        message:
+          `No OpenTide project manifest (${PROJECT_FILE}) at ${projectDir}`,
       },
     };
   }
@@ -454,7 +455,8 @@ export function writeProjectMode(
       ok: false,
       error: {
         code: "PROJECT_NOT_FOUND",
-        message: `No OpenTide project manifest (${PROJECT_FILE}) at ${projectDir}`,
+        message:
+          `No OpenTide project manifest (${PROJECT_FILE}) at ${projectDir}`,
       },
     };
   }
@@ -545,7 +547,8 @@ export function writeProjectRunConfig(
       ok: false,
       error: {
         code: "PROJECT_NOT_FOUND",
-        message: `No OpenTide project manifest (${PROJECT_FILE}) at ${projectDir}`,
+        message:
+          `No OpenTide project manifest (${PROJECT_FILE}) at ${projectDir}`,
       },
     };
   }

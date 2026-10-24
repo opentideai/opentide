@@ -66,7 +66,8 @@ function gatePlan(
     steps: [
       {
         id: createTimestampedId("stp"),
-        description: `Apply the reviewed edit to ${entityType} "${entityName}".`,
+        description:
+          `Apply the reviewed edit to ${entityType} "${entityName}".`,
         status: "pending",
       },
     ],

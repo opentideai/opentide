@@ -23,11 +23,15 @@ const BACKFILL_SCAN_LIMIT = Number.MAX_SAFE_INTEGER;
 // the embedded history). Tradeoff: if the process crashes mid-initial-backfill,
 // the partial ledger won't auto-resume — the derived index is then incomplete
 // for pre-table history until manually rebuilt (delete the ledger, reboot).
-export async function backfillVerificationLedger(kernel: Kernel): Promise<number> {
+export async function backfillVerificationLedger(
+  kernel: Kernel,
+): Promise<number> {
   const existing = await kernel.changesets.listLedger({ limit: 1 });
   if (existing.length > 0) return 0;
 
-  const changesets = await kernel.changesets.list({ limit: BACKFILL_SCAN_LIMIT });
+  const changesets = await kernel.changesets.list({
+    limit: BACKFILL_SCAN_LIMIT,
+  });
   let seeded = 0;
   for (const cs of changesets) {
     for (const att of cs.plan.attestations ?? []) {
@@ -74,6 +78,8 @@ async function bestEffort(
     const count = await run();
     if (count > 0) console.log(`  Verification ledger ${describe(count)}`);
   } catch (err) {
-    console.warn(`  Verification ledger ${action} skipped: ${errorMessage(err)}`);
+    console.warn(
+      `  Verification ledger ${action} skipped: ${errorMessage(err)}`,
+    );
   }
 }

@@ -54,13 +54,22 @@ Deno.test("getServeArgs: --port overrides, invalid falls back to the default", (
 Deno.test("getServeArgs: --app-port defaults to auto and pins when given", () => {
   const DEFAULT = 3003;
   // Absent → auto (OS-assigned free port), so two stacks never collide.
-  assertEquals(getServeArgs(DEFAULT, ["--project", "/x"]).appPort, APP_PORT_AUTO);
+  assertEquals(
+    getServeArgs(DEFAULT, ["--project", "/x"]).appPort,
+    APP_PORT_AUTO,
+  );
   // Explicit value pins the preview port.
   assertEquals(getServeArgs(DEFAULT, ["--app-port", "3011"]).appPort, 3011);
   // Explicit 0 is a valid "auto" value.
-  assertEquals(getServeArgs(DEFAULT, ["--app-port", "0"]).appPort, APP_PORT_AUTO);
+  assertEquals(
+    getServeArgs(DEFAULT, ["--app-port", "0"]).appPort,
+    APP_PORT_AUTO,
+  );
   // Invalid / negative falls back to auto rather than binding a bad port.
-  assertEquals(getServeArgs(DEFAULT, ["--app-port", "nope"]).appPort, APP_PORT_AUTO);
+  assertEquals(
+    getServeArgs(DEFAULT, ["--app-port", "nope"]).appPort,
+    APP_PORT_AUTO,
+  );
   assertEquals(getServeArgs(DEFAULT, ["--app-port=-3"]).appPort, APP_PORT_AUTO);
   // --port and --app-port are independent.
   const both = getServeArgs(DEFAULT, ["--port", "3013", "--app-port", "3011"]);
@@ -70,9 +79,15 @@ Deno.test("getServeArgs: --app-port defaults to auto and pins when given", () =>
 
 Deno.test("getOrchestratorArgs: --ui-dist is captured; absent yields null", () => {
   assertEquals(getOrchestratorArgs([]).uiDist, null);
-  assertEquals(getOrchestratorArgs(["--ui-dist", "/build/ide"]).uiDist, "/build/ide");
+  assertEquals(
+    getOrchestratorArgs(["--ui-dist", "/build/ide"]).uiDist,
+    "/build/ide",
+  );
   // Positionals / unrelated flags don't interfere with the one flag it parses.
-  assertEquals(getOrchestratorArgs(["--ui-dist=/dist", "extra"]).uiDist, "/dist");
+  assertEquals(
+    getOrchestratorArgs(["--ui-dist=/dist", "extra"]).uiDist,
+    "/dist",
+  );
 });
 
 Deno.test("getServeArgs: --ui-dist is captured; absent yields null", () => {

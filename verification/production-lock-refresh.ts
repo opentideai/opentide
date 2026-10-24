@@ -69,10 +69,7 @@
 // project's committed lock with an unverified one.
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  buildNodeFiles,
-  writeExportFiles,
-} from "../core/build.ts";
+import { buildNodeFiles, writeExportFiles } from "../core/build.ts";
 import {
   DEFAULT_APP_NAME,
   DEFAULT_APP_VERSION,
@@ -95,8 +92,8 @@ import {
 import {
   type BuildTarget,
   NODE_TOOLCHAIN_ABSENT_DETAIL,
-  NPM_LOCK_ONLY_ARGS,
   nodeToolchainAvailable,
+  NPM_LOCK_ONLY_ARGS,
   TARGET_DENO_SOURCE,
   TARGET_NODE,
   TARGET_NOT_SELECTED_DETAIL,
@@ -220,7 +217,10 @@ async function generateNodeLock(dir: string): Promise<Result<string>> {
     );
   }
   try {
-    return { ok: true, data: readFileSync(join(dir, PACKAGE_LOCKFILE_PATH), "utf-8") };
+    return {
+      ok: true,
+      data: readFileSync(join(dir, PACKAGE_LOCKFILE_PATH), "utf-8"),
+    };
   } catch (err) {
     return refreshFailure(
       NODE_LOCK_REFRESH_FAILED,
@@ -405,7 +405,9 @@ export async function refreshDenoLock(
     } catch (err) {
       return refreshFailure(
         DENO_LOCK_REFRESH_FAILED,
-        `deno ${DENO_LOCK_GEN_ARGS.join(" ")} could not run: ${errorMessage(err)}`,
+        `deno ${DENO_LOCK_GEN_ARGS.join(" ")} could not run: ${
+          errorMessage(err)
+        }`,
       );
     }
     if (!output.success) {
@@ -430,7 +432,10 @@ export async function refreshDenoLock(
 
     // Offline post-condition on the produced bytes, before touching <projectDir>.
     const lockFile: ExportFile = { path: LOCKFILE_PATH, content: lockBytes };
-    const verified = await verifyDependencyLock([...files, lockFile], projectDir);
+    const verified = await verifyDependencyLock(
+      [...files, lockFile],
+      projectDir,
+    );
     if (!verified.ok) {
       return refreshFailure(
         DENO_LOCK_REFRESH_UNVERIFIED,
@@ -546,5 +551,8 @@ export async function refreshLocks(
     );
   }
 
-  return { ok: outcomes.every((o) => o.status !== "failed"), targets: outcomes };
+  return {
+    ok: outcomes.every((o) => o.status !== "failed"),
+    targets: outcomes,
+  };
 }

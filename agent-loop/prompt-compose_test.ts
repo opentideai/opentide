@@ -8,7 +8,11 @@ Deno.test("formatResidentDocuments returns empty for no resident docs", () => {
 
 Deno.test("formatResidentDocuments frames each doc as source under the heading", () => {
   const section = formatResidentDocuments([
-    { name: "Migration plan", versionHash: "abc123", content: "# Plan\nStep one." },
+    {
+      name: "Migration plan",
+      versionHash: "abc123",
+      content: "# Plan\nStep one.",
+    },
   ]);
   assert(section.includes("## Resident documents"));
   assert(section.includes("### Migration plan"));
@@ -36,6 +40,8 @@ Deno.test("composePrompt appends the resident-documents section after other sect
 });
 
 Deno.test("composePrompt omits the section when there are no resident docs", () => {
-  const prompt = composePrompt("BASE", { skills: [{ name: "s", prompt: "p" }] });
+  const prompt = composePrompt("BASE", {
+    skills: [{ name: "s", prompt: "p" }],
+  });
   assert(!prompt.includes("## Resident documents"));
 });

@@ -165,7 +165,10 @@ Deno.test("readiness: warnings alone do not block completion", () => {
   });
   assert(readiness.passed);
   assert(warningCodes(readiness).includes("CLAIMS_WITHOUT_PLANNED_CHECKS"));
-  assertEquals(readiness.summary, "Changeset is ready to complete with 1 warning(s).");
+  assertEquals(
+    readiness.summary,
+    "Changeset is ready to complete with 1 warning(s).",
+  );
 });
 
 // --- always-blocking structural codes ---------------------------------------
@@ -180,15 +183,19 @@ Deno.test("readiness: CHANGESET_NOT_IN_PROGRESS for a non-in_progress status", (
 });
 
 Deno.test("readiness: MISSING_ACCEPTANCE_CRITERIA when no claims are recorded", () => {
-  assert(codes(check({ acceptanceCriteria: [] })).includes(
-    "MISSING_ACCEPTANCE_CRITERIA",
-  ));
+  assert(
+    codes(check({ acceptanceCriteria: [] })).includes(
+      "MISSING_ACCEPTANCE_CRITERIA",
+    ),
+  );
 });
 
 Deno.test("readiness: MISSING_VERIFICATION_PLAN when no checks are planned", () => {
-  assert(codes(check({ verificationPlan: [] })).includes(
-    "MISSING_VERIFICATION_PLAN",
-  ));
+  assert(
+    codes(check({ verificationPlan: [] })).includes(
+      "MISSING_VERIFICATION_PLAN",
+    ),
+  );
 });
 
 Deno.test("readiness: INCOMPLETE_STEPS for pending or in_progress steps", () => {
@@ -212,9 +219,11 @@ Deno.test("readiness: a skipped step counts as settled", () => {
 });
 
 Deno.test("readiness: MISSING_VERIFICATION_RUN when nothing was recorded", () => {
-  assert(codes(check({ verificationRuns: [] })).includes(
-    "MISSING_VERIFICATION_RUN",
-  ));
+  assert(
+    codes(check({ verificationRuns: [] })).includes(
+      "MISSING_VERIFICATION_RUN",
+    ),
+  );
 });
 
 Deno.test("readiness: VERIFICATION_NOT_PASSING for a failed or partial run", () => {
@@ -241,7 +250,12 @@ Deno.test("readiness: UNCOVERED_ACCEPTANCE_CRITERIA when a claim has no result",
   const readiness = check({
     acceptanceCriteria: [claim("clm_1"), claim("clm_2")],
     verificationPlan: [
-      { id: "chk_1", claimIds: ["clm_1", "clm_2"], kind: "unit", description: "t" },
+      {
+        id: "chk_1",
+        claimIds: ["clm_1", "clm_2"],
+        kind: "unit",
+        description: "t",
+      },
     ],
   });
   const uncovered = readiness.errors.find((i) =>
@@ -322,7 +336,12 @@ Deno.test("readiness: UNPLANNED_MANUAL_VERIFICATION when manual was not planned"
 Deno.test("readiness: a manual claim result mapped to a planned manual check is allowed", () => {
   const readiness = check({
     verificationPlan: [
-      { id: "chk_1", claimIds: ["clm_1"], kind: "manual", description: "Look at it" },
+      {
+        id: "chk_1",
+        claimIds: ["clm_1"],
+        kind: "manual",
+        description: "Look at it",
+      },
     ],
     verificationRuns: [
       run({
@@ -407,7 +426,9 @@ Deno.test("readiness: a STALE invariant attestation does not discharge a hard sp
     "advisory",
     { ...FRESH, [HANDLER_SCOPE]: "cc-33333333" }, // the entity moved
   );
-  const issue = readiness.errors.find((i) => i.code === "UNVERIFIED_FORMAL_SPEC");
+  const issue = readiness.errors.find((i) =>
+    i.code === "UNVERIFIED_FORMAL_SPEC"
+  );
   assert(issue);
   // The message must distinguish "never verified" from "verified then drifted" —
   // they call for different fixes.
@@ -438,7 +459,9 @@ Deno.test("readiness: a FAILED invariant attestation does not discharge a hard s
 // --- grounded evidence: attestation presence and freshness ------------------
 
 // A run whose single evidence item is grounded (so the attestation rules apply).
-function groundedRun(over: Partial<VerificationEvidence> = {}): VerificationRun {
+function groundedRun(
+  over: Partial<VerificationEvidence> = {},
+): VerificationRun {
   return run({
     evidence: [evidence({ id: "evidence_0", kind: "typecheck", ...over })],
   });
@@ -505,7 +528,13 @@ function adversarial(
   status: Attestation["status"],
   fingerprint = FRESH[FP]!,
 ): Attestation {
-  return att({ id, kind: "adversarial", checkId: claimId, status, fingerprint });
+  return att({
+    id,
+    kind: "adversarial",
+    checkId: claimId,
+    status,
+    fingerprint,
+  });
 }
 
 Deno.test("readiness: CLAIM_REFUTED blocks regardless of enforcement mode", () => {
@@ -569,14 +598,19 @@ Deno.test("readiness: MUST_CLAIM_UNREVIEWED is advisory, promoted only under str
   const mustOnly = { acceptanceCriteria: [claim("clm_1", "must")] };
   assert(warningCodes(check(mustOnly)).includes("MUST_CLAIM_UNREVIEWED"));
   assert(
-    warningCodes(check(mustOnly, "graduated")).includes("MUST_CLAIM_UNREVIEWED"),
+    warningCodes(check(mustOnly, "graduated")).includes(
+      "MUST_CLAIM_UNREVIEWED",
+    ),
     "graduated promotes only the deterministic codes",
   );
   assert(codes(check(mustOnly, "strict")).includes("MUST_CLAIM_UNREVIEWED"));
 });
 
 Deno.test("readiness: a should-claim never demands adversarial review", () => {
-  const readiness = check({ acceptanceCriteria: [claim("clm_1", "should")] }, "strict");
+  const readiness = check(
+    { acceptanceCriteria: [claim("clm_1", "should")] },
+    "strict",
+  );
   assert(!warningCodes(readiness).includes("MUST_CLAIM_UNREVIEWED"));
   assert(!codes(readiness).includes("MUST_CLAIM_UNREVIEWED"));
 });
@@ -678,7 +712,10 @@ Deno.test("readiness: changeClass is echoed onto the result when present", () =>
 
 Deno.test("readiness: checks counts report what the gate actually looked at", () => {
   const readiness = check({
-    attestations: [att({ id: "att_1" }), att({ id: "att_2", fingerprint: "old" })],
+    attestations: [
+      att({ id: "att_1" }),
+      att({ id: "att_2", fingerprint: "old" }),
+    ],
     verificationRuns: [groundedRun({ attestationId: "att_1" })],
   });
   assertEquals(readiness.checks.acceptanceCriteria, 1);
@@ -722,7 +759,11 @@ Deno.test("readiness: a passing evidence row may not ride a partial attestation"
       verificationRuns: [
         run({
           evidence: [
-            evidence({ id: "evidence_0", kind: "coverage", attestationId: "att_1" }),
+            evidence({
+              id: "evidence_0",
+              kind: "coverage",
+              attestationId: "att_1",
+            }),
           ],
         }),
       ],
@@ -808,7 +849,9 @@ Deno.test("readiness: manifest evidence discharges to a change_manifest attestat
   const readiness = check(
     {
       attestations: [att({ id: "att_1", kind: "change_manifest" })],
-      verificationRuns: [groundedRun({ kind: "manifest", attestationId: "att_1" })],
+      verificationRuns: [
+        groundedRun({ kind: "manifest", attestationId: "att_1" }),
+      ],
     },
     "graduated",
   );
@@ -829,7 +872,9 @@ Deno.test("readiness: a stale attestation reports staleness, not a status contra
   // wins — re-running the verifier fixes both.
   const readiness = check(
     {
-      attestations: [att({ id: "att_1", status: "failed", fingerprint: "old" })],
+      attestations: [
+        att({ id: "att_1", status: "failed", fingerprint: "old" }),
+      ],
       verificationRuns: [groundedRun({ attestationId: "att_1" })],
     },
     "graduated",
@@ -864,7 +909,9 @@ Deno.test("readiness: UNCOVERED_INDEPENDENT_CRITERION for each uncovered proposa
     ],
   });
   assertEquals(
-    warningCodes(readiness).filter((c) => c === "UNCOVERED_INDEPENDENT_CRITERION")
+    warningCodes(readiness).filter((c) =>
+      c === "UNCOVERED_INDEPENDENT_CRITERION"
+    )
       .length,
     2,
     "one finding per gap, so each can be dismissed on its own merits",
@@ -887,7 +934,9 @@ Deno.test("readiness: the finding carries the proposal text and its rationale", 
   const readiness = check({
     attestations: [criteriaAttestation()],
     independentCriteria: [
-      proposal("icr_1", "Refunds restore stock.", { rationale: "Money moved." }),
+      proposal("icr_1", "Refunds restore stock.", {
+        rationale: "Money moved.",
+      }),
     ],
   });
   const issue = readiness.warnings.find((i) =>
@@ -905,21 +954,27 @@ Deno.test("readiness: the finding hardens only under strict", () => {
     attestations: [criteriaAttestation()],
     independentCriteria: [proposal("icr_1", "Something was missed.")],
   };
-  assert(warningCodes(check(withGap)).includes("UNCOVERED_INDEPENDENT_CRITERION"));
+  assert(
+    warningCodes(check(withGap)).includes("UNCOVERED_INDEPENDENT_CRITERION"),
+  );
   assert(
     warningCodes(check(withGap, "graduated")).includes(
       "UNCOVERED_INDEPENDENT_CRITERION",
     ),
     "graduated promotes only the deterministic codes; this one needs a model",
   );
-  assert(codes(check(withGap, "strict")).includes("UNCOVERED_INDEPENDENT_CRITERION"));
+  assert(
+    codes(check(withGap, "strict")).includes("UNCOVERED_INDEPENDENT_CRITERION"),
+  );
 });
 
 Deno.test("readiness: STALE proposals are not reported", () => {
   // A proposal judges a particular diff. Once the code moves it is an opinion
   // about something that no longer exists.
   const readiness = check({
-    attestations: [att({ id: "att_crit", kind: "criteria", fingerprint: "old" })],
+    attestations: [
+      att({ id: "att_crit", kind: "criteria", fingerprint: "old" }),
+    ],
     independentCriteria: [proposal("icr_1", "Something was missed.")],
   }, "strict");
   assertEquals(codes(readiness), []);
@@ -972,7 +1027,9 @@ Deno.test("readiness: PRIORITY_DOWNGRADED when the reviewer said must and the cl
       }),
     ],
   });
-  const issue = readiness.warnings.find((i) => i.code === "PRIORITY_DOWNGRADED");
+  const issue = readiness.warnings.find((i) =>
+    i.code === "PRIORITY_DOWNGRADED"
+  );
   assert(issue);
   assert(issue.message.includes("Payments are never double-charged."));
   // The message must name the consequence, not just the mismatch.
@@ -982,7 +1039,10 @@ Deno.test("readiness: PRIORITY_DOWNGRADED when the reviewer said must and the cl
 Deno.test("readiness: no finding when both sides agree the claim is a must", () => {
   const readiness = check({
     acceptanceCriteria: [claim("clm_1", "must")],
-    attestations: [criteriaAttestation(), adversarial("att_a", "clm_1", "passed")],
+    attestations: [
+      criteriaAttestation(),
+      adversarial("att_a", "clm_1", "passed"),
+    ],
     independentCriteria: [
       proposal("icr_1", "It holds.", { priority: "must", coveredBy: "clm_1" }),
     ],
@@ -995,7 +1055,10 @@ Deno.test("readiness: a should-rated proposal never raises the finding", () => {
     acceptanceCriteria: [claim("clm_1", "nice")],
     attestations: [criteriaAttestation()],
     independentCriteria: [
-      proposal("icr_1", "Minor nicety.", { priority: "should", coveredBy: "clm_1" }),
+      proposal("icr_1", "Minor nicety.", {
+        priority: "should",
+        coveredBy: "clm_1",
+      }),
     ],
   });
   assert(!warningCodes(readiness).includes("PRIORITY_DOWNGRADED"));
@@ -1006,7 +1069,9 @@ Deno.test("readiness: an UNCOVERED must-proposal raises the gap, not the downgra
   // finding already says everything there is to say.
   const readiness = check({
     attestations: [criteriaAttestation()],
-    independentCriteria: [proposal("icr_1", "Missed entirely.", { priority: "must" })],
+    independentCriteria: [
+      proposal("icr_1", "Missed entirely.", { priority: "must" }),
+    ],
   });
   assert(warningCodes(readiness).includes("UNCOVERED_INDEPENDENT_CRITERION"));
   assert(!warningCodes(readiness).includes("PRIORITY_DOWNGRADED"));
@@ -1017,10 +1082,17 @@ Deno.test("readiness: PRIORITY_DOWNGRADED hardens only under strict, and the lig
     acceptanceCriteria: [claim("clm_1", "should")],
     attestations: [criteriaAttestation()],
     independentCriteria: [
-      proposal("icr_1", "It matters.", { priority: "must", coveredBy: "clm_1" }),
+      proposal("icr_1", "It matters.", {
+        priority: "must",
+        coveredBy: "clm_1",
+      }),
     ],
   };
-  assert(warningCodes(check(downgraded, "graduated")).includes("PRIORITY_DOWNGRADED"));
+  assert(
+    warningCodes(check(downgraded, "graduated")).includes(
+      "PRIORITY_DOWNGRADED",
+    ),
+  );
   assert(codes(check(downgraded, "strict")).includes("PRIORITY_DOWNGRADED"));
 
   const light = check({
@@ -1039,9 +1111,14 @@ Deno.test("readiness: PRIORITY_DOWNGRADED hardens only under strict, and the lig
 Deno.test("readiness: a STALE review raises neither criteria finding", () => {
   const readiness = check({
     acceptanceCriteria: [claim("clm_1", "should")],
-    attestations: [att({ id: "att_crit", kind: "criteria", fingerprint: "old" })],
+    attestations: [
+      att({ id: "att_crit", kind: "criteria", fingerprint: "old" }),
+    ],
     independentCriteria: [
-      proposal("icr_1", "It matters.", { priority: "must", coveredBy: "clm_1" }),
+      proposal("icr_1", "It matters.", {
+        priority: "must",
+        coveredBy: "clm_1",
+      }),
       proposal("icr_2", "So does this.", { priority: "must" }),
     ],
   }, "strict");

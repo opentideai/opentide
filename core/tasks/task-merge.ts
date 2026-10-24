@@ -17,15 +17,8 @@ import {
 import type { Result } from "../types.ts";
 import { errorMessage } from "../util.ts";
 import { findTask, mainDir, releaseFork, saveTask, taskError } from "./fork.ts";
-import type {
-  Change,
-  DiffCategory,
-  StateDiffCategory,
-} from "./state-diff.ts";
-import type {
-  AppliedChange,
-  TaskMerge,
-} from "../../shared/tasks.ts";
+import type { Change, DiffCategory, StateDiffCategory } from "./state-diff.ts";
+import type { AppliedChange, TaskMerge } from "../../shared/tasks.ts";
 import { diffTask, type TaskDiff } from "./task-diff.ts";
 import { readTasks, type TaskRecord } from "./task-store.ts";
 

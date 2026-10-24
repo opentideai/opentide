@@ -10,8 +10,8 @@ import {
 } from "../core/composition.ts";
 import {
   defaultAuditStoreFactory,
-  defaultMcpAuditStoreFactory,
   defaultChangesetStoreFactory,
+  defaultMcpAuditStoreFactory,
 } from "./store-registration.ts";
 
 export function testStoreComposition(): CompositionContext {

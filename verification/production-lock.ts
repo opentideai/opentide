@@ -184,7 +184,10 @@ export async function verifyDependencyLock(
 ): Promise<Result<DependencyLockVerification>> {
   const lock = files.find((f) => f.path === LOCKFILE_PATH);
   if (!lock) {
-    return { ok: true, data: { verified: false, reason: NO_COMMITTED_LOCK_DETAIL } };
+    return {
+      ok: true,
+      data: { verified: false, reason: NO_COMMITTED_LOCK_DETAIL },
+    };
   }
 
   const parsed = parseLock(new TextDecoder().decode(fileBytes(lock)));

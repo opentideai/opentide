@@ -138,7 +138,9 @@ export async function runOrchestrator(
     console.log(`  Children serve their IDE from ${uiDist}`);
   }
 
-  const supervisor = (deps.supervisorFactory ?? defaultSupervisorFactory)(uiDist);
+  const supervisor = (deps.supervisorFactory ?? defaultSupervisorFactory)(
+    uiDist,
+  );
 
   // Boot re-spawn (§6.3): init reads the state file and starts every
   // desiredState="running" child. It resolves once the set has settled (each
@@ -188,7 +190,9 @@ export async function runOrchestrator(
 // hanging.
 if (import.meta.main) {
   runOrchestrator().catch((err) => {
-    console.error(err instanceof Error ? err.stack ?? err.message : String(err));
+    console.error(
+      err instanceof Error ? err.stack ?? err.message : String(err),
+    );
     Deno.exit(1);
   });
 }

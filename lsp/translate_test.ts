@@ -74,7 +74,10 @@ Deno.test("toDefinitionLocations builds opentide:// URIs with point ranges", () 
     { entityType: "function", entityName: "formatUser", line: 1, column: 10 },
   ];
   const locations = toDefinitionLocations(defs, "typescript");
-  assertEquals(locations[0]!.uri, "opentide://typescript/functions/formatUser.ts");
+  assertEquals(
+    locations[0]!.uri,
+    "opentide://typescript/functions/formatUser.ts",
+  );
   // A definition is a point: start === end, at the 0-based converted position.
   assertEquals(locations[0]!.range, {
     start: { line: 0, character: 9 },

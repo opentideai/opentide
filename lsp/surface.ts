@@ -55,8 +55,11 @@ function customNotificationMethods(): string[] {
 export function lspSurfaceFingerprint(
   capabilities: ServerCapabilities,
 ): string {
-  const { opentideSurface: _s, opentideReadinessEnforcement: _r, ...structural } =
-    capabilities;
+  const {
+    opentideSurface: _s,
+    opentideReadinessEnforcement: _r,
+    ...structural
+  } = capabilities;
   const parts = [
     `capabilities\n${JSON.stringify(canonicalizeJson(structural))}`,
     ...customNotificationMethods().map((m) => `notification\n${m}`),
@@ -122,7 +125,10 @@ export function buildServerCapabilities(
     capabilities.workspace = {
       fileOperations: {
         didCreate: {
-          filters: [{ scheme: OPENTIDE_URI_SCHEME, pattern: { glob: "**/*.ts" } }],
+          filters: [{
+            scheme: OPENTIDE_URI_SCHEME,
+            pattern: { glob: "**/*.ts" },
+          }],
         },
       },
     };

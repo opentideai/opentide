@@ -6,9 +6,9 @@ import { buildNodeFiles, writeExportFiles } from "../core/build.ts";
 import { Kernel } from "../core/registries.ts";
 import { withKernel } from "./export-fixtures.ts";
 import {
+  EXPORT_NODE_DEPENDENCY_LOCK_FAILED,
   NO_COMMITTED_NODE_LOCK_DETAIL,
   NODE_DEPENDENCY_LOCK_INVALID,
-  EXPORT_NODE_DEPENDENCY_LOCK_FAILED,
   PACKAGE_LOCKFILE_PATH,
   readCommittedNodeLock,
   verifyNodeDependencyLock,
@@ -40,7 +40,9 @@ function populateApp(kernel: Kernel): void {
   kernel.routes.register("GET", "/alpha", "alpha", { summary: "alpha" });
 }
 
-async function withProjectDir(fn: (dir: string) => Promise<void>): Promise<void> {
+async function withProjectDir(
+  fn: (dir: string) => Promise<void>,
+): Promise<void> {
   const dir = await Deno.makeTempDir({ prefix: "nodelock-" });
   try {
     await fn(dir);
@@ -131,7 +133,10 @@ Deno.test("verifyNodeDependencyLock: malformed package-lock.json → NODE_DEPEND
     populateApp(kernel);
     await withProjectDir(async (dir) => {
       const nodeFiles = await buildApp(kernel);
-      nodeFiles.push({ path: PACKAGE_LOCKFILE_PATH, content: "{ not valid json ]" });
+      nodeFiles.push({
+        path: PACKAGE_LOCKFILE_PATH,
+        content: "{ not valid json ]",
+      });
       const result = await verifyNodeDependencyLock(nodeFiles, dir);
       assertEquals(result.ok, false);
       if (!result.ok) {
@@ -146,7 +151,10 @@ Deno.test("verifyNodeDependencyLock: valid JSON but not a lockfile (no lockfileV
     populateApp(kernel);
     await withProjectDir(async (dir) => {
       const nodeFiles = await buildApp(kernel);
-      nodeFiles.push({ path: PACKAGE_LOCKFILE_PATH, content: '{ "packages": {} }' });
+      nodeFiles.push({
+        path: PACKAGE_LOCKFILE_PATH,
+        content: '{ "packages": {} }',
+      });
       const result = await verifyNodeDependencyLock(nodeFiles, dir);
       assertEquals(result.ok, false);
       if (!result.ok) {

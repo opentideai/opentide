@@ -117,7 +117,9 @@ export function classifyChangeRecords(
 function offendingScopes(records: readonly ChangeRecord[]): string[] {
   return [
     ...new Set(
-      records.filter((r) => changeRecordTier(r) === "standard").map(changeScope),
+      records.filter((r) => changeRecordTier(r) === "standard").map(
+        changeScope,
+      ),
     ),
   ];
 }
@@ -161,7 +163,8 @@ function synthesizedPlan(plan: ChangesetPlan): ChangesetPlan {
     acceptanceCriteria: [
       {
         id: claimId,
-        text: `The changes described as "${plan.summary}" are applied and the app ` +
+        text:
+          `The changes described as "${plan.summary}" are applied and the app ` +
           "still builds and serves its routes.",
         source: "inferred",
         priority: "should",
@@ -283,6 +286,7 @@ export function verifyChangeClass(
     declared,
     effective: "standard",
     escalated: true,
-    reason: `Declared light, but ${detail}. The full verification gate applies.`,
+    reason:
+      `Declared light, but ${detail}. The full verification gate applies.`,
   };
 }

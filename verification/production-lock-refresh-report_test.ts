@@ -1,8 +1,5 @@
 import { assertEquals } from "@std/assert";
-import {
-  TARGET_DENO_SOURCE,
-  TARGET_NODE,
-} from "./production-build.ts";
+import { TARGET_DENO_SOURCE, TARGET_NODE } from "./production-build.ts";
 import {
   DENO_LOCK_REFRESH_FAILED,
   type LockRefreshReport,
@@ -23,8 +20,16 @@ Deno.test("projectLockRefreshReport: both targets refreshed → ok, order preser
   const report: LockRefreshReport = {
     ok: true,
     targets: [
-      { target: TARGET_DENO_SOURCE, status: "refreshed", detail: "Refreshed deno.lock (5 specifiers); frozen-valid." },
-      { target: TARGET_NODE, status: "refreshed", detail: "Refreshed package-lock.json (12 packages); frozen-valid." },
+      {
+        target: TARGET_DENO_SOURCE,
+        status: "refreshed",
+        detail: "Refreshed deno.lock (5 specifiers); frozen-valid.",
+      },
+      {
+        target: TARGET_NODE,
+        status: "refreshed",
+        detail: "Refreshed package-lock.json (12 packages); frozen-valid.",
+      },
     ],
   };
   const dto = projectLockRefreshReport(report);
@@ -47,7 +52,11 @@ Deno.test("projectLockRefreshReport: skipped + failed → ok false, failed carri
   const report: LockRefreshReport = {
     ok: false,
     targets: [
-      { target: TARGET_DENO_SOURCE, status: "skipped", detail: "target not selected" },
+      {
+        target: TARGET_DENO_SOURCE,
+        status: "skipped",
+        detail: "target not selected",
+      },
       {
         target: TARGET_NODE,
         status: "failed",
@@ -63,7 +72,10 @@ Deno.test("projectLockRefreshReport: skipped + failed → ok false, failed carri
   assertEquals("code" in dto.targets[0]!, false);
   assertEquals(dto.targets[1]!.status, "failed");
   assertEquals(dto.targets[1]!.code, DENO_LOCK_REFRESH_FAILED);
-  assertEquals(dto.targets[1]!.detail, "npm lock generation failed (exit code 1).");
+  assertEquals(
+    dto.targets[1]!.detail,
+    "npm lock generation failed (exit code 1).",
+  );
 });
 
 // --- Fresh objects, not the report's ------------------------------------------

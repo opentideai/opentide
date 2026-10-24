@@ -41,6 +41,13 @@
     "strict": true,
     "noUncheckedIndexedAccess": true
   },
+  "fmt": {
+    "exclude": [
+      "core/db/migrations/",
+      "mirror/assets/",
+      "assets/"
+    ]
+  },
   "lint": {
     "exclude": [
       "whitepaper/build",

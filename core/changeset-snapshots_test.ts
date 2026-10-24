@@ -16,9 +16,9 @@ import {
 } from "./changeset-snapshots.ts";
 import { initCompiler, stopCompiler } from "./compiler.ts";
 import {
-  OPENTIDE_MAX_CHANGESET_SNAPSHOTS_ENV,
   getKernelSettings,
   MAX_CHANGESET_SNAPSHOTS_DEFAULT,
+  OPENTIDE_MAX_CHANGESET_SNAPSHOTS_ENV,
 } from "./config.ts";
 import { Database } from "./db.ts";
 import { getProjectPaths } from "./project-manager.ts";

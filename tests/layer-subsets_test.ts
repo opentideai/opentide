@@ -4,10 +4,18 @@
 // exposes: what throws, what degrades, and which tool verbs the MCP projection
 // advertises. Because every seam now travels on the Kernel's composition, an
 // assembly is just a CompositionContext — no global state to set up or tear down.
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { Database } from "../core/db.ts";
 import { Kernel } from "../core/registries.ts";
-import { type CompositionContext, coreOnlyComposition } from "../core/composition.ts";
+import {
+  type CompositionContext,
+  coreOnlyComposition,
+} from "../core/composition.ts";
 import { verificationOnlyComposition } from "../cli/assembly.ts";
 import { executeAudit } from "../verification/audit-runner.ts";
 import { dispatchMcpTool, projectedMcpTools } from "../mcp/mcp-projection.ts";
@@ -79,10 +87,16 @@ Deno.test("core+verification assembly: stores work, verification advertised, age
 
     const advertised = advertisedVerbs(composition);
     for (const verb of VERIFICATION_VERBS) {
-      assert(advertised.has(verb), `${verb} should be advertised with verification`);
+      assert(
+        advertised.has(verb),
+        `${verb} should be advertised with verification`,
+      );
     }
     for (const verb of AGENT_VERBS) {
-      assert(!advertised.has(verb), `${verb} (agent) should be hidden with no agent`);
+      assert(
+        !advertised.has(verb),
+        `${verb} (agent) should be hidden with no agent`,
+      );
     }
 
     const result = await executeAudit("security", kernel);

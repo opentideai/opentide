@@ -85,7 +85,10 @@ Deno.test({
       "capability/notification surface changed — this is a contract change: update " +
         "the pin and bump LSP_SURFACE_VERSION (major if a removal/rename)",
     );
-    assertEquals(FULL.opentideSurface?.fingerprint, lspSurfaceFingerprint(FULL));
+    assertEquals(
+      FULL.opentideSurface?.fingerprint,
+      lspSurfaceFingerprint(FULL),
+    );
   },
 });
 

@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 // A real (symlink-free) temp root for tests that compare resolved paths:
 // macOS's /tmp and $TMPDIR are symlinks into /private, Linux's /tmp is not.
-export const TEST_TMP_DIR = Deno.build.os === "darwin" ? "/private/tmp" : "/tmp";
+export const TEST_TMP_DIR = Deno.build.os === "darwin"
+  ? "/private/tmp"
+  : "/tmp";
 
 // Call once at the top of a test file that creates, opens or registers
 // projects, or spawns opentide. Every test in that file then runs under a

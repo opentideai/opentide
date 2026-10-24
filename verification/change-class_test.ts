@@ -41,7 +41,11 @@ function rec(
 function plan(over: Partial<ChangesetPlan> = {}): ChangesetPlan {
   return {
     summary: "Remove the 76px margin from the header.",
-    steps: [{ id: "step_0", description: "Edit the stylesheet", status: "pending" }],
+    steps: [{
+      id: "step_0",
+      description: "Edit the stylesheet",
+      status: "pending",
+    }],
     ...over,
   };
 }
@@ -50,7 +54,10 @@ function plan(over: Partial<ChangesetPlan> = {}): ChangesetPlan {
 
 Deno.test("classifyChangeRecords: light surfaces stay light", () => {
   assertEquals(
-    classifyChangeRecords([rec("asset", "styles.css"), rec("template", "page")]),
+    classifyChangeRecords([
+      rec("asset", "styles.css"),
+      rec("template", "page"),
+    ]),
     "light",
   );
   // Handlers and functions are light-eligible: the line is blast radius, not
@@ -65,7 +72,10 @@ Deno.test("classifyChangeRecords: one structural change escalates the whole set"
     "standard",
   );
   assertEquals(classifyChangeRecords([rec("route", "GET /todos")]), "standard");
-  assertEquals(classifyChangeRecords([rec("secret", "STRIPE_KEY")]), "standard");
+  assertEquals(
+    classifyChangeRecords([rec("secret", "STRIPE_KEY")]),
+    "standard",
+  );
   assertEquals(
     classifyChangeRecords([rec("handler", "getTodos", "delete")]),
     "standard",

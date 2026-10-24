@@ -2,7 +2,10 @@
 // audit-scoring.ts; imported here for AuditMap's own use.
 import type { AuditCategory, AuditResult } from "../core/types.ts";
 import { getKernelSettings } from "../core/config.ts";
-import { computeAuditScore, formatAuditSummary } from "../core/audit-scoring.ts";
+import {
+  computeAuditScore,
+  formatAuditSummary,
+} from "../core/audit-scoring.ts";
 
 const MAX_RESULTS_PER_CATEGORY = getKernelSettings().maxAuditResults;
 
@@ -49,7 +52,9 @@ export class AuditMap {
 
   removeIssue(auditId: string, issueIndex: number): boolean {
     const result = this.results.get(auditId);
-    if (!result || issueIndex < 0 || issueIndex >= result.issues.length) return false;
+    if (!result || issueIndex < 0 || issueIndex >= result.issues.length) {
+      return false;
+    }
     result.issues.splice(issueIndex, 1);
     result.score = computeAuditScore(result.issues);
     result.summary = formatAuditSummary(result.issues);

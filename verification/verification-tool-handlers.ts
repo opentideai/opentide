@@ -6,8 +6,14 @@
 import type { VerificationToolHandlers } from "../core/tool-capabilities.ts";
 import { executeAudit } from "./audit-runner.ts";
 import { auditPackages } from "./audit-packages.ts";
-import { formatChangesetContext, stripChangeSnapshots } from "./changeset-context.ts";
-import { checkChangesetReadiness, validateChangesetPlan } from "./changesets.ts";
+import {
+  formatChangesetContext,
+  stripChangeSnapshots,
+} from "./changeset-context.ts";
+import {
+  checkChangesetReadiness,
+  validateChangesetPlan,
+} from "./changesets.ts";
 import { resolveChangeClass, verifyChangeClass } from "./change-class.ts";
 
 export const defaultVerificationToolHandlers: VerificationToolHandlers = {

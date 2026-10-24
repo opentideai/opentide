@@ -5,7 +5,11 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { readJsonQuarantine, writeJsonAtomic } from "../atomic-json.ts";
 
-import type { TaskOverlap, TaskRecord, TaskWithOverlaps } from "../../shared/tasks.ts";
+import type {
+  TaskOverlap,
+  TaskRecord,
+  TaskWithOverlaps,
+} from "../../shared/tasks.ts";
 
 export type {
   TaskOverlap,

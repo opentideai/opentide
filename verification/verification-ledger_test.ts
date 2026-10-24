@@ -7,7 +7,9 @@ import type { Attestation, ChangesetPlan } from "./changesets.ts";
 import { backfillVerificationLedger } from "./verification-ledger.ts";
 import { TEST_TMP_DIR } from "../core/test-home_test.ts";
 
-async function withKernel(fn: (kernel: Kernel) => Promise<void>): Promise<void> {
+async function withKernel(
+  fn: (kernel: Kernel) => Promise<void>,
+): Promise<void> {
   const dir = await Deno.makeTempDir({
     dir: TEST_TMP_DIR,
     prefix: "tideide-ledger-",
@@ -70,7 +72,13 @@ Deno.test("backfill seeds the ledger from embedded attestations, idempotently", 
     await kernel.changesets.create({
       title: "B",
       plan: planWith([
-        att({ id: "att_3", kind: "adversarial", status: "failed", scope: "project", checkId: "claim_1" }),
+        att({
+          id: "att_3",
+          kind: "adversarial",
+          status: "failed",
+          scope: "project",
+          checkId: "claim_1",
+        }),
       ]),
     });
     assertEquals((await kernel.changesets.listLedger()).length, 0);
@@ -113,7 +121,10 @@ Deno.test("pruneLedger keeps the newest N; no-op when disabled or under the cap"
 
 Deno.test("backfill is a no-op once dual-write has populated the ledger", async () => {
   await withKernel(async (kernel) => {
-    const cs = await kernel.changesets.create({ title: "A", plan: planWith([]) });
+    const cs = await kernel.changesets.create({
+      title: "A",
+      plan: planWith([]),
+    });
     await kernel.changesets.recordAttestation(cs.id, {
       kind: "invariant",
       status: "passed",

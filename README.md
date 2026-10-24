@@ -34,9 +34,9 @@ Python support is coming next.
 
 - **Fewer bugs.** A change can't be marked done until tests the server ran
   itself cover every point in the plan.
-- **Fewer review rounds.** Every change comes with its plan, its
-  acceptance criteria and its evidence. Check the proof instead of
-  reverse-engineering the diff.
+- **Fewer review rounds.** Every change comes with its plan, its acceptance
+  criteria and its evidence. Check the proof instead of reverse-engineering the
+  diff.
 - **Spend fewer tokens.** The agent asks the app what exists instead of
   rereading your codebase, edits one function at a time, and gets errors that
   say exactly what to fix.
