@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="OpenTide: let your coding agent ship real apps. Fewer bugs, less review, fewer tokens." width="100%">
+  <img src="assets/hero.svg" alt="OpenTide: let your agent ship production-ready apps. Fewer bugs, less review, fewer tokens." width="100%">
 </p>
 
 <p align="center">
