@@ -49,8 +49,8 @@ COMMANDS:
   mcp        Serve the outbound MCP server for external coding agents.
   lsp        Serve the outbound LSP server for external editors and agents.
   scaffold   Create a new, loadable project under a parent directory.
-  build      Build a loaded project's deno target into dist/.
-  export     Export a loaded project as an unpacked file tree or a tarball.
+  build      Build a deployable app into dist/ (Node by default).
+  export     Export the app as an unpacked file tree or a tarball (Node by default).
   task       Fork a project into a parallel task (start), list or discard tasks.
   lock:refresh
              Regenerate the committed deno.lock / package-lock.json (network-
@@ -65,8 +65,8 @@ EXAMPLES:
   opentide mcp      --project /path/to/project [--standalone | --http]
   opentide lsp      --project /path/to/project
   opentide scaffold ./parent-dir "My App"
-  opentide build    --project /path/to/project [--include-seed-data]
-  opentide export   --project /path/to/project [--out <p>] [--tarball] [--force] [--include-seed-data]
+  opentide build    --project /path/to/project [--target node|deno] [--include-seed-data]
+  opentide export   --project /path/to/project [--target node|deno] [--out <p>] [--tarball] [--force] [--include-seed-data]
   opentide lock:refresh --project /path/to/project [--target deno-source|node]
   opentide task start --project /path/to/project --title "<t>" [--claim <scope>]...
   opentide task list  --project /path/to/project

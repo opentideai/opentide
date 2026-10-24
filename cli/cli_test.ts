@@ -97,6 +97,20 @@ Deno.test("opentide build/export/lock:refresh without --project: usage on stderr
   }
 });
 
+Deno.test("opentide build and export reject an unknown --target", async () => {
+  for (const command of ["build", "export"]) {
+    const { code, stderr } = await runOpentide([
+      command,
+      "--project",
+      "/nonexistent",
+      "--target",
+      "rust",
+    ]);
+    assertEquals(code, 2, `${command} --target rust should exit 2`);
+    assertStringIncludes(stderr, "unknown --target");
+  }
+});
+
 Deno.test("opentide lock:refresh with an unknown --target: usage on stderr, exit 2", async () => {
   // Target validation runs before the project check, so no --project is needed to
   // reject `binary` (a compiled binary has no lock of its own).
@@ -111,28 +125,58 @@ Deno.test("opentide lock:refresh with an unknown --target: usage on stderr, exit
   assertStringIncludes(stderr, "unknown --target");
 });
 
-// The Slice C gate, automated: build (deno) and export (dir + --tarball) run
-// headless against a loaded Kernel and land real artifacts. One scaffolded
-// project serves all three run-once subprocesses.
+// build and export run headless against a loaded Kernel and land real
+// artifacts: Node by default, Deno with --target deno, and the --tarball form.
+// One scaffolded project serves every run-once subprocess.
 Deno.test("opentide build + export run headless against a loaded project", async () => {
   const parent = await Deno.makeTempDir({ prefix: "opentide-build-cli-" });
   const project = createProject(parent, "Build Smoke");
   try {
-    // build → dist/v<version> holding the exported deno target (fresh project
-    // has no version.json, so getVersion falls back to 0.1.0).
+    // build → dist/v<version>-node, a Node app (fresh project has no
+    // version.json, so getVersion falls back to 0.1.0).
     const built = await runOpentide(["build", "--project", project.path]);
     assertEquals(built.code, 0, built.stderr);
     assert(
+      existsSync(join(project.path, "dist", "v0.1.0-node", "package.json")),
+      "build should write dist/v0.1.0-node/package.json",
+    );
+    const builtDeno = await runOpentide([
+      "build",
+      "--project",
+      project.path,
+      "--target",
+      "deno",
+    ]);
+    assertEquals(builtDeno.code, 0, builtDeno.stderr);
+    assert(
       existsSync(join(project.path, "dist", "v0.1.0", "deno.json")),
-      "build should write dist/v0.1.0/deno.json",
+      "build --target deno should write dist/v0.1.0/deno.json",
     );
 
-    // export (default, unpacked tree) → deps.ts under <project>/export.
+    // export (default, unpacked tree) → a Node app under <project>/export.
     const exported = await runOpentide(["export", "--project", project.path]);
     assertEquals(exported.code, 0, exported.stderr);
     assert(
-      existsSync(join(project.path, "export", "deps.ts")),
-      "export should write the file tree (deps.ts) to <project>/export",
+      existsSync(join(project.path, "export", "main.js")),
+      "export should write the Node file tree (main.js) to <project>/export",
+    );
+    assertStringIncludes(
+      await Deno.readTextFile(join(project.path, "export", "README.md")),
+      "npm start",
+    );
+    const exportedDeno = await runOpentide([
+      "export",
+      "--project",
+      project.path,
+      "--target",
+      "deno",
+      "--out",
+      join(parent, "deno-export"),
+    ]);
+    assertEquals(exportedDeno.code, 0, exportedDeno.stderr);
+    assert(
+      existsSync(join(parent, "deno-export", "deps.ts")),
+      "export --target deno should write the Deno tree (deps.ts)",
     );
 
     // export --tarball → the packed form at the default <project>/<slug>.tar.
@@ -182,7 +226,7 @@ Deno.test("opentide build/export include captured seed data only with explicit f
     ]);
     assertEquals(builtDefault.code, 0, builtDefault.stderr);
     assert(
-      !existsSync(join(project.path, "dist", "v0.1.0", "seed.sql")),
+      !existsSync(join(project.path, "dist", "v0.1.0-node", "seed.sql")),
       "default build should not include captured seed data",
     );
 
@@ -194,7 +238,9 @@ Deno.test("opentide build/export include captured seed data only with explicit f
     ]);
     assertEquals(builtWithSeed.code, 0, builtWithSeed.stderr);
     assertStringIncludes(
-      await Deno.readTextFile(join(project.path, "dist", "v0.1.0", "seed.sql")),
+      await Deno.readTextFile(
+        join(project.path, "dist", "v0.1.0-node", "seed.sql"),
+      ),
       "apple",
     );
 
@@ -270,7 +316,7 @@ Deno.test("opentide export --out guards a non-empty dir; --force overwrites", as
     ]);
     assertEquals(forced.code, 0, forced.stderr);
     assert(
-      existsSync(join(outDir, "deps.ts")),
+      existsSync(join(outDir, "main.js")),
       "--force should write the export tree",
     );
     assert(!existsSync(staleFile), "--force should clear stale files first");

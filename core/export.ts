@@ -49,7 +49,7 @@ import {
 // projectName/projectVersion. Exported so the production-build smoke gate can
 // assert the generated /_health contract ({ ok, name, version }) against the same
 // defaults the generator emits, rather than re-declaring the literals.
-export const DEFAULT_APP_NAME = "Genie App";
+export const DEFAULT_APP_NAME = "OpenTide App";
 export const DEFAULT_APP_VERSION = "unversioned";
 
 // --- Deterministic emission ordering ---
@@ -359,7 +359,7 @@ export async function generateReadme(
   opts?: Pick<ExportProjectOptions, "includeSeedData" | "projectVersion">,
   skippedSchemas: readonly SkippedSchema[] = [],
 ): Promise<string> {
-  const name = projectName ?? "Genie App";
+  const name = projectName ?? "OpenTide App";
   const customInstructions = kernel.configs.get("_genie_custom_instructions") as
     | string
     | null;
@@ -472,23 +472,7 @@ export async function generateReadme(
     lines.push("");
   }
 
-  lines.push("## Getting Started", "");
-  lines.push("```bash");
-  lines.push("deno task start");
-  lines.push("deno task db:prepare");
-  lines.push("deno task db:check");
-  lines.push("deno task start -- --help");
-  lines.push("deno task start -- --port 8080");
-  lines.push("PORT=8080 deno task start");
-  lines.push("```", "");
-  lines.push("Compiled binaries accept the same runtime flags:", "");
-  lines.push("```bash");
-  lines.push("./app --help");
-  lines.push("./app --prepare-db");
-  lines.push("./app --check-db");
-  lines.push("./app --port 8080");
-  lines.push("./app --random-port");
-  lines.push("```", "");
+  lines.push(...gettingStartedLines("deno"));
   lines.push("Server configuration:", "");
   lines.push("- `--port <number|auto>` or `PORT` selects the HTTP port.");
   lines.push("- `--host <host>` or `HOST` selects the bind host.");
@@ -506,12 +490,71 @@ export async function generateReadme(
   return lines.join("\n");
 }
 
+const GETTING_STARTED_HEADING = "## Getting Started";
+const SERVER_CONFIG_HEADING = "Server configuration:";
+
+// How to run the exported app, per target. Node exports carry no compiled
+// binary, so they skip that block.
+function gettingStartedLines(target: "deno" | "node"): string[] {
+  const commands = target === "node"
+    ? [
+      "npm install",
+      "npm run db:prepare",
+      "npm run db:check",
+      "npm start",
+      "npm start -- --help",
+      "npm start -- --port 8080",
+      "PORT=8080 npm start",
+    ]
+    : [
+      "deno task start",
+      "deno task db:prepare",
+      "deno task db:check",
+      "deno task start -- --help",
+      "deno task start -- --port 8080",
+      "PORT=8080 deno task start",
+    ];
+  const lines = [
+    GETTING_STARTED_HEADING,
+    "",
+    "```bash",
+    ...commands,
+    "```",
+    "",
+  ];
+  if (target === "deno") {
+    lines.push(
+      "Compiled binaries accept the same runtime flags:",
+      "",
+      "```bash",
+      "./app --help",
+      "./app --prepare-db",
+      "./app --check-db",
+      "./app --port 8080",
+      "./app --random-port",
+      "```",
+      "",
+    );
+  }
+  return lines;
+}
+
+// The exported README with its Getting Started section rewritten for the Node
+// build (npm, not deno task). Anything else in it is target-neutral.
+export function readmeForNode(readme: string): string {
+  const start = readme.indexOf(GETTING_STARTED_HEADING);
+  const end = readme.indexOf(SERVER_CONFIG_HEADING);
+  if (start < 0 || end < start) return readme;
+  return readme.slice(0, start) +
+    gettingStartedLines("node").join("\n") + "\n" + readme.slice(end);
+}
+
 export async function generateAgentMd(
   kernel: Kernel,
   projectName?: string,
   opts?: Pick<ExportProjectOptions, "includeSeedData">,
 ): Promise<string> {
-  const name = projectName ?? "Genie App";
+  const name = projectName ?? "OpenTide App";
   const customInstructions = kernel.configs.get("_genie_custom_instructions") as
     | string
     | null;
@@ -996,7 +1039,7 @@ export async function exportProject(
   }
 
   if (allRoutes.some((r) => r.schema)) {
-    const spec = generateOpenAPISpec(allRoutes, { title: "Genie App" });
+    const spec = generateOpenAPISpec(allRoutes, { title: DEFAULT_APP_NAME });
     files.push({
       path: "openapi.json",
       content: JSON.stringify(spec, null, 2) + "\n",
@@ -1037,12 +1080,13 @@ export async function exportProject(
     }
     if (opts.includeDocsSite) {
       files.push(
-        ...docsToStaticSiteFiles(docs, opts.projectName ?? "Genie App").map((
-          file,
-        ) => ({
-          ...file,
-          path: `docs/${file.path}`,
-        })),
+        ...docsToStaticSiteFiles(docs, opts.projectName ?? DEFAULT_APP_NAME)
+          .map((
+            file,
+          ) => ({
+            ...file,
+            path: `docs/${file.path}`,
+          })),
       );
     }
   }
@@ -3111,7 +3155,7 @@ function generateAuditReport(kernel: Kernel): string | null {
   return lines.join("\n");
 }
 
-function createTarball(files: ExportFile[]): Uint8Array {
+export function createTarball(files: ExportFile[]): Uint8Array {
   const mtime = deterministicMtime();
   const blocks: Uint8Array[] = [];
 

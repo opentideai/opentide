@@ -6,12 +6,12 @@
   <a href="https://github.com/opentideai/opentide/actions/workflows/ci.yml"><img src="https://github.com/opentideai/opentide/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/opentideai/opentide/releases/latest"><img src="https://img.shields.io/github/v/release/opentideai/opentide?color=5eead4&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/MCP-109_tools-7dd3fc" alt="MCP: 109 tools">
-  <img src="https://img.shields.io/badge/Deno-2-a5b4fc?logo=deno" alt="Deno 2">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-94a3b8" alt="Apache-2.0"></a>
 </p>
 
 <p align="center">
   <b><a href="#quick-start">Quick start</a></b> ·
+  <b><a href="#connect-your-agent">Connect your agent</a></b> ·
   <b><a href="#what-you-get">What you get</a></b> ·
   <b><a href="#how-it-works">How it works</a></b> ·
   <b><a href="#ship-it">Ship it</a></b> ·
@@ -24,19 +24,20 @@
 lines of diff, running the tests it didn't run, and finding the bug it didn't
 mention.**
 
-OpenTide is the workspace that fixes that. Connect Claude Code, Codex or Cursor
-over MCP and your agent builds inside a running app that keeps it honest:
+OpenTide is the workspace that fixes that. Connect any coding agent that speaks
+MCP (Claude Code, Codex, Cursor, Windsurf and the rest) and it builds inside a
+running app that keeps it honest:
 
-- 🐛 **Fewer bugs reach you.** A change can't be marked done until tests the
-  server ran itself cover every point in the plan.
-- 👀 **You review in minutes, not hours.** Every change comes with its plan, its
-  acceptance criteria and its evidence. You check the proof instead of
+- **Fewer bugs.** A change can't be marked done until tests the server ran
+  itself cover every point in the plan.
+- **Review in minutes, not hours.** Every change comes with its plan, its
+  acceptance criteria and its evidence. Check the proof instead of
   reverse-engineering the diff.
-- 🪙 **You spend fewer tokens.** The agent asks the app what exists instead of
+- **Spend fewer tokens.** The agent asks the app what exists instead of
   rereading your codebase, edits one function at a time, and gets errors that
   say exactly what to fix.
-- 🔓 **You own the result.** One command exports a plain Deno or Node app. No
-  platform fee, no lock-in, no API key. Bring the agent you already pay for.
+- **Own the result.** One command exports a plain Node app. No platform fee, no
+  lock-in, no API key. Bring the agent you already pay for.
 
 <p align="center">
   <img src="assets/pillars.svg" alt="Fewer bugs, less review, fewer tokens" width="100%">
@@ -44,10 +45,11 @@ over MCP and your agent builds inside a running app that keeps it honest:
 
 ## Quick start
 
-You need [Deno 2](https://deno.com). Four commands:
+The installer brings everything it needs; you only need `curl`.
 
 ```sh
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
+export PATH="$HOME/.opentide/bin:$PATH"
 opentide scaffold ~/apps "Todo App" && cd ~/apps/todo-app
 opentide mcp --print-config claude-code --project "$PWD" > .mcp.json
 claude
@@ -66,22 +68,43 @@ What you get back isn't a summary to take on faith. It's a finished change with
 a plan, passing tests the server witnessed, and the evidence linked to each
 acceptance criterion, already saved to files you commit.
 
-<details>
-<summary><b>Codex, Cursor, or any other MCP client</b></summary>
+## Connect your agent
+
+OpenTide works with any coding agent that speaks MCP. Each config below starts a
+small stdio bridge, which attaches to the project's server or starts one if none
+is running.
+
+**Claude Code**
 
 ```sh
-# Codex
-opentide mcp --print-config codex --project ~/apps/todo-app >> ~/.codex/config.toml
-
-# Cursor (paste into .cursor/mcp.json)
-opentide mcp --print-config cursor --project ~/apps/todo-app
+cd ~/apps/todo-app
+opentide mcp --print-config claude-code --project "$PWD" > .mcp.json
+# or register it once with the CLI:
+claude mcp add opentide -- opentide mcp --project "$PWD"
 ```
 
-Every config starts a small stdio bridge. It attaches to the project's server,
-or starts one if none is running. HTTP transport, tokens and what the agent is
-told on connect: [docs/mcp-connect.md](docs/mcp-connect.md).
+**Codex**
 
-</details>
+```sh
+opentide mcp --print-config codex --project ~/apps/todo-app >> ~/.codex/config.toml
+```
+
+**Cursor**
+
+```sh
+opentide mcp --print-config cursor --project ~/apps/todo-app   # paste into .cursor/mcp.json
+```
+
+**Any other MCP client** (Windsurf, VS Code, Zed, Cline, your own): add a stdio
+server with
+
+- command: `opentide`, or the full path `~/.opentide/bin/opentide` if the client
+  doesn't inherit your shell's PATH
+- args: `mcp --project /absolute/path/to/your/app`
+
+Clients that only speak HTTP can connect to `opentide serve` directly; see
+[docs/mcp-connect.md](docs/mcp-connect.md) for the HTTP transport, tokens, and
+what the agent is told on connect.
 
 ## What you get
 
@@ -89,7 +112,7 @@ told on connect: [docs/mcp-connect.md](docs/mcp-connect.md).
 <tr>
 <td width="50%" valign="top">
 
-### 🐛 Fewer bugs reach you
+### <img src="assets/icons/bugs.svg" width="22" height="22" align="top" alt=""> Fewer bugs
 
 The agent can't call a change finished on its own say-so.
 
@@ -105,15 +128,15 @@ The agent can't call a change finished on its own say-so.
 </td>
 <td width="50%" valign="top">
 
-### 👀 You review in minutes
+### <img src="assets/icons/review.svg" width="22" height="22" align="top" alt=""> Review in minutes
 
 Every change is a **changeset**: a title, a plan with steps, acceptance
 criteria, a verification plan, and the evidence that it was met.
 
-- You read what was intended and what was proven, not a wall of diff.
+- Read what was intended and what was proven, not a wall of diff.
 - Every edit records its rationale, searchable later with `search_changes` and
   `get_change`.
-- `project_status` gives you one verdict on the project's health, and
+- `project_status` gives one verdict on the project's health, and
   `get_changeset_context` shows a change's plan and progress.
 - The gate runs advisory, graduated or strict. You decide how hard it bites.
 
@@ -122,7 +145,7 @@ criteria, a verification plan, and the evidence that it was met.
 <tr>
 <td valign="top">
 
-### 🪙 You spend fewer tokens
+### <img src="assets/icons/tokens.svg" width="22" height="22" align="top" alt=""> Spend fewer tokens
 
 Most agent tokens go on rediscovering your code. Here the agent asks.
 
@@ -138,7 +161,7 @@ Most agent tokens go on rediscovering your code. Here the agent asks.
 </td>
 <td valign="top">
 
-### ⚡ You see it working right away
+### <img src="assets/icons/live.svg" width="22" height="22" align="top" alt=""> See it working right away
 
 No build-and-restart loop between "written" and "running".
 
@@ -146,14 +169,14 @@ No build-and-restart loop between "written" and "running".
   the moment it's registered. A schema change has run the moment it lands.
 - The agent checks its own UI work with browser screenshots and scripted UI
   tests (`screenshot_app`, `test_app`) against the running app.
-- You open `localhost` and click around while it's still working.
+- Open `localhost` and click around while it's still working.
 
 </td>
 </tr>
 <tr>
 <td valign="top">
 
-### ⏪ You never lose work
+### <img src="assets/icons/undo.svg" width="22" height="22" align="top" alt=""> Never lose work
 
 Agents go off the rails. Getting back is one call.
 
@@ -167,7 +190,7 @@ Agents go off the rails. Getting back is one call.
 </td>
 <td valign="top">
 
-### 🔀 You go faster in parallel
+### <img src="assets/icons/parallel.svg" width="22" height="22" align="top" alt=""> Go faster in parallel
 
 Two agents, one project, no merge hell.
 
@@ -176,7 +199,7 @@ Two agents, one project, no merge hell.
 - `merge_task` replays the fork onto main and completes it only if main's own
   tests pass.
 - If two forks change the same thing, the second merge is refused with the
-  conflicts named. You never get a silent overwrite.
+  conflicts named. No silent overwrites.
 - One writer at a time on main, enforced, so agents can't trample each other.
 
 </td>
@@ -184,10 +207,10 @@ Two agents, one project, no merge hell.
 <tr>
 <td valign="top">
 
-### 🔓 You own the result
+### <img src="assets/icons/own.svg" width="22" height="22" align="top" alt=""> Own the result
 
-- `opentide export` writes a standalone Deno app, and `opentide build` makes a
-  deployable Deno or Node build.
+- `opentide export` writes a standalone Node app, and `opentide build` makes a
+  deployable one.
 - Apache-2.0, runs on your machine, uses your Postgres (PGlite locally, or any
   Postgres via `OPENTIDE_DB_URL`).
 - No model inside and no API key. It works with the agent subscription you
@@ -196,7 +219,7 @@ Two agents, one project, no merge hell.
 </td>
 <td valign="top">
 
-### 🔒 Safe by default
+### <img src="assets/icons/safe.svg" width="22" height="22" align="top" alt=""> Safe by default
 
 - The server listens on loopback only and needs a per-project bearer token.
 - Secrets go through `define_secret`, never into code.
@@ -234,12 +257,13 @@ To pin the port for every start, including the ones the bridge makes, set
 
 ```sh
 opentide export --project ~/apps/todo-app --out ./todo-export
-cd todo-export && deno task start
+cd todo-export && npm install && npm start
 ```
 
-You get a standalone app: an entry point, a router, the handlers with their
-request validation, a schema seed and generated API docs. `opentide build` makes
-a deployable build for **Deno or Node** (Node 24+).
+You get a standalone Node app (Node 24+): an entry point, a router, the handlers
+with their request validation, a schema seed and generated API docs.
+`opentide build` writes the same into the project's `dist/`. Deploy it anywhere
+Node runs.
 
 ## Good to know
 

@@ -1902,7 +1902,7 @@ Deno.test({
           assertEquals(health.status, 200);
           assertEquals(await health.json(), {
             ok: true,
-            name: "Genie App",
+            name: "OpenTide App",
             version: "unversioned",
           });
 

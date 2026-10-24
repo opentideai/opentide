@@ -38,8 +38,8 @@ opentide lsp --project /abs/path/to/project
 ```
 
 Editor configs need the launcher's absolute path, e.g.
-`/Users/you/.deno/bin/opentide`. From a clone, `deno task lsp --project …` runs
-the same server.
+`/Users/you/.opentide/bin/opentide`. From a clone, `deno task lsp --project …`
+runs the same server.
 
 The server logs to **stderr** (`stdout` is the JSON-RPC channel and carries only
 protocol frames), so an editor that surfaces LSP stderr shows the
@@ -61,7 +61,7 @@ explicitly. The `opentide` filetype below is illustrative — see
 -- init.lua — start the OpenTide LSP server for opentide:// documents.
 vim.lsp.config.opentide = {
   cmd = {
-    "/Users/you/.deno/bin/opentide", "lsp",
+    "/Users/you/.opentide/bin/opentide", "lsp",
     "--project", "/abs/path/to/project",
   },
   -- The server addresses documents by opentide:// URI (not root_dir); this is a
@@ -85,7 +85,7 @@ Zed settings:
   "lsp": {
     "opentide": {
       "binary": {
-        "path": "/Users/you/.deno/bin/opentide",
+        "path": "/Users/you/.opentide/bin/opentide",
         "arguments": ["lsp", "--project", "/abs/path/to/project"]
       }
     }

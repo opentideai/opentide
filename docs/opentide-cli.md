@@ -11,10 +11,12 @@ From a clone, `deno task opentide <command>` runs the same thing.
 
 ## Install
 
-Needs Deno 2 on PATH (`curl -fsSL https://deno.land/install.sh | sh`).
+Needs `curl`, `tar` and `unzip`, nothing else. OpenTide brings its own runtime
+and never uses one already on your machine.
 
 ```sh
 curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
+export PATH="$HOME/.opentide/bin:$PATH"   # add this to ~/.zshrc or ~/.bashrc
 ```
 
 Tested on macOS and Linux (CI runs the install smoke on both). On Windows, run
@@ -28,13 +30,15 @@ deno task package:opentide
 OPENTIDE_INSTALL_TARBALL=dist/opentide-0.1.0.tar.gz sh install.sh
 ```
 
-What it does:
+What it does, all under `~/.opentide`:
 
-- unpacks the release into `~/.opentide/versions/<version>/`;
+- unpacks the release into `versions/<version>/`;
+- downloads the runtime that release pins (`.deno-version`) into `runtime/`,
+  checking its published sha256;
 - downloads its dependencies against the lockfile it shipped with (the log goes
-  to `~/.opentide/install.log`);
-- writes an `opentide` launcher into `~/.deno/bin`, or `$DENO_INSTALL_ROOT/bin`,
-  with the permissions of the `opentide` task minus `--env`.
+  to `install.log`);
+- writes the `opentide` launcher to `bin/opentide`, with the permissions of the
+  `opentide` task minus `--env`.
 
 Rerunning it installs the latest release over the old launcher. Old versions
 stay in `~/.opentide/versions/` until you delete them.
@@ -44,15 +48,14 @@ stay in `~/.opentide/versions/` until you delete them.
 | `OPENTIDE_INSTALL_VERSION` | Install this version instead of the latest.    |
 | `OPENTIDE_INSTALL_TARBALL` | Install from a local tarball; no download.     |
 | `OPENTIDE_INSTALL_REPO`    | GitHub `owner/repo` to download releases from. |
-| `OPENTIDE_HOME`            | Where releases unpack (default `~/.opentide`). |
+| `OPENTIDE_HOME`            | Where everything goes (default `~/.opentide`). |
 
 `opentide --version` prints the installed version. Once installed,
 `opentide mcp --print-config <client>` emits configs that run the launcher, so
 they keep working across upgrades.
 
-There is no single-file binary. A `deno compile` build can't load the npm
-packages a project installs (`install_package`), and the export and build checks
-run an external `deno` anyway.
+There is no single-file binary: a compiled build can't load the npm packages a
+project installs (`install_package`).
 
 ## Release
 
@@ -97,7 +100,7 @@ Formatting isn't enforced yet: 37 files aren't `deno fmt` clean.
 | `mcp`          | Serve MCP for external coding agents.                               |
 | `lsp`          | Serve LSP for editors and agents.                                   |
 | `scaffold`     | Create a new project under a parent directory.                      |
-| `build`        | Build a project's deno target into `dist/`.                         |
+| `build`        | Build a deployable app into `dist/` (Node by default).              |
 | `export`       | Export a project as a file tree or a tarball.                       |
 | `lock:refresh` | Regenerate a project's committed `deno.lock` / `package-lock.json`. |
 | `task`         | Fork a project into a parallel task; list, merge or discard one.    |
@@ -184,24 +187,30 @@ opentide serve --project ./projects/todo-app
 **`opentide scaffold --help` doesn't print help.** `scaffold` takes no flags, so
 `--help` is read as `<dir>`; you get the top-level usage and exit 2.
 
-## build — build a project's deno target
+## build — build a deployable app
 
 ```sh
-opentide build --project /path/to/project [--include-seed-data]
+opentide build --project /path/to/project [--target node|deno] [--include-seed-data]
 ```
 
-Loads the project and builds its deno target into `<project>/dist/v<version>`.
-The version is read from `<project>/version.json` (default `0.1.0`). Prints the
-output directory, file count and version:
+Loads the project and builds it into `<project>/dist/`: a Node app in
+`v<version>-node/` by default, or a Deno app in `v<version>/` with
+`--target deno`. The version is read from `<project>/version.json` (default
+`0.1.0`). Prints the output directory, file count and version:
 
 ```
-Built deno target -> /abs/project/dist/v0.1.0 (4 files, v0.1.0)
+Built node target -> /abs/project/dist/v0.1.0-node (11 files, v0.1.0)
 ```
 
-- **`--project` is required.** Missing is a usage error (exit 2). A runtime that
-  can't build, or a failed build, prints to stderr and exits 1.
-- **Deno target only.** There is no `--target` flag. The node / docker / binary
-  / docs builds are only on the control API.
+Run the Node build with Node 24 or later:
+
+```sh
+cd dist/v0.1.0-node && npm install && npm start
+```
+
+- **`--project` is required.** Missing is a usage error (exit 2), and so is an
+  unknown `--target`. A failed build prints to stderr and exits 1.
+- **Docker, binary and docs builds** are only on the control API.
 - **Local database rows stay out.** `--include-seed-data` puts them in; use it
   only for intentional demo or test builds.
 - **No version flag.** Bump `version.json` yourself.
@@ -209,10 +218,12 @@ Built deno target -> /abs/project/dist/v0.1.0 (4 files, v0.1.0)
 ## export — export a project as files or a tarball
 
 ```sh
-opentide export --project /path/to/project [--out <path>] [--tarball] [--force] [--include-seed-data]
+opentide export --project /path/to/project [--target node|deno] [--out <path>] [--tarball] [--force] [--include-seed-data]
 ```
 
-Loads the project and exports it as a standalone app.
+Loads the project and exports it as a standalone app: a Node app by default
+(`package.json`, `main.js`; run it with `npm install && npm start`), or a Deno
+app with `--target deno`.
 
 - **Default: a file tree** in `--out` (default `<project>/export/`).
 - **`--tarball`: one `.tar`** at `--out` (default `<project>/<slug>.tar`).

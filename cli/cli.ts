@@ -19,6 +19,9 @@ import {
   getExportArgs,
   getLockRefreshArgs,
   getServeArgs,
+  isOutputTarget,
+  OUTPUT_TARGETS,
+  type OutputTarget,
   verificationOnlyComposition,
 } from "./assembly.ts";
 import {
@@ -34,10 +37,14 @@ import { CONTROL_SERVER_PORT, OPENTIDE_VERSION } from "../core/config.ts";
 import { cliUsage, parseCliCommand, scaffoldCommand } from "./cli-commands.ts";
 import { initCompiler, stopCompiler } from "../core/compiler.ts";
 import {
+  type BuildOptions,
+  type BuildResult,
   DEFAULT_BUILD_OPTIONS,
   getVersion,
   writeExportFiles,
 } from "../core/build.ts";
+import type { ExportFile } from "../core/export.ts";
+import type { Kernel } from "../core/registries.ts";
 import {
   loadProject,
   type ProjectContext,
@@ -138,6 +145,16 @@ function prepareExplicitOut(
   if (!tarball) mkdirSync(target, { recursive: true });
 }
 
+// The --target of `build` / `export`, or a usage error naming the choices.
+function outputTargetOrExit(raw: string): OutputTarget {
+  if (isOutputTarget(raw)) return raw;
+  usageErrorAndExit(
+    `error: unknown --target "${raw}". Use one of: ${
+      OUTPUT_TARGETS.join(", ")
+    }.`,
+  );
+}
+
 // Print usage to stdout and exit 0 — the user asked for help.
 function printHelpAndExit(): never {
   console.log(cliUsage());
@@ -152,6 +169,61 @@ function usageErrorAndExit(message: string): never {
   console.error("");
   console.error(cliUsage());
   Deno.exit(2);
+}
+
+async function buildForTarget(
+  kernel: Kernel,
+  entry: { path: string; name: string },
+  target: OutputTarget,
+  version: string,
+  opts: BuildOptions,
+): Promise<BuildResult> {
+  const { runtime } = kernel;
+  if (target === "node" && runtime.buildNodeProject) {
+    return await runtime.buildNodeProject(
+      kernel,
+      entry.path,
+      entry.name,
+      version,
+      opts,
+    );
+  }
+  if (target === "deno" && runtime.buildDenoProject) {
+    return await runtime.buildDenoProject(kernel, entry.path, version, opts);
+  }
+  throw new Error(
+    `runtime "${kernel.runtimeId}" does not support the ${target} build`,
+  );
+}
+
+async function exportForTarget(
+  kernel: Kernel,
+  entry: { path: string; name: string },
+  target: OutputTarget,
+  includeSeedData: boolean,
+): Promise<{ files: ExportFile[]; tarball: Uint8Array }> {
+  const opts = { ...DEFAULT_BUILD_OPTIONS, includeSeedData };
+  if (target === "node") {
+    if (!kernel.runtime.exportNodeProject) {
+      throw new Error(
+        `runtime "${kernel.runtimeId}" does not support the node export`,
+      );
+    }
+    return await kernel.runtime.exportNodeProject(
+      kernel,
+      entry.path,
+      entry.name,
+      getVersion(entry.path),
+      opts,
+    );
+  }
+  if (!kernel.runtime.exportProject) {
+    throw new Error(`runtime "${kernel.runtimeId}" does not support export`);
+  }
+  return await kernel.runtime.exportProject(kernel, {
+    ...opts,
+    projectName: entry.name,
+  });
 }
 
 export async function runCli(argv: string[] = Deno.args): Promise<void> {
@@ -204,26 +276,27 @@ export async function runCli(argv: string[] = Deno.args): Promise<void> {
     }
     case "build": {
       // Unlike scaffold, build assembles a Kernel — so its body lives here in the
-      // composition root, not the cli L2 module. Deno-only this slice.
-      const { projectPath, includeSeedData } = getBuildArgs(rest);
+      // composition root, not the cli L2 module.
+      const args = getBuildArgs(rest);
+      const target = outputTargetOrExit(args.target);
       await runLoadedCommand(
-        projectPath,
+        args.projectPath,
         "error: `build` requires --project <path>.",
         async ({ kernel, entry }) => {
-          if (!kernel.runtime.buildDenoProject) {
-            throw new Error(
-              `runtime "${kernel.runtimeId}" does not support build`,
-            );
-          }
           const version = getVersion(entry.path);
-          const result = await kernel.runtime.buildDenoProject(
+          const opts = {
+            ...DEFAULT_BUILD_OPTIONS,
+            includeSeedData: args.includeSeedData,
+          };
+          const result = await buildForTarget(
             kernel,
-            entry.path,
+            entry,
+            target,
             version,
-            { ...DEFAULT_BUILD_OPTIONS, includeSeedData },
+            opts,
           );
           console.log(
-            `Built deno target -> ${result.path} ` +
+            `Built ${target} target -> ${result.path} ` +
               `(${result.fileCount} files, v${result.version})`,
           );
         },
@@ -231,24 +304,21 @@ export async function runCli(argv: string[] = Deno.args): Promise<void> {
       return;
     }
     case "export": {
-      const { projectPath, out, tarball, includeSeedData, force } =
+      const { projectPath, out, tarball, includeSeedData, force, target: raw } =
         getExportArgs(rest);
+      const target = outputTargetOrExit(raw);
       await runLoadedCommand(
         projectPath,
         "error: `export` requires --project <path>.",
         async ({ kernel, entry }) => {
-          if (!kernel.runtime.exportProject) {
-            throw new Error(
-              `runtime "${kernel.runtimeId}" does not support export`,
-            );
-          }
-          // One exportProject call serves both forms — result carries the file
-          // tree AND the tarball; the flag only picks which we write.
-          const result = await kernel.runtime.exportProject(kernel, {
-            ...DEFAULT_BUILD_OPTIONS,
+          // One call serves both forms — the result carries the file tree AND
+          // the tarball; --tarball only picks which we write.
+          const result = await exportForTarget(
+            kernel,
+            entry,
+            target,
             includeSeedData,
-            projectName: entry.name,
-          });
+          );
           if (tarball) {
             // Derive the default filename from a SLUG of the project name, never
             // the raw name — a name like "../x" would otherwise escape the

@@ -3,35 +3,33 @@
 #
 #   curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh
 #
-# Needs Deno 2 on PATH. Unpacks the release into ~/.opentide/versions/<version>
-# and puts an `opentide` launcher in Deno's bin directory (~/.deno/bin).
+# Needs curl, tar and unzip. Nothing else: OpenTide brings its own runtime and
+# never uses one already on the machine. Everything goes under ~/.opentide:
+#   versions/<version>/   the release
+#   runtime/<name>/       the runtime it runs on, pinned by the release
+#   bin/opentide          the launcher
 #
 # Environment:
 #   OPENTIDE_INSTALL_VERSION   version to install (default: the latest release)
 #   OPENTIDE_INSTALL_TARBALL   install from this local tarball instead of downloading
 #   OPENTIDE_INSTALL_REPO      GitHub owner/repo to download from
-#   OPENTIDE_HOME              where releases are unpacked (default: ~/.opentide)
-#   DENO_INSTALL_ROOT          where the launcher goes (Deno's own setting)
+#   OPENTIDE_HOME              where everything goes (default: ~/.opentide)
 set -eu
 
 REPO="${OPENTIDE_INSTALL_REPO:-opentideai/opentide}"
 OPENTIDE_HOME="${OPENTIDE_HOME:-$HOME/.opentide}"
 VERSION="${OPENTIDE_INSTALL_VERSION:-}"
 TARBALL="${OPENTIDE_INSTALL_TARBALL:-}"
+RUNTIME_RELEASES="https://github.com/denoland/deno/releases/download"
 
 fail() {
   echo "opentide install: $*" >&2
   exit 1
 }
 
-command -v deno >/dev/null 2>&1 ||
-  fail "Deno is not on PATH. Install it first:
-  curl -fsSL https://deno.land/install.sh | sh"
-
-case "$(deno --version | head -n 1)" in
-  "deno 2."*) ;;
-  *) fail "OpenTide needs Deno 2; found: $(deno --version | head -n 1)" ;;
-esac
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "$1 is not on PATH."
+}
 
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -41,26 +39,45 @@ sha256() {
   fi
 }
 
+# Downloads $1 to $2 and checks it against the sha256 published at $1.sha256
+# or $1.sha256sum (first field).
+fetch_verified() {
+  curl -fsSL -o "$2" "$1" || fail "download failed: $1"
+  sum="$(curl -fsSL "$1.sha256" 2>/dev/null || curl -fsSL "$1.sha256sum" 2>/dev/null)" ||
+    fail "no checksum published for $1"
+  [ "$(sha256 "$2")" = "$(echo "$sum" | cut -d ' ' -f 1)" ] ||
+    fail "checksum mismatch for $1"
+}
+
+runtime_target() {
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) echo aarch64-apple-darwin ;;
+    Darwin-x86_64) echo x86_64-apple-darwin ;;
+    Linux-x86_64) echo x86_64-unknown-linux-gnu ;;
+    Linux-aarch64 | Linux-arm64) echo aarch64-unknown-linux-gnu ;;
+    *) fail "unsupported platform $(uname -s) $(uname -m). On Windows, use WSL." ;;
+  esac
+}
+
+need curl
+need tar
+need unzip
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# --- The release ---
 if [ -z "$TARBALL" ]; then
-  command -v curl >/dev/null 2>&1 || fail "curl is not on PATH."
   if [ -z "$VERSION" ]; then
     VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
       sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)"
     [ -n "$VERSION" ] || fail "could not find the latest release of $REPO."
   fi
-  base="https://github.com/$REPO/releases/download/v$VERSION"
-  TARBALL="$work/opentide-$VERSION.tar.gz"
   echo "Downloading OpenTide $VERSION..."
-  curl -fsSL -o "$TARBALL" "$base/opentide-$VERSION.tar.gz" ||
-    fail "download failed: $base/opentide-$VERSION.tar.gz"
-  curl -fsSL -o "$TARBALL.sha256" "$base/opentide-$VERSION.tar.gz.sha256" ||
-    fail "checksum download failed."
-  expected="$(cut -d ' ' -f 1 <"$TARBALL.sha256")"
-  [ "$(sha256 "$TARBALL")" = "$expected" ] ||
-    fail "checksum mismatch for opentide-$VERSION.tar.gz."
+  TARBALL="$work/opentide-$VERSION.tar.gz"
+  fetch_verified \
+    "https://github.com/$REPO/releases/download/v$VERSION/opentide-$VERSION.tar.gz" \
+    "$TARBALL"
 fi
 
 [ -f "$TARBALL" ] || fail "no such tarball: $TARBALL"
@@ -74,10 +91,25 @@ rm -rf "$dest"
 mkdir -p "$OPENTIDE_HOME/versions"
 mv "$unpacked" "$dest"
 
+# --- The runtime the release pins ---
+runtime_version="$(tr -d ' \n' <"$dest/.deno-version")"
+[ -n "$runtime_version" ] || fail "the release does not name its runtime version."
+runtime_dir="$OPENTIDE_HOME/runtime/deno-$runtime_version"
+runtime="$runtime_dir/deno"
+if [ ! -x "$runtime" ]; then
+  echo "Downloading the runtime..."
+  target="$(runtime_target)"
+  fetch_verified "$RUNTIME_RELEASES/v$runtime_version/deno-$target.zip" "$work/runtime.zip"
+  mkdir -p "$runtime_dir"
+  unzip -q -o "$work/runtime.zip" -d "$runtime_dir"
+  chmod +x "$runtime"
+fi
+"$runtime" --version >/dev/null 2>&1 || fail "the runtime at $runtime does not run."
+
 # The launcher gets the permissions of the `opentide` task in the release's
 # deno.json, minus `--env`: an installed command must not load whatever .env
 # sits in the directory it is run from.
-flags="$(deno eval --no-config '
+flags="$("$runtime" eval --no-config '
   const task = JSON.parse(Deno.readTextFileSync(Deno.args[0])).tasks.opentide;
   const tokens = task.split(/\s+/).filter((t) => t.startsWith("--") && t !== "--env");
   console.log(tokens.join(" "));
@@ -86,23 +118,21 @@ flags="$(deno eval --no-config '
 
 echo "Downloading dependencies (once per version; this takes a minute)..."
 log="$OPENTIDE_HOME/install.log"
-deno cache --config "$dest/deno.json" --lock "$dest/deno.lock" \
+"$runtime" cache --config "$dest/deno.json" --lock "$dest/deno.lock" \
   "$dest/cli/cli.ts" >"$log" 2>&1 ||
   fail "dependency download failed; see $log"
 
-# Not `deno install`: it copies the config next to the launcher and resolves a
-# fresh lockfile there, so every dependency floats to its newest version. This
-# runs the release in place, against the lockfile it shipped with.
-bin_dir="${DENO_INSTALL_ROOT:-$HOME/.deno}/bin"
+# --- The launcher ---
+# It runs the release in place, against the lockfile it shipped with, on the
+# runtime installed above. OPENTIDE_LAUNCHER lets a spawned server and the
+# generated client configs call this launcher back.
+bin_dir="$OPENTIDE_HOME/bin"
 launcher="$bin_dir/opentide"
-# By absolute path: MCP clients started from a desktop app often lack the
-# shell's PATH.
-deno_bin="$(command -v deno)"
 mkdir -p "$bin_dir"
 cat >"$launcher" <<LAUNCHER
 #!/bin/sh
 # opentide $VERSION, written by install.sh
-OPENTIDE_LAUNCHER="$launcher" exec "$deno_bin" run $flags \\
+OPENTIDE_LAUNCHER="$launcher" exec "$runtime" run $flags \\
   --config "$dest/deno.json" --lock "$dest/deno.lock" \\
   "$dest/cli/cli.ts" "\$@"
 LAUNCHER
@@ -113,5 +143,9 @@ installed="$("$launcher" --version 2>>"$log")" ||
 echo "Installed: $launcher ($installed)"
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
-  *) echo "Add $bin_dir to your PATH to run opentide." ;;
+  *)
+    echo
+    echo "Add it to your PATH, e.g. in ~/.zshrc or ~/.bashrc:"
+    echo "  export PATH=\"$bin_dir:\$PATH\""
+    ;;
 esac

@@ -2,15 +2,18 @@
 //
 //   deno task smoke:install
 //
-// 1. Package the tree at HEAD and run install.sh on it under a throwaway HOME.
+// 1. Package the tree at HEAD and run install.sh on it under a throwaway HOME,
+//    with a `deno` first on PATH that fails if anything calls it: OpenTide
+//    must run on the runtime it installs, never on one it finds.
 // 2. `opentide scaffold` a project.
 // 3. Over the MCP bridge (which starts `opentide serve`): open a changeset,
 //    install an npm package, define a handler, a route and a test, and run the
 //    tests.
-// 4. Stop the server, `opentide export`, start the exported app and request
-//    the route.
+// 4. Stop the server, `opentide export` (Node), `npm install`, start it with
+//    node and request the route.
 //
-// Needs network (npm) and git with a user.name. Exits 1 on the first failure.
+// Needs network, git with a user.name, and Node 24+ with npm. Exits 1 on the
+// first failure.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { dirname, join, normalize } from "node:path";
@@ -179,12 +182,13 @@ async function requestExportedApp(
   exportDir: string,
   env: Record<string, string>,
 ): Promise<void> {
-  const app = new Deno.Command(Deno.execPath(), {
-    args: ["task", "start"],
+  await run("npm", ["install", "--no-audit", "--no-fund"], env, exportDir);
+  const app = new Deno.Command("node", {
+    args: ["main.js"],
     cwd: exportDir,
     env: { ...env, PORT: String(EXPORT_PORT) },
     stdout: "null",
-    stderr: "null",
+    stderr: "inherit",
   }).spawn();
   try {
     const deadline = Date.now() + EXPORT_BOOT_TIMEOUT_MS;
@@ -207,13 +211,26 @@ async function requestExportedApp(
   }
 }
 
+// A directory holding a `deno` that fails loudly, to put first on PATH.
+async function denoTrap(root: string): Promise<string> {
+  const dir = join(root, "deno-trap");
+  await Deno.mkdir(dir);
+  const trap = join(dir, "deno");
+  await Deno.writeTextFile(
+    trap,
+    '#!/bin/sh\necho "install-smoke: deno from PATH was used" >&2\nexit 97\n',
+  );
+  await Deno.chmod(trap, 0o755);
+  return dir;
+}
+
 async function main(): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "opentide-smoke-" });
   const home = join(root, "home");
   await Deno.mkdir(home);
   const env: Record<string, string> = {
     HOME: home,
-    PATH: Deno.env.get("PATH") ?? "",
+    PATH: `${await denoTrap(root)}:${Deno.env.get("PATH") ?? ""}`,
     DENO_DIR: denoDir(),
     NO_COLOR: "1",
   };
@@ -231,7 +248,7 @@ async function main(): Promise<void> {
     ...env,
     OPENTIDE_INSTALL_TARBALL: join(root, "release", tarballName()),
   });
-  const launcher = join(home, ".deno", "bin", "opentide");
+  const launcher = join(home, ".opentide", "bin", "opentide");
   const version = (await run(launcher, ["--version"], env)).trim();
   if (version !== `opentide ${OPENTIDE_VERSION}`) {
     fail(`--version printed "${version}"`);

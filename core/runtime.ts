@@ -17,7 +17,11 @@ import type {
   ReferenceResult,
   RenameLocation,
 } from "./language-service.ts";
-import type { ExportProjectOptions, ExportProjectResult } from "./export.ts";
+import type {
+  ExportFile,
+  ExportProjectOptions,
+  ExportProjectResult,
+} from "./export.ts";
 import type { PackageEntry, SerializedPackageEntry } from "./packages.ts";
 import type {
   BinaryCompileTarget,
@@ -186,6 +190,13 @@ export interface RuntimeAdapter extends RuntimeMetadata {
     version: string,
     opts?: BuildOptions,
   ) => Promise<BuildResult>;
+  exportNodeProject?: (
+    kernel: Kernel,
+    projectDir: string,
+    projectName: string,
+    version: string,
+    opts?: BuildOptions,
+  ) => Promise<{ files: ExportFile[]; tarball: Uint8Array }>;
   buildNodeZip?: (
     kernel: Kernel,
     projectDir: string,
@@ -485,6 +496,16 @@ export function createTypeScriptRuntimeAdapter(): RuntimeAdapter {
     async buildNodeProject(kernel, projectDir, projectName, version, opts) {
       const { buildNodeProject } = await import("./build.ts");
       return await buildNodeProject(
+        kernel,
+        projectDir,
+        projectName,
+        version,
+        opts,
+      );
+    },
+    async exportNodeProject(kernel, projectDir, projectName, version, opts) {
+      const { exportNodeProject } = await import("./build.ts");
+      return await exportNodeProject(
         kernel,
         projectDir,
         projectName,

@@ -34,6 +34,8 @@ export const OPEN_FOLDERS: readonly string[] = [
 export const OPEN_FILES: readonly string[] = [
   "LICENSE",
   "NOTICE",
+  // The runtime version install.sh downloads, and CI runs on.
+  ".deno-version",
   "install.sh",
   "deno.json",
   "deno.lock",

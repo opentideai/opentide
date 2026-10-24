@@ -10,7 +10,7 @@ export function generateOpenAPISpec(
   routes: RouteEntry[],
   options?: OpenAPIOptions,
 ): Record<string, unknown> {
-  const title = options?.title ?? "Genie App";
+  const title = options?.title ?? "OpenTide App";
   const version = options?.version ?? "1.0.0";
   const serverUrl = options?.serverUrl ?? "http://localhost:3001";
 

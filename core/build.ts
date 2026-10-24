@@ -9,9 +9,11 @@ import { join, resolve, sep } from "node:path";
 import {
   APP_RUNTIME_PERMISSIONS,
   binaryRuntimeIncludePaths,
+  createTarball,
   type ExportFile,
   exportProject,
   type ExportProjectOptions,
+  readmeForNode,
 } from "./export.ts";
 import type { Kernel } from "./registries.ts";
 import { createTimestampedShortId } from "./ids.ts";
@@ -449,6 +451,10 @@ export async function buildNodeFiles(
       nodeFiles.push(file);
       continue;
     }
+    if (file.path === "README.md") {
+      nodeFiles.push({ ...file, content: readmeForNode(file.content) });
+      continue;
+    }
     if (file.path.endsWith(".ts")) {
       let source = file.content;
       if (file.path === "main.ts") source = rewriteMainForNode(source);
@@ -487,6 +493,25 @@ export async function buildNodeProject(
   const outDir = join(projectDir, "dist", `v${version}-node`);
   writeExportFiles(outDir, nodeFiles);
   return { path: outDir, fileCount: nodeFiles.length, version };
+}
+
+// The Node project as an export: the same files buildNodeProject writes to
+// dist/, returned with a tarball of them, for `opentide export --target node`.
+export async function exportNodeProject(
+  kernel: Kernel,
+  projectDir: string,
+  projectName: string,
+  version: string,
+  opts?: BuildOptions,
+): Promise<{ files: ExportFile[]; tarball: Uint8Array }> {
+  const files = await buildNodeFiles(
+    kernel,
+    projectName,
+    version,
+    opts,
+    projectDir,
+  );
+  return { files, tarball: createTarball(files) };
 }
 
 export async function buildNodeZip(

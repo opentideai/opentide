@@ -119,7 +119,7 @@ explicit; HTTP requires it.
   "mcpServers": {
     "opentide": {
       "type": "stdio",
-      "command": "/Users/you/.deno/bin/opentide",
+      "command": "/Users/you/.opentide/bin/opentide",
       "args": ["mcp", "--project", "/abs/path/to/project"]
     }
   }
@@ -144,7 +144,7 @@ Or via the CLI:
 
 ```sh
 # stdio (everything after -- is the spawn command)
-claude mcp add opentide -- /Users/you/.deno/bin/opentide mcp --project /abs/path/to/project
+claude mcp add opentide -- /Users/you/.opentide/bin/opentide mcp --project /abs/path/to/project
 
 # http
 claude mcp add --transport http opentide http://127.0.0.1:3005/mcp \
@@ -163,7 +163,7 @@ server. Codex infers the transport from the keys present — `command` ⇒ stdio
 
 ```toml
 [mcp_servers.opentide]
-command = "/Users/you/.deno/bin/opentide"
+command = "/Users/you/.opentide/bin/opentide"
 args = ["mcp", "--project", "/abs/path/to/project"]
 startup_timeout_sec = 30
 ```
@@ -199,7 +199,7 @@ transport from `command` vs `url`.
 {
   "mcpServers": {
     "opentide": {
-      "command": "/Users/you/.deno/bin/opentide",
+      "command": "/Users/you/.opentide/bin/opentide",
       "args": ["mcp", "--project", "/abs/path/to/project"]
     }
   }
@@ -218,6 +218,24 @@ transport from `command` vs `url`.
   }
 }
 ```
+
+## Any other MCP client
+
+Windsurf, VS Code, Zed, Cline or your own client: anything that can launch a
+stdio MCP server works. Register one server with
+
+| Field   | Value                                                                             |
+| ------- | --------------------------------------------------------------------------------- |
+| command | `opentide`, or `~/.opentide/bin/opentide` if the client doesn't inherit your PATH |
+| args    | `mcp`, `--project`, `/absolute/path/to/your/app`                                  |
+
+`--print-config cursor` prints the generic `mcpServers` JSON shape most clients
+accept. A client that only speaks HTTP connects to `opentide serve`'s `/mcp`
+with the bearer token (see [stdio vs HTTP](#stdio-vs-http)).
+
+Claude Code has been run end to end against OpenTide. Codex, Cursor and every
+other client use the same stdio protocol and config shape, but none of them has
+been run end to end yet.
 
 ## What the external agent does
 

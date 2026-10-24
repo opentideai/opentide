@@ -102,13 +102,24 @@ export function getServeArgs(
   };
 }
 
-// The `opentide build` entry args. Deno-only build this slice (no --target
-// matrix), so --project is the only flag — kept a pure parser (same parseArgs
-// shape as getServeArgs) so the dispatcher can enforce the D2 required-project
-// contract without a loaded kernel.
+// What `opentide build` and `opentide export` produce. Node is the default:
+// it is what an exported app runs on in production. `deno` remains for
+// existing Deno deployments.
+export const OUTPUT_TARGETS = ["node", "deno"] as const;
+export type OutputTarget = typeof OUTPUT_TARGETS[number];
+export const DEFAULT_OUTPUT_TARGET: OutputTarget = "node";
+
+export function isOutputTarget(value: string): value is OutputTarget {
+  return (OUTPUT_TARGETS as readonly string[]).includes(value);
+}
+
+// The `opentide build` entry args. A pure parser (same parseArgs shape as
+// getServeArgs) so the dispatcher can enforce the required project and check
+// the target without a loaded kernel. `target` is the raw --target value.
 export interface BuildArgs {
   projectPath: string | null;
   includeSeedData: boolean;
+  target: string;
 }
 
 export function getBuildArgs(argv: string[] = Deno.args): BuildArgs {
@@ -117,12 +128,14 @@ export function getBuildArgs(argv: string[] = Deno.args): BuildArgs {
     options: {
       project: { type: "string", short: "p" },
       "include-seed-data": { type: "boolean" },
+      target: { type: "string" },
     },
     allowPositionals: true,
   });
   return {
     projectPath: values.project ?? null,
     includeSeedData: Boolean(values["include-seed-data"]),
+    target: values.target ?? DEFAULT_OUTPUT_TARGET,
   };
 }
 
@@ -139,6 +152,8 @@ export interface ExportArgs {
   // (tree form) or an existing file (tarball), clearing stale files first. The
   // managed defaults always overwrite; this only unlocks an explicit --out.
   force: boolean;
+  // The raw --target value; see OUTPUT_TARGETS.
+  target: string;
 }
 
 export function getExportArgs(argv: string[] = Deno.args): ExportArgs {
@@ -150,6 +165,7 @@ export function getExportArgs(argv: string[] = Deno.args): ExportArgs {
       tarball: { type: "boolean" },
       "include-seed-data": { type: "boolean" },
       force: { type: "boolean" },
+      target: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -159,6 +175,7 @@ export function getExportArgs(argv: string[] = Deno.args): ExportArgs {
     tarball: Boolean(values.tarball),
     includeSeedData: Boolean(values["include-seed-data"]),
     force: Boolean(values.force),
+    target: values.target ?? DEFAULT_OUTPUT_TARGET,
   };
 }
 

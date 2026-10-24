@@ -928,7 +928,7 @@ Deno.test({
       );
       assertEquals(version.success, true);
       assertEquals(version.timedOut, false);
-      assertStringIncludes(version.stdout, "Genie App 8.0.0");
+      assertStringIncludes(version.stdout, "OpenTide App 8.0.0");
       assert(!version.stdout.includes("Server running on"));
     });
   },
@@ -1029,7 +1029,7 @@ Deno.test({
           };
           assertEquals(health, {
             ok: true,
-            name: "Genie App",
+            name: "OpenTide App",
             version: "7.0.0",
           });
 
