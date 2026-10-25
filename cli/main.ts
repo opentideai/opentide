@@ -1,14 +1,20 @@
 // @layer composition — headless composition root: boots one StackAssembly
 // (OpenTide's open stack by default; tide/main.ts passes the Tide stack).
 import { initCompiler, stopCompiler } from "../core/compiler.ts";
-import { startControlServer } from "../core/control-server.ts";
+import {
+  shutdownHttpServer,
+  startControlServer,
+} from "../core/control-server.ts";
 import { getServeArgs, openAssembly, type StackAssembly } from "./assembly.ts";
 import {
   loadProject,
   ProjectLockedError,
   unloadProject,
 } from "../core/project-loader.ts";
-import { CONTROL_SERVER_PORT } from "../core/config.ts";
+import {
+  CONTROL_SERVER_PORT,
+  SERVER_SHUTDOWN_GRACE_MS,
+} from "../core/config.ts";
 import {
   type ChildReadyLine,
   formatReadyLine,
@@ -112,11 +118,12 @@ export async function serveHeadless(
   const shutdownOnce = async () => {
     console.log("\nShutting down...");
     if (chat) await chat.close();
-    const currentProject = setProject.current();
-    if (currentProject) {
-      await unloadProject(currentProject);
+    await setProject.close();
+    if (!(await shutdownHttpServer(controlServer))) {
+      console.log(
+        `  Open connections didn't close within ${SERVER_SHUTDOWN_GRACE_MS}ms; exiting anyway.`,
+      );
     }
-    await controlServer.shutdown();
     stopCompiler();
     console.log("Goodbye.");
     Deno.exit(0);

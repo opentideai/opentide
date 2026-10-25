@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { SERVER_SHUTDOWN_GRACE_MS } from "../core/config.ts";
 import { initCompiler, stopCompiler } from "../core/compiler.ts";
 import { startControlServer } from "../core/control-server.ts";
 import { createProject } from "../core/project-manager.ts";
@@ -130,6 +132,51 @@ Deno.test(
           await new Promise((r) => setTimeout(r, 100));
         }
       }
+      cleanup();
+    }
+  },
+);
+
+Deno.test(
+  "serve exits on SIGTERM while an MCP client holds its SSE stream",
+  testOpts,
+  async () => {
+    const { dir, cleanup } = tempProject("Bridge Exit");
+    let pid: number | null = null;
+    try {
+      const found = await locateServe(dir);
+      assert(found.ok, found.ok ? "" : found.error.message);
+      pid = found.data.pid;
+      const client = new Client({ name: "exit-test", version: "0.0.0" });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(found.data.url), {
+          requestInit: {
+            headers: { Authorization: `Bearer ${found.data.token}` },
+          },
+        }),
+      );
+      await client.listTools();
+
+      Deno.kill(pid, "SIGTERM");
+      // Well under SERVER_SHUTDOWN_GRACE_MS: the project close ends the
+      // session, so the server isn't left waiting on the stream.
+      const alive = (p: number) => {
+        try {
+          Deno.kill(p, "SIGCONT");
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const deadline = Date.now() + SERVER_SHUTDOWN_GRACE_MS;
+      while (alive(pid) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert(!alive(pid), "serve still running after SIGTERM");
+      pid = null;
+      await client.close().catch(() => {});
+    } finally {
+      if (pid !== null) Deno.kill(pid, "SIGKILL");
       cleanup();
     }
   },

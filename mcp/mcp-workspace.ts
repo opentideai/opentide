@@ -51,6 +51,11 @@ import {
   stdioTransport,
 } from "./mcp-bridge.ts";
 import {
+  appPreviewResourceContents,
+  appPreviewResourceListing,
+  isAppPreviewUri,
+} from "./mcp-app-preview.ts";
+import {
   MCP_SURFACE_META_KEY,
   mcpSurfaceMeta,
   type McpToolListing,
@@ -63,6 +68,7 @@ type Params = Record<string, unknown>;
 // JSON-RPC's "internal error": a relayed request the bridge can no longer
 // answer, because the app it went to was switched or lost.
 const INTERNAL_ERROR = -32603;
+const INVALID_PARAMS = -32602;
 const INTERNAL_ID_PREFIX = "opentide-workspace-";
 
 export const LIST_PROJECTS = "list_projects";
@@ -554,7 +560,11 @@ export function runWorkspace(
     }
     return {
       protocolVersion: negotiate(params),
-      capabilities: { tools: { listChanged: true }, prompts: {} },
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: {},
+        resources: {},
+      },
       serverInfo: { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
       instructions,
     };
@@ -598,6 +608,17 @@ export function runWorkspace(
     }
     if (!initParams) return send(preInitializeReply(msg));
     if (msg.method === "ping") return reply(msg.id, {});
+    // show_app's page is static and the same for every app, so the bridge
+    // serves it, open app or not.
+    if (msg.method === "resources/list") {
+      return reply(msg.id, { resources: [appPreviewResourceListing()] });
+    }
+    if (msg.method === "resources/read") {
+      const uri = typeof params?.uri === "string" ? params.uri : "";
+      return isAppPreviewUri(uri)
+        ? reply(msg.id, appPreviewResourceContents())
+        : replyError(msg.id, INVALID_PARAMS, `Unknown resource: ${uri}`);
+    }
     if (msg.method === "tools/list") {
       const { tools, meta } = advertised();
       listedNames = names();

@@ -268,7 +268,7 @@ export function appPreviewUrl(port: number, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.5";
+export const OPENTIDE_VERSION = "0.1.6";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
@@ -408,7 +408,9 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // Text only, so PATCH.
 // v6.3.0: adopt_changeset, for continuing a changeset whose client is gone
 // (108 -> 109). Additive, so MINOR.
-export const MCP_SURFACE_VERSION = "6.3.0";
+// v6.4.0: show_app, the running app live in an MCP App-capable client's chat
+// (109 -> 110). Additive, so MINOR.
+export const MCP_SURFACE_VERSION = "6.4.0";
 
 // Default loopback port for the outbound MCP HTTP/SSE transport (mcp-http.ts,
 // `deno task mcp --http`). Distinct from the control server (:3003) and the app
@@ -432,6 +434,10 @@ export const SERVER_TOKEN_BYTES = 32;
 // the wait is generous; the poll reads two small files.
 export const MCP_BRIDGE_STARTUP_TIMEOUT_MS = 90_000;
 export const MCP_BRIDGE_POLL_MS = 200;
+// How long serve's shutdown waits for in-flight HTTP responses (a client's
+// SSE stream, an IDE log stream) before exiting anyway. The project is already
+// saved and closed by then.
+export const SERVER_SHUTDOWN_GRACE_MS = 3_000;
 // `opentide mcp` on a folder of apps remembers the app it last opened there, so
 // a client that restarts it lands back on that app. One file for every folder,
 // in the user config dir.

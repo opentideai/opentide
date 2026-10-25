@@ -18,6 +18,7 @@ import {
   dispatchMcpTool,
   MCP_DEPRECATED_META_KEY,
   MCP_DEPRECATIONS,
+  MCP_ONLY_TOOLS,
   MCP_SURFACE_META_KEY,
   type McpDeprecation,
   mcpSurfaceFingerprint,
@@ -165,6 +166,7 @@ Deno.test({
     const tools = projectedMcpTools(OPEN_COMPOSITION);
     const agentNames = new Set(AGENT_TOOLS.map((t) => t.name));
     for (const tool of tools) {
+      if (MCP_ONLY_TOOLS.has(tool.name)) continue;
       assert(agentNames.has(tool.name), `${tool.name} not in AGENT_TOOLS`);
       assert(
         typeof tool.description === "string" && tool.description.length > 0,
@@ -1075,6 +1077,8 @@ Deno.test({
   name: "every projected tool is annotated per the rules (coverage guard)",
   fn: () => {
     for (const tool of projectedMcpTools(OPEN_COMPOSITION)) {
+      // MCP-only verbs set their own (mcp-app-preview_test.ts checks show_app).
+      if (MCP_ONLY_TOOLS.has(tool.name)) continue;
       const a = tool.annotations;
       assert(a, `${tool.name} must carry annotations`);
       assert(
@@ -1306,8 +1310,9 @@ Deno.test({
 // v6.2.1 shortens descriptions on create_changeset, update_changeset_plan and the
 // shared productionTest schema to cut tools/list size. Text only, so PATCH.
 // v6.3.0 adds adopt_changeset (108 -> 109). Additive, so MINOR.
-const PINNED_SURFACE_FINGERPRINT = "d2f4-904e3487";
-const PINNED_SURFACE_TOOL_COUNT = 109;
+// v6.4.0 adds show_app (109 -> 110), MCP-only. Additive, so MINOR.
+const PINNED_SURFACE_FINGERPRINT = "d374-7a75615a";
+const PINNED_SURFACE_TOOL_COUNT = 110;
 
 Deno.test({
   ...testOpts,
@@ -1564,5 +1569,46 @@ Deno.test({
     // A minimal entry omits absent optionals (clean wire payload).
     const minimal = applyDeprecation(base, { since: "1.1.0" });
     assertEquals(minimal._meta?.[MCP_DEPRECATED_META_KEY], { since: "1.1.0" });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name:
+    "show_app: listed with its UI resource, which the server serves, and returns the live app's URL",
+  fn: async () => {
+    await withServedKernel(async (kernel, rebuild, baseUrl) => {
+      // project-loader keeps this in step with the app server; this harness
+      // doesn't.
+      kernel.appPort = Number(new URL(baseUrl).port);
+      const { client, dispose } = await connectMcpClient({ kernel, rebuild });
+      try {
+        const listed = (await client.listTools()).tools.find((
+          t: { name: string },
+        ) => t.name === "show_app");
+        const uri = (listed?._meta as { ui?: { resourceUri?: string } })?.ui
+          ?.resourceUri;
+        assert(uri, "show_app carries _meta.ui.resourceUri");
+
+        const { resources } = await client.listResources();
+        assertEquals(resources.map((r: { uri: string }) => r.uri), [uri]);
+        const read = await client.readResource({ uri });
+        const page = read.contents[0] as { mimeType?: string; text?: string };
+        assertEquals(page.mimeType, "text/html;profile=mcp-app");
+        assert(page.text?.includes("ui/initialize"));
+
+        const shown = await client.callTool({
+          name: "show_app",
+          arguments: { path: "/notes" },
+        });
+        assertEquals(shown.isError, undefined);
+        assertEquals(
+          (shown.structuredContent as { url: string }).url,
+          `${baseUrl}/notes`,
+        );
+      } finally {
+        await dispose();
+      }
+    });
   },
 });

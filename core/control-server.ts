@@ -933,6 +933,7 @@ import {
   providerFor,
   refreshAvailableModels,
   REGISTRY_CACHE_MAX_AGE_MS,
+  SERVER_SHUTDOWN_GRACE_MS,
   setAgentModel,
   setImportModel,
   setKernelSettings,
@@ -970,7 +971,26 @@ export interface ControlServer {
   setProject: {
     open: (path: string) => Promise<ProjectEntry>;
     current: () => ProjectContext | null;
+    // Closes the open project with its project-close listeners, as a switch does.
+    close: () => Promise<void>;
   };
+}
+
+// Stop the HTTP server, waiting at most `graceMs` for in-flight responses (a
+// client's SSE stream, an IDE log stream). Callers close the project first, so
+// what's cut off past that is a connection, not state. Resolves false when the
+// grace ran out.
+export function shutdownHttpServer(
+  server: Deno.HttpServer<Deno.NetAddr>,
+  graceMs: number = SERVER_SHUTDOWN_GRACE_MS,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    server.shutdown().then(() => true),
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), graceMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 export type BuildTargetExtraTarget = "deno" | "node" | "binary";
@@ -9294,6 +9314,13 @@ export async function startControlServer(
     },
     current(): ProjectContext | null {
       return ctx;
+    },
+    // Unload the open project the way a switch does: chat, debugger, MCP
+    // sessions and the other project-close listeners first. Shutdown needs
+    // this: an MCP session left open holds its SSE response, and
+    // server.shutdown() waits for every response to finish.
+    close(): Promise<void> {
+      return closeCurrentProject();
     },
   };
 

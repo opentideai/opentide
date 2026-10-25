@@ -343,6 +343,8 @@ works too, and then the extension serves only that app.
   install command. Install, then turn the extension off and on in Settings →
   Extensions.
 - A `~` at the start of **Apps folder** is expanded to your home folder.
+- "Show me the app" renders it live in the chat (see
+  [Seeing the app](#seeing-the-app)).
 - Desktop starts the extension twice: once for chats, once for Cowork and Code
   sessions. An app opened in a chat doesn't switch a Cowork session that's
   already running; it picks up the last-opened app when it next starts.
@@ -385,6 +387,36 @@ with the bearer token (see [stdio vs HTTP](#stdio-vs-http)).
 Claude Code has been run end to end against OpenTide. Codex, Cursor and every
 other client use the same stdio protocol and config shape, but none of them has
 been run end to end yet.
+
+## Seeing the app
+
+`show_app` shows the user the running app. Ask Claude to "show me the app".
+
+- **Claude Desktop** renders it live under the tool call: click, type and
+  navigate in it. **Open in browser** opens the same page outside the chat.
+- **Every other client** gets the app's URL to open.
+- **How it works:** Desktop won't frame a `127.0.0.1` page, so the preview
+  fetches the app's HTML itself and renders that. The page's `fetch`/XHR calls,
+  links and form posts are redirected to the app. Three gaps:
+  - a script that builds a URL from `location` gets the sandbox's;
+  - a relative `url()` in an inline `style` won't load;
+  - `history.pushState` updates the path shown above the preview, not the page.
+- **An app with no routes** has no server yet. The preview says it couldn't
+  reach the app.
+
+`screenshot_app` and `test_app` need a browser:
+
+- tried in this order: Playwright's own Chromium; an installed Google Chrome,
+  then Microsoft Edge; a distro Chromium (`/usr/bin/chromium`,
+  `/usr/bin/chromium-browser`, `/snap/bin/chromium`); Playwright's own Firefox.
+  A Firefox you installed yourself doesn't count, since Playwright can only
+  drive its own patched build;
+- headless, unless `OPENTIDE_BROWSER_HEADFUL=1`;
+- with none of those, they fail and say how to install Chromium:
+
+```sh
+deno run -A npm:playwright@1 install chromium
+```
 
 ## What the external agent does
 
@@ -707,7 +739,7 @@ versions are in play — don't conflate them:
 | --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- | -------------------- |
 | **MCP protocol version**                                        | the wire spec itself                                    | negotiated by the SDK at `connect()`          | the MCP spec / SDK   |
 | **Server version** (`MCP_SERVER_VERSION`, = `OPENTIDE_VERSION`) | the OpenTide **build**                                  | handshake `serverInfo` (`opentide` / version) | the OpenTide release |
-| **Tool-surface version** (`MCP_SURFACE_VERSION`, `6.3.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
+| **Tool-surface version** (`MCP_SURFACE_VERSION`, `6.4.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
 
 The surface can be at `6.x` while the build is at `0.x` — versioning it
 separately is what lets a pinned integration survive server churn.
@@ -720,12 +752,12 @@ Every `tools/list` response carries a metadata block under the
 ```jsonc
 // tools/list result
 {
-  "tools": [/* … 109 tools … */],
+  "tools": [/* … 110 tools … */],
   "_meta": {
     "opentide/surface": {
-      "version": "6.3.0", // MCP_SURFACE_VERSION — the contract handle you pin
-      "fingerprint": "d2f4-904e3487", // structural hash of names + input schemas
-      "toolCount": 109
+      "version": "6.4.0", // MCP_SURFACE_VERSION — the contract handle you pin
+      "fingerprint": "d374-7a75615a", // structural hash of names + input schemas
+      "toolCount": 110
     }
   }
 }
@@ -788,4 +820,4 @@ gives pinned integrations at least one full major version to migrate. Removal
 itself is a MAJOR bump and is called out in the release notes for that version.
 
 **Nothing is deprecated today.** The deprecation registry (`MCP_DEPRECATIONS` in
-`mcp/mcp-projection.ts`) is empty. The surface is `6.3.0`, 109 verbs.
+`mcp/mcp-projection.ts`) is empty. The surface is `6.4.0`, 110 verbs.

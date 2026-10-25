@@ -127,6 +127,14 @@ Deno.test(
       const closed = await call(eager.client, "project_status");
       assert(closed.isError);
       assertStringIncludes(text(closed), "No app is open");
+      // show_app's page is served with nothing open; the tool itself isn't.
+      const { resources } = await eager.client.listResources();
+      assertEquals(resources.length, 1);
+      const read = await eager.client.readResource({ uri: resources[0]!.uri });
+      assertEquals(read.contents[0]!.mimeType, "text/html;profile=mcp-app");
+      const shown = await call(eager.client, "show_app");
+      assert(shown.isError);
+      assertStringIncludes(text(shown), "No app is open");
 
       // new_project creates and opens it; project tools then reach it.
       const created = await call(eager.client, "new_project", {

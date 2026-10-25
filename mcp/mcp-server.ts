@@ -12,9 +12,17 @@ import {
   type GetPromptRequest,
   GetPromptRequestSchema,
   ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
+  type ReadResourceRequest,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import {
+  appPreviewResourceContents,
+  appPreviewResourceListing,
+  isAppPreviewUri,
+} from "./mcp-app-preview.ts";
 import { getMcpPrompt, listMcpPrompts } from "./mcp-prompts.ts";
 import type { Kernel } from "../core/registries.ts";
 import type { ChangeContext } from "../core/changelog.ts";
@@ -105,7 +113,7 @@ export function createMcpServer(
   const server = new Server(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
     {
-      capabilities: { tools: {}, prompts: {} },
+      capabilities: { tools: {}, prompts: {}, resources: {} },
       instructions: buildAgentInstructions(deps.kernel),
     },
   );
@@ -236,6 +244,23 @@ export function createMcpServer(
   // Prompts: named workflows a human starts (/opentide:start and friends).
   // Built from the same guide as the instructions; the assembly decides only
   // whether the cost rules appear.
+  // The one resource: show_app's page (mcp-app-preview.ts).
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({
+    resources: [appPreviewResourceListing()],
+  }));
+  server.setRequestHandler(
+    ReadResourceRequestSchema,
+    (request: ReadResourceRequest) => {
+      if (!isAppPreviewUri(request.params.uri)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Unknown resource: ${request.params.uri}`,
+        );
+      }
+      return appPreviewResourceContents();
+    },
+  );
+
   server.setRequestHandler(ListPromptsRequestSchema, () => ({
     prompts: listMcpPrompts(),
   }));

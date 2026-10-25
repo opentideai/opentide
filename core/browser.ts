@@ -5,12 +5,20 @@
 // dozen page/browser methods used here would drift from the real API and give false
 // confidence. `any` at this boundary is the considered choice, not an oversight.
 
+import { existsSync } from "node:fs";
 import { readEnv } from "./process-env.ts";
 import { errorMessage } from "./util.ts";
 import { appPreviewUrl, getKernelSettings } from "./config.ts";
 
 const BROWSER_INSTALL_COMMAND = "deno task browser:install";
-const BROWSER_CHECK_COMMAND = "deno task browser:check";
+// The same install, for an OpenTide install, which has no repo tasks.
+const PLAYWRIGHT_INSTALL_COMMAND =
+  "deno run -A npm:playwright@1 install chromium";
+const BROWSER_CHANNEL_ENV = "OPENTIDE_BROWSER_CHANNEL";
+const BROWSER_HEADFUL_ENV = "OPENTIDE_BROWSER_HEADFUL";
+// Browsers Playwright can drive without downloading one, tried in order when
+// its own Chromium isn't there.
+export const SYSTEM_BROWSER_FALLBACKS = ["chrome", "msedge"] as const;
 
 // A box may not be able to run Playwright's bundled Chromium (e.g. an OS
 // Playwright ships no build for). Setting OPENTIDE_BROWSER_CHANNEL points launch at
@@ -20,7 +28,7 @@ const BROWSER_CHECK_COMMAND = "deno task browser:check";
 // under a user systemd service commonly can't open its sandbox; the channel is
 // only ever set on exactly such a server.
 export function systemBrowserChannel(
-  raw: string | undefined = readEnv("OPENTIDE_BROWSER_CHANNEL") ?? undefined,
+  raw: string | undefined = readEnv(BROWSER_CHANNEL_ENV) ?? undefined,
 ): string | undefined {
   const trimmed = raw?.trim();
   return trimmed ? trimmed : undefined;
@@ -31,6 +39,70 @@ export function browserLaunchOptions(
   channel = systemBrowserChannel(),
 ): Record<string, unknown> {
   return channel ? { headless, channel, args: ["--no-sandbox"] } : { headless };
+}
+
+function hasDisplay(): boolean {
+  return !!(
+    Deno.env.get("DISPLAY") ||
+    Deno.env.get("WAYLAND_DISPLAY") ||
+    Deno.build.os === "darwin" ||
+    Deno.build.os === "windows"
+  );
+}
+
+// A window popping up on the user's screen mid-session is a surprise, so the
+// browser runs headless unless OPENTIDE_BROWSER_HEADFUL asks to watch it.
+export function browserHeadful(
+  raw: string | undefined = readEnv(BROWSER_HEADFUL_ENV) ?? undefined,
+  display: boolean = hasDisplay(),
+): boolean {
+  return display && !!raw && raw !== "0" && raw.toLowerCase() !== "false";
+}
+
+// Distro Chromium builds, which Playwright can drive by path when its own
+// Chromium and Chrome aren't there (common on Linux servers).
+export const SYSTEM_CHROMIUM_PATHS = [
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/snap/bin/chromium",
+] as const;
+
+export interface BrowserLaunchStrategy {
+  // Playwright's Firefox is its own patched build; a stock Firefox can't be
+  // driven, so Firefox is only ever Playwright's download.
+  engine: "chromium" | "firefox";
+  options: Record<string, unknown>;
+}
+
+// What getBrowser tries, in order. A configured channel is all it tries.
+// Otherwise Playwright's own Chromium, an installed Chrome or Edge, a distro
+// Chromium, and last Playwright's Firefox, so a machine that never ran the
+// Playwright install still gets screenshots if it has any of them.
+export function browserLaunchStrategies(
+  channel: string | undefined = systemBrowserChannel(),
+  headful: boolean = browserHeadful(),
+  chromiumPaths: readonly string[] = SYSTEM_CHROMIUM_PATHS.filter((p) =>
+    existsSync(p)
+  ),
+): BrowserLaunchStrategy[] {
+  const modes = headful ? [false, true] : [true];
+  const chromium = (options: Record<string, unknown>) => ({
+    engine: "chromium" as const,
+    options,
+  });
+  if (channel) {
+    return modes.map((h) => chromium(browserLaunchOptions(h, channel)));
+  }
+  return [
+    ...modes.map((h) => chromium(browserLaunchOptions(h, undefined))),
+    ...SYSTEM_BROWSER_FALLBACKS.map((fallback) =>
+      chromium({ headless: !headful, channel: fallback })
+    ),
+    ...chromiumPaths.map((executablePath) =>
+      chromium({ headless: !headful, executablePath })
+    ),
+    { engine: "firefox", options: { headless: !headful } },
+  ];
 }
 
 export function browserToolTimeouts(
@@ -85,37 +157,32 @@ async function getBrowser(): Promise<BrowserInstance> {
       );
     }
 
-    const hasDisplay = !!(
-      Deno.env.get("DISPLAY") ||
-      Deno.env.get("WAYLAND_DISPLAY") ||
-      Deno.build.os === "darwin" ||
-      Deno.build.os === "windows"
-    );
-
-    const strategies: Array<Record<string, unknown>> = [];
-    if (hasDisplay) strategies.push(browserLaunchOptions(false));
-    strategies.push(browserLaunchOptions(true));
+    const strategies = browserLaunchStrategies();
 
     const launchErrors: string[] = [];
 
-    for (const opts of strategies) {
+    for (const { engine, options } of strategies) {
       try {
-        const browser = await pw.chromium.launch(opts);
-        const mode = opts.headless ? "headless" as const : "headful" as const;
+        const browser = await pw[engine].launch(options);
+        const mode = options.headless
+          ? "headless" as const
+          : "headful" as const;
         instance = { browser, mode };
         return instance;
       } catch (err) {
-        launchErrors.push(`${JSON.stringify(opts)}: ${errorMessage(err)}`);
+        launchErrors.push(
+          `${engine} ${JSON.stringify(options)}: ${errorMessage(err)}`,
+        );
       }
     }
 
     throw new Error(
-      "Playwright loaded, but its pinned Chromium browser could not launch. " +
-        `Run ${BROWSER_INSTALL_COMMAND} as the service user that runs Tide, then ` +
-        `verify with ${BROWSER_CHECK_COMMAND}. On Linux, the install task also asks ` +
-        "Playwright to install required system packages with --with-deps. " +
-        "If this is a systemd service, ensure HOME points at the service user's home " +
-        "so ~/.cache/ms-playwright is owned by that user. Launch attempts:\n" +
+      "No browser could launch for screenshots. Install Google Chrome, or " +
+        `Playwright's Chromium with \`${PLAYWRIGHT_INSTALL_COMMAND}\` ` +
+        `(\`${BROWSER_INSTALL_COMMAND}\` in a source checkout). On a server, run ` +
+        "it as the service user, with HOME set to that user's home, so " +
+        "~/.cache/ms-playwright belongs to it; on Linux add --with-deps. " +
+        "Launch attempts:\n" +
         launchErrors.join("\n"),
     );
   })();

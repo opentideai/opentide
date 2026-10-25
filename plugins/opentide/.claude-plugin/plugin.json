@@ -1,7 +1,7 @@
 {
   "name": "opentide",
   "displayName": "OpenTide",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Build and change a running OpenTide app from Claude Code: every change goes through a verified, reversible changeset.",
   "author": {
     "name": "OpenTide",

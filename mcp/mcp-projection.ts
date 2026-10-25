@@ -35,6 +35,7 @@ import { MCP_SURFACE_VERSION } from "../core/config.ts";
 import { encodeBase64, errorMessage } from "../core/util.ts";
 import type { CreatedTaskWithServe } from "../shared/tasks.ts";
 import { taskConnect } from "./mcp-connect.ts";
+import { SHOW_APP, showAppListing, showAppResult } from "./mcp-app-preview.ts";
 
 // The standard MCP tool annotations (SDK ToolAnnotationsSchema). All advisory
 // hints: clients use them to auto-approve reads, warn on destructive calls, etc.
@@ -70,6 +71,9 @@ export type McpContent =
 export interface McpToolResult {
   content: McpContent[];
   isError?: boolean;
+  // Data for an MCP App rendering the result (show_app's URL); the model reads
+  // `content`.
+  structuredContent?: Record<string, unknown>;
 }
 
 // Verbs that survive into AGENT_TOOLS (they matter to the integrated IDE agent)
@@ -90,6 +94,10 @@ export interface McpToolResult {
 //   get_project_context — its distinguishing value (cross-project @mention
 //     resolution, recent sessions) is launcher/session-scoped; its current-project
 //     entity counts are already covered by list_routes/handlers/schemas/modules.
+// Verbs only this face has, not in AGENT_TOOLS: show_app (the IDE has its own
+// preview pane). They carry their own listing and annotations.
+export const MCP_ONLY_TOOLS: ReadonlySet<string> = new Set([SHOW_APP]);
+
 const MCP_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "summarize_session",
   "get_session_context",
@@ -320,9 +328,13 @@ function toListing(
 export function projectedMcpTools(
   composition: CompositionContext,
 ): McpToolListing[] {
-  return AGENT_TOOLS
-    .filter((t) => toolAvailability(composition, t.name) === "ok")
-    .map((t) => toListing(t, composition));
+  return [
+    ...AGENT_TOOLS
+      .filter((t) => toolAvailability(composition, t.name) === "ok")
+      .map((t) => toListing(t, composition)),
+    // MCP-only: the IDE has its own preview pane.
+    showAppListing(),
+  ];
 }
 
 // A deterministic fingerprint of the STRUCTURAL tool contract — the tool names +
@@ -538,6 +550,7 @@ export async function dispatchMcpTool(
   rebuild: () => void,
   context?: ChangeContext,
 ): Promise<McpToolResult> {
+  if (name === SHOW_APP) return showAppResult(kernel, args);
   const availability = toolAvailability(kernel.composition, name);
   if (availability === "excluded") {
     return textError(
