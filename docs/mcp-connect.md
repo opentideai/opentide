@@ -142,6 +142,10 @@ holds an `opentide.json`.
 
 Don't also `claude mcp add` the same project: every tool would load twice.
 
+Tested end to end with Claude Code 2.1.310 and OpenTide 0.1.3, plugin installed
+from the marketplace: all four commands ran, and `/opentide:change` landed a
+route with its test.
+
 ### Without the plugin
 
 Project-scoped config lives in `.mcp.json` at your project root. `type` is
@@ -203,6 +207,12 @@ codex mcp add opentide -- ~/.opentide/bin/opentide mcp --project /abs/path/to/pr
 The Codex CLI and the IDE extension read the same file. Whether the Codex
 desktop app does too hasn't been checked.
 
+Tested end to end with Codex CLI 0.161.0 and OpenTide 0.1.3: `codex exec` landed
+a route with its test. Codex doesn't put all 109 tool schemas in every turn: the
+first turn was 16k input tokens in all, less than the ~25k the schemas alone
+would take, and 92% of the run's input was cached. The IDE extension hasn't been
+run.
+
 Config lives in `~/.codex/config.toml`, one `[mcp_servers.<name>]` table per
 server. Codex infers the transport from the keys present — `command` ⇒ stdio,
 `url` ⇒ streamable-HTTP — there is no `type` field.
@@ -240,6 +250,10 @@ bearer_token_env_var = "OPENTIDE_MCP_TOKEN"
 Config lives in `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global).
 Same object shape as Claude Code, but **no `type` field** — Cursor infers the
 transport from `command` vs `url`.
+
+Tested end to end with the Cursor CLI (`cursor-agent` 2026.10.22) and OpenTide
+0.1.3, stdio config in the project's `.cursor/mcp.json`: it landed a route with
+its test. The Cursor editor hasn't been run.
 
 **stdio:**
 
@@ -296,8 +310,10 @@ field in the extension's settings.
 - The extension isn't signed, so Desktop shows it as unverified when you install
   it.
 - macOS and Linux only, like `install.sh`.
-- Checked in Claude Desktop: install, the settings form, and the not-installed
-  path. Not yet run end to end against a project.
+- Tested end to end in Claude Desktop against a project: it landed a route with
+  its test. Use OpenTide 0.1.4 or later, with the extension from the same
+  release. In 0.1.3 the extension couldn't start, and Desktop's Cowork and Code
+  sessions couldn't connect either.
 
 ### Without the extension
 

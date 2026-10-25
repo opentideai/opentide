@@ -63,6 +63,32 @@ Deno.test(
       await first.client.close();
       assertEquals(await first.exit, 0);
 
+      // A probe before initialize (Claude Desktop's server/discover) gets
+      // "method not found" from the bridge instead of killing it, and the
+      // client's initialize still goes through.
+      const [probeSide, probeBridge] = InMemoryTransport.createLinkedPair();
+      const probeExit = proxyMcp(probeBridge, url, readServerToken(a.dir)!);
+      const replies: unknown[] = [];
+      probeSide.onmessage = (m: unknown) => void replies.push(m);
+      await probeSide.start();
+      await probeSide.send({
+        jsonrpc: "2.0",
+        id: "probe",
+        method: "server/discover",
+        params: {},
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      assertEquals(
+        (replies[0] as { error?: { code: number } }).error?.code,
+        -32601,
+      );
+      probeSide.onmessage = undefined;
+      const probed = new Client({ name: "bridge-test", version: "0.0.0" });
+      await probed.connect(probeSide);
+      assert((await probed.listTools()).tools.length > 0);
+      await probed.close();
+      assertEquals(await probeExit, 0);
+
       // Serve drops the session (a project switch does): the bridge fails, so
       // the client sees its server die and restarts it.
       const second = await bridge();

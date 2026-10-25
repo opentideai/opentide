@@ -38,9 +38,16 @@ function expandHome(path) {
   return path;
 }
 
+// Desktop's UtilityProcess hands this process a stdin that isn't fd 0, so an
+// inherited stdin reads nothing and the server exits at once. Pipe it through.
 function runOpenTide(launcher, project) {
   const args = project ? ["mcp", "--project", project] : ["mcp"];
-  const child = spawn(launcher, args, { stdio: "inherit" });
+  const child = spawn(launcher, args, { stdio: ["pipe", "pipe", "pipe"] });
+  process.stdin.pipe(child.stdin);
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stderr);
+  // The server may exit before reading everything; that's its exit to report.
+  child.stdin.on("error", () => {});
   for (const signal of FORWARDED_SIGNALS) {
     process.on(signal, () => child.kill(signal));
   }
@@ -48,7 +55,8 @@ function runOpenTide(launcher, project) {
     process.stderr.write(`Couldn't start ${launcher}: ${err.message}\n`);
     process.exit(1);
   });
-  child.on("exit", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
+  // "close", not "exit": wait until the server's output has been passed on.
+  child.on("close", (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
 }
 
 function reply(message) {

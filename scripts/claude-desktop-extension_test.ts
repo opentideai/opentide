@@ -131,6 +131,62 @@ Deno.test({
 
 Deno.test({
   name:
+    "claude desktop extension: the shim pipes stdin and stdout through to opentide",
+  ignore: !hasNode,
+}, async () => {
+  const home = await Deno.makeTempDir({ prefix: "opentide-mcpb-" });
+  try {
+    const bin = join(home, ".opentide", "bin");
+    await Deno.mkdir(bin, { recursive: true });
+    const fake = join(bin, "opentide");
+    await Deno.writeTextFile(
+      fake,
+      '#!/bin/sh\nwhile read -r line; do echo "got: $line"; done\necho bye >&2\n',
+    );
+    await Deno.chmod(fake, 0o755);
+    // Like Desktop's UtilityProcess: fd 0 is empty, and process.stdin is a
+    // stream fed from elsewhere (here, an environment variable).
+    const harness = join(home, "harness.js");
+    await Deno.writeTextFile(
+      harness,
+      `const { Readable } = require("node:stream");
+Object.defineProperty(process, "stdin", {
+  value: Readable.from([process.env.FEED]),
+});
+process.argv.splice(1, 1);
+require(process.argv[1]);
+`,
+    );
+    const child = new Deno.Command("node", {
+      args: [harness, shim, "/p", "9.9.9"],
+      env: {
+        PATH: Deno.env.get("PATH") ?? "",
+        HOME: home,
+        OPENTIDE_HOME: "",
+        FEED: "one\ntwo\n",
+      },
+      clearEnv: true,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const out = await child.output();
+    const decode = (b: Uint8Array) => new TextDecoder().decode(b);
+    const r = {
+      code: out.code,
+      stdout: decode(out.stdout),
+      stderr: decode(out.stderr),
+    };
+    assertEquals(r.stdout, "got: one\ngot: two\n");
+    assertStringIncludes(r.stderr, "bye");
+    assertEquals(r.code, 0);
+  } finally {
+    await Deno.remove(home, { recursive: true });
+  }
+});
+
+Deno.test({
+  name:
     "claude desktop extension: the .mcpb holds the manifest, the shim and the icon",
   ignore: !hasZip,
 }, async () => {

@@ -24,6 +24,26 @@ function isRequest(
   return "method" in msg && "id" in msg;
 }
 
+// JSON-RPC's "method not found".
+const METHOD_NOT_FOUND = -32601;
+
+// A request sent before initialize has no session, and serve's /mcp refuses it.
+// Some clients probe first (Claude Desktop sends server/discover) and fall back
+// to initialize on "method not found", so the bridge answers those itself.
+export function preInitializeReply(
+  msg: JSONRPCMessage & { id: string | number; method: string },
+): JSONRPCMessage {
+  if (msg.method === "ping") return { jsonrpc: "2.0", id: msg.id, result: {} };
+  return {
+    jsonrpc: "2.0",
+    id: msg.id,
+    error: {
+      code: METHOD_NOT_FOUND,
+      message: `Method not found: ${msg.method} (send initialize first)`,
+    },
+  };
+}
+
 function negotiatedVersion(msg: JSONRPCMessage): string | null {
   if (!("result" in msg)) return null;
   const version = (msg.result as { protocolVersion?: unknown }).protocolVersion;
@@ -48,6 +68,7 @@ export function proxyMcp(
   // negotiated version. A real Client sets it; a relay has to read it off the
   // initialize reply.
   const initializeIds = new Set<string | number>();
+  let initializeSent = false;
 
   return new Promise((resolveExit) => {
     let finished = false;
@@ -68,6 +89,13 @@ export function proxyMcp(
     downstream.onmessage = (msg: JSONRPCMessage) => {
       if (isRequest(msg) && msg.method === "initialize") {
         initializeIds.add(msg.id);
+        initializeSent = true;
+      } else if (!initializeSent) {
+        // Notifications before initialize have nowhere to go; drop them.
+        if (isRequest(msg)) {
+          downstream.send(preInitializeReply(msg)).catch(() => void finish(1));
+        }
+        return;
       }
       upstream.send(msg).catch(lost);
     };
