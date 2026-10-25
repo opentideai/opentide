@@ -56,6 +56,10 @@ export const OPEN_FILES: readonly string[] = [
   "scripts/claude-plugin_test.ts",
   "scripts/claude-desktop-extension.ts",
   "scripts/claude-desktop-extension_test.ts",
+  // CI splits the tests over parallel jobs with it.
+  "scripts/test-shard.ts",
+  "scripts/test-shard_test.ts",
+  "scripts/test-timings.json",
   // `deno task db:generate` reads it.
   "drizzle.config.ts",
   // The one backend test that lives outside a layer folder. Everything else in

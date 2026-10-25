@@ -7,6 +7,7 @@
     "orchestrator": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/orchestrator-main.ts",
     "opentide": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/cli.ts",
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys",
+    "test:shard": "deno run --allow-read --allow-run scripts/test-shard.ts",
     "lint": "deno lint",
     "export:opentide": "deno run --allow-read --allow-write --allow-run --allow-env scripts/export-opentide.ts",
     "smoke:install": "deno run --allow-net --allow-read --allow-write --allow-run --allow-env --allow-sys scripts/install-smoke.ts",

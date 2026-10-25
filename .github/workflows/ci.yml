@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Runs the macOS tests too (Actions -> CI -> Run workflow).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,20 +28,45 @@ jobs:
       - run: deno lint
       - run: deno check shared/ core/ verification/ mcp/ lsp/ cli/ agent-loop/ providers/ scripts/ tests/
 
+  # Five parallel jobs, split by recorded time (scripts/test-shard.ts): about
+  # 6 minutes each instead of 30 in one. Ubuntu only on push: development
+  # happens on macOS, so its suite runs there locally; CI's macOS run is
+  # workflow_dispatch.
   test:
-    name: Tests (${{ matrix.os }})
+    name: Tests (shard ${{ matrix.shard }}/5)
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        shard: [1, 2, 3, 4, 5]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version-file: .deno-version
+          cache: true
+      # Node builds declare engines.node >=24; the runners default to older.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Git identity (scaffolded projects make a first commit)
+        run: |
+          git config --global user.name "OpenTide CI"
+          git config --global user.email "ci@opentide.invalid"
+      - run: deno task test:shard ${{ matrix.shard }} 5
+
+  test-macos:
+    name: Tests (macOS)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
           deno-version-file: .deno-version
-      # Node builds declare engines.node >=24; the runners default to older.
+          cache: true
       - uses: actions/setup-node@v4
         with:
           node-version: 24
