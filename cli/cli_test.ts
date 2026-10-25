@@ -460,7 +460,7 @@ Deno.test("opentide mcp --http outside a project names the directory, exit 2", a
   }
 });
 
-Deno.test("opentide mcp on stdio outside a project connects with no tools", async () => {
+Deno.test("opentide mcp on stdio outside a project connects with only the app tools", async () => {
   const dir = await Deno.makeTempDir({ prefix: "opentide-mcp-noproject-" });
   try {
     const child = new Deno.Command("deno", {
@@ -513,10 +513,15 @@ Deno.test("opentide mcp on stdio outside a project connects with no tools", asyn
     const init = responses.get(1) as { instructions: string };
     assertStringIncludes(
       init.instructions,
-      `${await Deno.realPath(dir)} is not an OpenTide project`,
+      `${await Deno.realPath(dir)} is not an OpenTide app`,
     );
-    assertStringIncludes(init.instructions, "opentide scaffold");
-    assertEquals(responses.get(2), { tools: [] });
+    assertStringIncludes(init.instructions, "new_project");
+    const { tools } = responses.get(2) as { tools: Array<{ name: string }> };
+    assertEquals(tools.map((t) => t.name), [
+      "list_projects",
+      "open_project",
+      "new_project",
+    ]);
     assertEquals(code, 0);
   } finally {
     await Deno.remove(dir, { recursive: true });

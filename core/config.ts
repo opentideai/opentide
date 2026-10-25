@@ -268,7 +268,7 @@ export function appPreviewUrl(port: number, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.4";
+export const OPENTIDE_VERSION = "0.1.5";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
@@ -432,6 +432,10 @@ export const SERVER_TOKEN_BYTES = 32;
 // the wait is generous; the poll reads two small files.
 export const MCP_BRIDGE_STARTUP_TIMEOUT_MS = 90_000;
 export const MCP_BRIDGE_POLL_MS = 200;
+// `opentide mcp` on a folder of apps remembers the app it last opened there, so
+// a client that restarts it lands back on that app. One file for every folder,
+// in the user config dir.
+export const MCP_WORKSPACES_FILE = "mcp-workspaces.json";
 // Where a serve process the bridge started writes its output, under .opentide/.
 export const SERVE_LOG_FILE = "serve.log";
 

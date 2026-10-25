@@ -104,9 +104,10 @@ codex mcp add opentide -- opentide mcp --project ~/apps/todo-app
 
 **Claude Desktop**: download
 [`opentide.mcpb`](https://github.com/opentideai/opentide/releases/latest/download/opentide.mcpb),
-double-click it, and pick your project folder when Desktop asks. It runs the
-OpenTide you installed above; if that's missing, ask Claude to use OpenTide and
-it tells you how to install it.
+double-click it, and pick a folder for your apps when Desktop asks (say
+`~/apps`); Claude creates and opens apps there. It runs the OpenTide you
+installed above; if that's missing, ask Claude to use OpenTide and it tells you
+how to install it.
 
 **Cursor** (paste into `.cursor/mcp.json`)
 

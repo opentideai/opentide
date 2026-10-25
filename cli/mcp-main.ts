@@ -19,6 +19,7 @@ import { serveMcpStdio } from "../mcp/mcp-server.ts";
 import { serveMcpHttp } from "../mcp/mcp-http.ts";
 import { runMcpBridge } from "../mcp/mcp-bridge.ts";
 import { serveNoProjectStdio } from "../mcp/mcp-no-project.ts";
+import { runWorkspaceBridge } from "../mcp/mcp-workspace.ts";
 import {
   connectConfigTarget,
   generateConnectConfig,
@@ -145,13 +146,25 @@ export async function serveMcp(
   const project = resolveProjectPath(args.projectPath, cwd);
   if (!project.ok) {
     console.error(`${project.error.message}\n${project.error.suggestion}`);
-    // A person at a terminal gets the error. A client gets a server with no
-    // tools that says why: the plugin, started in whatever directory Claude Code
-    // was opened in, and the Desktop extension, pointed at the wrong folder.
+    // A person at a terminal gets the error. A client gets a folder of apps
+    // (mcp-workspace.ts): the Desktop extension pointed at ~/apps, or the plugin
+    // started in whatever directory Claude Code was opened in. A folder named
+    // with --project lists the whole tool surface from the start; the directory
+    // a client merely started in lists only the app tools until one is open.
     if (http || Deno.stdin.isTerminal()) Deno.exit(2);
-    console.error("  Serving with no tools until it's started in a project.");
-    await serveNoProjectStdio(resolve(args.projectPath ?? cwd));
-    Deno.exit(0);
+    const folder = resolve(args.projectPath ?? cwd);
+    if (args.standalone) {
+      console.error("  Serving with no tools until it's started in a project.");
+      await serveNoProjectStdio(folder);
+      Deno.exit(0);
+    }
+    Deno.exit(
+      await runWorkspaceBridge(
+        folder,
+        args.projectPath !== null,
+        assembly.composition(),
+      ),
+    );
   }
   const projectPath = project.data;
 

@@ -1,5 +1,6 @@
 // Starts the OpenTide MCP server for Claude Desktop: the installed
-// `opentide mcp` on the project folder chosen in the extension's settings.
+// `opentide mcp` on the folder chosen in the extension's settings, a folder of
+// apps or one app.
 //
 //   node index.js <project folder>
 //

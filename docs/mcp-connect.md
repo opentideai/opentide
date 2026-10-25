@@ -107,6 +107,42 @@ rather than holding the token. Without `--project`, the stdio form carries a
   compiles the kernel graph and opens the database. Expect a few seconds; the
   generated Codex config sets its startup timeout to 30 s to cover it.
 
+## A folder of apps
+
+Point `opentide mcp` at a folder that isn't itself a project, and it serves the
+apps directly inside it:
+
+- `list_projects`: the apps in the folder, and which one is open.
+- `open_project <name>`: every other tool acts on that app from the next call,
+  in the same chat. Starts its `opentide serve` if it isn't running.
+- `new_project <name>`: creates an empty app in the folder (the name in
+  lowercase, with dashes) and opens it.
+
+Until an app is open, the other tools answer "No app is open" and name the apps
+there.
+
+- **Named with `--project`** (the Desktop extension, a client config): the whole
+  tool list is there from the start. Claude Desktop only picks up a changed tool
+  list in a new chat, so this is what lets an open work in the chat that asked
+  for it.
+- **The directory a client started in** (the Claude Code plugin): only the three
+  app tools until one is open, so a directory with nothing to do with OpenTide
+  costs a few hundred tokens, not the whole surface. Opening an app tells the
+  client its tools changed; Claude Code picks them up mid-turn.
+- **The last-opened app is remembered** per folder, in
+  `~/.config/opentide/mcp-workspaces.json`, and opened again when the client
+  restarts the server.
+- **Only direct children count.** `~/apps/todo` is found from `~/apps`;
+  `~/apps/work/todo` isn't.
+- **One open app per server process.** Claude Desktop runs every chat on one
+  process, so two chats working on different apps at once switch it under each
+  other. To keep a Desktop project on one app, put this in the project's
+  instructions:
+
+```text
+This project is the OpenTide app todo-app. Before any other OpenTide tool, call open_project with name "todo-app".
+```
+
 ## Claude Code
 
 ### The plugin
@@ -132,9 +168,10 @@ holds an `opentide.json`.
   `/opentide:change <goal>`, `/opentide:land [changeset_id]` and
   `/opentide:recover`. Only you can run them; Claude doesn't invoke them on its
   own.
-- **Outside an OpenTide project** the server connects with no tools and no
-  prompts. Its instructions, a few lines, tell Claude the directory isn't a
-  project and how to scaffold one.
+- **Outside an OpenTide project** the server lists only `list_projects`,
+  `open_project` and `new_project`, for the apps directly under that directory
+  (see [A folder of apps](#a-folder-of-apps)). Open one and the rest of the
+  tools appear in the same session.
 - **Without `opentide` installed** the server shows as failed. The plugin looks
   for `opentide` on your PATH, then at `~/.opentide/bin/opentide`, and otherwise
   exits with the install command on stderr. `claude mcp list` shows only
@@ -292,9 +329,10 @@ https://github.com/opentideai/opentide/releases/latest/download/opentide.mcpb
 ```
 
 Double-click it, or in Claude Desktop use Settings → Extensions → Advanced
-settings → Install Extension…, and pick it. Desktop asks for **Project folder**:
-choose the folder with `opentide.json` in it. To switch projects, change that
-field in the extension's settings.
+settings → Install Extension…, and pick it. Desktop asks for **Apps folder**:
+choose where your apps live, say `~/apps`. Claude creates, lists and opens apps
+there itself (see [A folder of apps](#a-folder-of-apps)). One app's own folder
+works too, and then the extension serves only that app.
 
 - It bundles no runtime. A small Node script, run on Desktop's own Node, starts
   `~/.opentide/bin/opentide mcp --project <folder>` (`$OPENTIDE_HOME/bin` if you
@@ -304,9 +342,10 @@ field in the extension's settings.
   `opentide_setup`. Ask Claude to do anything with OpenTide and it gives you the
   install command. Install, then turn the extension off and on in Settings →
   Extensions.
-- A `~` at the start of **Project folder** is expanded to your home folder.
-- A folder that isn't a project: the server connects with no tools, and tells
-  Claude which folder it was given.
+- A `~` at the start of **Apps folder** is expanded to your home folder.
+- Desktop starts the extension twice: once for chats, once for Cowork and Code
+  sessions. An app opened in a chat doesn't switch a Cowork session that's
+  already running; it picks up the last-opened app when it next starts.
 - The extension isn't signed, so Desktop shows it as unverified when you install
   it.
 - macOS and Linux only, like `install.sh`.
@@ -326,8 +365,8 @@ opentide mcp --print-config claude-desktop --project /abs/path/to/project
 
 It launches local stdio servers only; `--http` still prints the stdio form. The
 command is the launcher's absolute path, because a desktop app doesn't inherit
-your shell's PATH. Restart Claude Desktop after editing. One entry serves one
-project.
+your shell's PATH. Restart Claude Desktop after editing. Pass a folder of apps
+as `--project` and one entry serves all of them.
 
 ## Any other MCP client
 

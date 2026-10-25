@@ -42,7 +42,7 @@ export function renderExtensionManifest(
       description:
         "Build and change a running OpenTide app from Claude: every change goes through a verified, reversible changeset.",
       long_description:
-        "Point it at an OpenTide project and Claude gets the tools to change the running app: it opens a changeset, writes handlers, schemas and tests, and lands the change only once the checks pass. A change that doesn't land rolls back.\n\nNeeds OpenTide installed (`curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh`) and a project (`opentide scaffold <dir> <name>`).",
+        "Point it at a folder of OpenTide apps and Claude can create, open and change them: it opens a changeset, writes handlers, schemas and tests, and lands the change only once the checks pass. A change that doesn't land rolls back.\n\nNeeds OpenTide installed (`curl -fsSL https://github.com/opentideai/opentide/releases/latest/download/install.sh | sh`).",
       author: { name: "OpenTide", url: "https://github.com/opentideai" },
       homepage: REPO_URL,
       documentation: `${REPO_URL}/blob/main/docs/mcp-connect.md`,
@@ -74,9 +74,9 @@ export function renderExtensionManifest(
       user_config: {
         [PROJECT_FIELD]: {
           type: "directory",
-          title: "Project folder",
+          title: "Apps folder",
           description:
-            "The OpenTide project to work on: the folder with opentide.json in it. Create one with `opentide scaffold <dir> <name>`.",
+            "Where your OpenTide apps live, say ~/apps. Claude lists, opens and creates apps there. One app's own folder works too.",
           required: true,
         },
       },

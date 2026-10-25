@@ -15,17 +15,18 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { locateServe } from "../core/serve-process.ts";
+import { locateServe, type ServeTarget } from "../core/serve-process.ts";
+import type { Result } from "../core/types.ts";
 import { errorMessage } from "../core/util.ts";
 
-function isRequest(
+export function isRequest(
   msg: JSONRPCMessage,
 ): msg is JSONRPCMessage & { id: string | number; method: string } {
   return "method" in msg && "id" in msg;
 }
 
 // JSON-RPC's "method not found".
-const METHOD_NOT_FOUND = -32601;
+export const METHOD_NOT_FOUND = -32601;
 
 // A request sent before initialize has no session, and serve's /mcp refuses it.
 // Some clients probe first (Claude Desktop sends server/discover) and fall back
@@ -117,30 +118,44 @@ export function proxyMcp(
   });
 }
 
-// `opentide mcp --project <path>` without --standalone. Logs go to stderr;
-// stdout belongs to the relayed JSON-RPC.
-export async function runMcpBridge(projectPath: string): Promise<number> {
-  const located = await locateServe(resolve(projectPath));
+// Find or start the serve process for `projectDir`, telling the person at the
+// other end of stderr what happened. Shared with the workspace bridge.
+export async function locateAndReport(
+  projectDir: string,
+): Promise<Result<ServeTarget>> {
+  const located = await locateServe(resolve(projectDir));
   if (!located.ok) {
     console.error(`  ${located.error.message}`);
     if (located.error.suggestion) {
       console.error(`  ${located.error.suggestion}`);
     }
-    return 1;
+    return located;
   }
-  const { url, token, pid, started } = located.data;
+  const { url, pid, started } = located.data;
   if (started) {
     console.error(
-      `  Started opentide serve (pid ${pid}) for this project. It keeps ` +
+      `  Started opentide serve (pid ${pid}) for ${projectDir}. It keeps ` +
         `running after this bridge exits; stop it with \`kill ${pid}\`.` +
         (started.logPath ? `\n  Log: ${started.logPath}` : ""),
     );
   }
   console.error(`  MCP bridge ready: stdio <-> ${url} (serve pid ${pid}).`);
-  // The SDK's stdio transport never notices stdin ending, and the upstream SSE
-  // stream keeps the process alive, so a client that only closes our stdin
-  // would leave us running forever.
+  return located;
+}
+
+// The SDK's stdio transport never notices stdin ending, and the upstream SSE
+// stream keeps the process alive, so a client that only closes our stdin would
+// leave us running forever.
+export function stdioTransport(): StdioServerTransport {
   const stdio = new StdioServerTransport();
   process.stdin.once("end", () => void stdio.close());
-  return await proxyMcp(stdio, url, token);
+  return stdio;
+}
+
+// `opentide mcp --project <path>` without --standalone. Logs go to stderr;
+// stdout belongs to the relayed JSON-RPC.
+export async function runMcpBridge(projectPath: string): Promise<number> {
+  const located = await locateAndReport(projectPath);
+  if (!located.ok) return 1;
+  return await proxyMcp(stdioTransport(), located.data.url, located.data.token);
 }
