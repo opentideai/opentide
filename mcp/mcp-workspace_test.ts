@@ -72,6 +72,9 @@ Deno.test(
     });
     const url = `http://127.0.0.1:${control.server.addr.port}/mcp`;
     const located: string[] = [];
+    // Closed in finally too: a client left open after a failed assertion holds
+    // serve's SSE stream, and shutting serve down would wait on it forever.
+    const clients: Client[] = [];
     const options = (
       eager: boolean,
       mem: WorkspaceMemory,
@@ -96,6 +99,7 @@ Deno.test(
       const [clientSide, bridgeSide] = InMemoryTransport.createLinkedPair();
       const exit = runWorkspace(bridgeSide, options(eager, mem));
       const client = new Client({ name: "workspace-test", version: "0.0.0" });
+      clients.push(client);
       await client.connect(clientSide);
       return { client, exit };
     };
@@ -193,6 +197,7 @@ Deno.test(
       await again.client.close();
       assertEquals(await again.exit, 0);
     } finally {
+      for (const client of clients) await client.close().catch(() => {});
       const ctx = control.setProject.current();
       if (ctx) await unloadProject(ctx);
       await control.server.shutdown();

@@ -411,12 +411,14 @@ export function runWorkspace(
     void send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
   }
 
-  function dropUpstream(reason: string): void {
+  // Closing ends serve's side too (its SSE stream to us), so callers that need
+  // serve quiet afterwards, like a disconnect, wait for it.
+  function dropUpstream(reason: string): Promise<void> {
     const old = upstream;
     upstream = null;
     for (const id of pending) void replyError(id, INTERNAL_ERROR, reason);
     pending.clear();
-    if (old) void old.close();
+    return old ? old.close() : Promise.resolve();
   }
 
   async function connect(name: string): Promise<Result<OpenedApp>> {
@@ -426,7 +428,9 @@ export function runWorkspace(
         error: { code: "NOT_INITIALIZED", message: "initialize first" },
       };
     }
-    if (upstream) dropUpstream(`The open app changed to ${name}; try again.`);
+    if (upstream) {
+      await dropUpstream(`The open app changed to ${name}; try again.`);
+    }
     const located = await opts.locate(join(opts.folder, name));
     if (!located.ok) return located;
     const next: Upstream = new Upstream(
@@ -442,7 +446,7 @@ export function runWorkspace(
         console.error(
           `  Lost the serve process for ${name}: ${errorMessage(err)}`,
         );
-        dropUpstream(`Lost the server for ${name}; try again.`);
+        void dropUpstream(`Lost the server for ${name}; try again.`);
       },
     );
     try {
@@ -630,7 +634,7 @@ export function runWorkspace(
   async function finish() {
     if (finished) return;
     finished = true;
-    dropUpstream("The client disconnected.");
+    await dropUpstream("The client disconnected.");
     await downstream.close().catch(() => {});
     resolveExit(0);
   }
