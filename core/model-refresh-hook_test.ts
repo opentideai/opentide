@@ -98,6 +98,24 @@ Deno.test("model auto-refresh hook (G4)", async (t) => {
       assertEquals(skip?.source, "system");
     });
 
+    // A fresh catalog with nothing recommended yet (serve fetched it on startup
+    // or on a key change) still recommends: skipping left every role unconfigured.
+    await t.step(
+      "fresh cache, no recommendations → recommend runs",
+      async () => {
+        reset();
+        writeCache(new Date().toISOString()); // just now → fresh
+        assertEquals(config.getRecommendedModels(), {});
+
+        const sink: Captured[] = [];
+        await hook.refreshModelsOnStart(kernelStub(sink));
+        await flush();
+
+        assertEquals(sink.some((e) => e.message.includes("skipped")), false);
+        assertEquals(config.getRecommendedModels().agent, "claude-opus-4-6");
+      },
+    );
+
     // (b) A discovered (but stale) cache: the deterministic recommend runs over the
     // cached catalog and persists a valid catalog id for every role. With the curated
     // MODELS list emptied (D7), the catalog is discovery-only, so seed one covering

@@ -33,6 +33,8 @@ import type {
 import {
   getProviderKey,
   getUtilityModelForRequest,
+  PRIVATE_HISTORY_DIR,
+  PRIVATE_SESSION_MARKERS_DIR,
   providerFor,
 } from "./config.ts";
 import { callUtilityModel } from "./utility-model.ts";
@@ -40,10 +42,13 @@ import type { CurrentUser } from "./auth.ts";
 import { localUser } from "./auth.ts";
 import {
   appendJsonLine,
+  copyVerified,
   ensureDir,
+  fileStamp,
   readJsonFile,
   readJsonLines,
   rewriteJsonLines,
+  writeFileIfMissing,
   writeJsonIfChanged,
 } from "./history-store.ts";
 import { createMergeableNumericId, createTimestampedId } from "./ids.ts";
@@ -79,11 +84,16 @@ function profileSnapshot(user: CurrentUser): UserProfileSnapshot {
   };
 }
 
+// Sessions from before visibility existed count as private.
+function visibilityOf(session: Session): SessionVisibility {
+  return session.visibility ?? "private";
+}
+
 function normalizeSession(session: Session): Session {
   return {
     ...session,
     ownerUserId: session.ownerUserId ?? fallbackUserId(),
-    visibility: session.visibility ?? "private",
+    visibility: visibilityOf(session),
   };
 }
 
@@ -178,7 +188,9 @@ function isoTimestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function modelUsageFromInput(input: RecordModelUsageInput): ModelUsageRecord {
+export function modelUsageFromInput(
+  input: RecordModelUsageInput,
+): ModelUsageRecord {
   const startedAt = isoTimestamp(input.startedAt);
   const endedAt = isoTimestamp(input.endedAt);
   const startedMs = new Date(startedAt).getTime();
@@ -390,6 +402,9 @@ interface SessionStore {
   ): Promise<void>;
   updateFocus(id: string, focus: string | null): Promise<void>;
   updateVisibility(id: string, visibility: SessionVisibility): Promise<void>;
+  // Moves private sessions still stored with project history to where private
+  // sessions go. Returns how many moved.
+  relocatePrivateSessions(): Promise<number>;
   deleteSession(id: string): Promise<void>;
   archiveSession(id: string): Promise<void>;
   unarchiveSession(id: string): Promise<void>;
@@ -450,7 +465,57 @@ export interface SessionListOptions {
 
 // --- File-backed storage ---
 
+// Where a session's record and messages live. Project sessions sit in the
+// history root, which git tracks. Private ones sit in private/, which ignores
+// itself, so a commit never ships them (docs/tide-client-plan.md, decision 2).
+// Usage and the model-usage ledger stay in the root: they're gitignored there.
+type HistoryArea = SessionVisibility;
+const HISTORY_AREAS: readonly HistoryArea[] = ["private", "project"];
+const IGNORE_EVERYTHING = "# Private sessions stay on this machine.\n*\n";
+
+interface MessageFileSummary {
+  last: StoredMessage | null;
+  count: number;
+  // The user message that opened each turn.
+  userMessageByTurn: Map<string, number>;
+  projectPinned: StoredMessage[];
+}
+
+const EMPTY_SUMMARY: MessageFileSummary = {
+  last: null,
+  count: 0,
+  userMessageByTurn: new Map(),
+  projectPinned: [],
+};
+
+function summarize(messages: StoredMessage[]): MessageFileSummary {
+  const userMessageByTurn = new Map<string, number>();
+  for (const msg of messages) {
+    if (msg.turnId && msg.role === "user") {
+      userMessageByTurn.set(msg.turnId, msg.id);
+    }
+  }
+  return {
+    last: messages.at(-1) ?? null,
+    count: messages.length,
+    userMessageByTurn,
+    projectPinned: messages.filter((m) => m.projectPinned),
+  };
+}
+
+// How many sessions' parsed messages the file store keeps in memory.
+const PARSED_MESSAGE_FILES_KEPT = 2;
+
 class FileSessionStore implements SessionStore {
+  private readonly parsedMessages = new Map<
+    string,
+    { stamp: string; messages: StoredMessage[] }
+  >();
+  private readonly summaries = new Map<
+    string,
+    { stamp: string; summary: MessageFileSummary }
+  >();
+
   private historyDir: string;
   // Cached max message id for the file-backed path, so addMessage doesn't
   // re-scan every message file on every append. Lazily seeded from disk.
@@ -458,29 +523,78 @@ class FileSessionStore implements SessionStore {
 
   constructor(historyDir: string) {
     this.historyDir = historyDir;
-    ensureDir(this.sessionsDir());
-    ensureDir(this.messagesDir());
+    ensureDir(this.sessionsDir("project"));
+    ensureDir(this.messagesDir("project"));
     ensureDir(this.usageDir());
   }
 
-  private sessionsDir(): string {
-    return join(this.historyDir, "sessions");
+  private areaDir(area: HistoryArea): string {
+    if (area === "project") return this.historyDir;
+    const dir = join(this.historyDir, PRIVATE_HISTORY_DIR);
+    writeFileIfMissing(join(dir, ".gitignore"), IGNORE_EVERYTHING);
+    return dir;
   }
 
-  private messagesDir(): string {
-    return join(this.historyDir, "messages");
+  // Read-only twin of areaDir: never creates the private directory.
+  private areaPath(area: HistoryArea): string {
+    return area === "project"
+      ? this.historyDir
+      : join(this.historyDir, PRIVATE_HISTORY_DIR);
+  }
+
+  private sessionsDir(area: HistoryArea): string {
+    return join(this.areaPath(area), "sessions");
+  }
+
+  private messagesDir(area: HistoryArea): string {
+    return join(this.areaPath(area), "messages");
   }
 
   private usageDir(): string {
     return join(this.historyDir, "usage");
   }
 
-  private sessionPath(id: string): string {
-    return join(this.sessionsDir(), `${encodeURIComponent(id)}.json`);
+  private sessionPath(id: string, area: HistoryArea): string {
+    return join(this.sessionsDir(area), `${encodeURIComponent(id)}.json`);
   }
 
-  private messagesPath(sessionId: string): string {
-    return join(this.messagesDir(), `${encodeURIComponent(sessionId)}.jsonl`);
+  private messagesPath(sessionId: string, area: HistoryArea): string {
+    return join(
+      this.messagesDir(area),
+      `${encodeURIComponent(sessionId)}.jsonl`,
+    );
+  }
+
+  // The area a session's files are in. A session with no files yet, or only
+  // project ones, is a project session.
+  private areaOf(sessionId: string): HistoryArea {
+    return existsSync(this.sessionPath(sessionId, "private")) ||
+        existsSync(this.messagesPath(sessionId, "private"))
+      ? "private"
+      : "project";
+  }
+
+  // Ensures the private directory (and its ignore file) before a write there.
+  private writableArea(area: HistoryArea): HistoryArea {
+    this.areaDir(area);
+    return area;
+  }
+
+  private markerPath(sessionId: string): string {
+    return join(
+      this.historyDir,
+      PRIVATE_SESSION_MARKERS_DIR,
+      `${encodeURIComponent(sessionId)}.json`,
+    );
+  }
+
+  // A private session's trace in shared history: that it exists and whose it
+  // is. Nothing it says goes here.
+  private markPrivate(session: Session): void {
+    writeJsonIfChanged(this.markerPath(session.id), {
+      id: session.id,
+      ownerUserId: session.ownerUserId ?? null,
+    });
   }
 
   private usagePath(sessionId: string): string {
@@ -492,16 +606,44 @@ class FileSessionStore implements SessionStore {
   }
 
   private readSessionFile(id: string): Session | null {
-    const session = readJsonFile<Session>(this.sessionPath(id));
+    const session = readJsonFile<Session>(
+      this.sessionPath(id, this.areaOf(id)),
+    );
     return session ? normalizeSession(session) : null;
   }
 
-  private writeSessionFile(session: Session): void {
-    writeJsonIfChanged(this.sessionPath(session.id), session);
+  // Writes where the session already is; a new one goes by its visibility.
+  // Only moveSession changes the area.
+  private writeSessionFile(session: Session, area?: HistoryArea): void {
+    const target = area ??
+      (this.hasSessionFile(session.id)
+        ? this.areaOf(session.id)
+        : visibilityOf(session));
+    writeJsonIfChanged(
+      this.sessionPath(session.id, this.writableArea(target)),
+      session,
+    );
+    if (target === "private") this.markPrivate(session);
   }
 
+  private hasSessionFile(id: string): boolean {
+    return HISTORY_AREAS.some((area) => existsSync(this.sessionPath(id, area)));
+  }
+
+  // Every session in both areas. A session caught mid-move is listed once,
+  // from the private side.
   private listSessionFiles(): Session[] {
-    const dir = this.sessionsDir();
+    const byId = new Map<string, Session>();
+    for (const area of HISTORY_AREAS) {
+      for (const session of this.listAreaSessions(area)) {
+        if (!byId.has(session.id)) byId.set(session.id, session);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private listAreaSessions(area: HistoryArea): Session[] {
+    const dir = this.sessionsDir(area);
     if (!existsSync(dir)) return [];
     return readdirSync(dir)
       .filter((file) => file.endsWith(".json"))
@@ -510,22 +652,108 @@ class FileSessionStore implements SessionStore {
       .map(normalizeSession);
   }
 
+  // The sessions being worked in are read many times a turn (the agent's
+  // context, the IDE's transcript, usage), and a long one runs to tens of
+  // megabytes, so the last few parsed files are kept until they change.
   private readMessageFile(sessionId: string): StoredMessage[] {
-    return readJsonLines<StoredMessage>(this.messagesPath(sessionId))
-      .map(normalizeMessage);
+    const path = this.messagesPath(sessionId, this.areaOf(sessionId));
+    const stamp = fileStamp(path);
+    if (!stamp) return [];
+    const cached = this.parsedMessages.get(path);
+    if (cached?.stamp === stamp) {
+      // Most recently used goes last.
+      this.parsedMessages.delete(path);
+      this.parsedMessages.set(path, cached);
+      return [...cached.messages];
+    }
+    const messages = readJsonLines<StoredMessage>(path).map(normalizeMessage);
+    this.parsedMessages.delete(path);
+    this.parsedMessages.set(path, { stamp, messages });
+    for (const oldest of this.parsedMessages.keys()) {
+      if (this.parsedMessages.size <= PARSED_MESSAGE_FILES_KEPT) break;
+      this.parsedMessages.delete(oldest);
+    }
+    return [...messages];
+  }
+
+  // A message file's summary, parsed once per version of the file: a long
+  // session's file runs to megabytes, and listing sessions, linking turns to
+  // messages and reading project pins would otherwise parse every one of them
+  // on every call.
+  private summaryOf(path: string): MessageFileSummary {
+    const stamp = fileStamp(path);
+    if (!stamp) return EMPTY_SUMMARY;
+    const cached = this.summaries.get(path);
+    if (cached?.stamp === stamp) return cached.summary;
+    const summary = summarize(
+      readJsonLines<StoredMessage>(path).map(normalizeMessage),
+    );
+    this.summaries.set(path, { stamp, summary });
+    return summary;
+  }
+
+  private sessionSummary(sessionId: string): MessageFileSummary {
+    return this.summaryOf(this.messagesPath(sessionId, this.areaOf(sessionId)));
+  }
+
+  private allSummaries(): MessageFileSummary[] {
+    const paths = HISTORY_AREAS.flatMap((area) => {
+      const dir = this.messagesDir(area);
+      if (!existsSync(dir)) return [];
+      return readdirSync(dir)
+        .filter((file) => file.endsWith(".jsonl"))
+        .map((file) => join(dir, file));
+    });
+    const seen = new Set(paths);
+    for (const path of this.summaries.keys()) {
+      if (!seen.has(path)) this.summaries.delete(path);
+    }
+    return paths.map((path) => this.summaryOf(path));
   }
 
   private writeMessageFile(sessionId: string, messages: StoredMessage[]): void {
-    rewriteJsonLines(this.messagesPath(sessionId), messages);
+    rewriteJsonLines(
+      this.messagesPath(sessionId, this.writableArea(this.areaOf(sessionId))),
+      messages,
+    );
   }
 
   private listAllMessages(): StoredMessage[] {
-    const dir = this.messagesDir();
-    if (!existsSync(dir)) return [];
-    return readdirSync(dir)
-      .filter((file) => file.endsWith(".jsonl"))
-      .flatMap((file) => readJsonLines<StoredMessage>(join(dir, file)))
-      .map(normalizeMessage);
+    return HISTORY_AREAS.flatMap((area) => {
+      const dir = this.messagesDir(area);
+      if (!existsSync(dir)) return [];
+      return readdirSync(dir)
+        .filter((file) => file.endsWith(".jsonl"))
+        .flatMap((file) => readJsonLines<StoredMessage>(join(dir, file)));
+    }).map(normalizeMessage);
+  }
+
+  // Moves a session's record and messages to the area its visibility names:
+  // copy, check the copies read back the same, then remove the originals. A
+  // failure before the removal leaves the originals in place.
+  private moveSession(session: Session): void {
+    const from = this.areaOf(session.id);
+    const to = visibilityOf(session);
+    if (from === to) {
+      this.writeSessionFile(session, to);
+      return;
+    }
+    const fromMessages = this.messagesPath(session.id, from);
+    const toMessages = this.messagesPath(session.id, this.writableArea(to));
+    if (existsSync(fromMessages)) {
+      copyVerified(fromMessages, toMessages);
+    }
+    this.writeSessionFile(session, to);
+    rmSync(fromMessages, { force: true });
+    rmSync(this.sessionPath(session.id, from), { force: true });
+    if (to === "project") rmSync(this.markerPath(session.id), { force: true });
+  }
+
+  relocatePrivateSessions(): Promise<number> {
+    const misplaced = this.listAreaSessions("project")
+      .filter((session) => visibilityOf(session) === "private");
+    for (const session of misplaced) this.moveSession(session);
+    return Promise.resolve(misplaced.length);
   }
 
   // Monotonic message id without re-scanning every message file per append.
@@ -590,13 +818,17 @@ class FileSessionStore implements SessionStore {
       visibility,
     };
     this.writeSessionFile(session);
-    if (opts.userProfile) this.writeUserProfileSnapshot(opts.userProfile);
+    if (opts.userProfile) {
+      this.writeUserProfileSnapshot(opts.userProfile, visibility);
+    }
     return session;
   }
 
-  private writeUserProfileSnapshot(user: CurrentUser): void {
+  // Beside the session it came with, so a private session's author isn't
+  // committed either.
+  private writeUserProfileSnapshot(user: CurrentUser, area: HistoryArea): void {
     const path = join(
-      this.historyDir,
+      this.areaDir(area),
       "users",
       `${encodeURIComponent(user.id)}.json`,
     );
@@ -613,11 +845,14 @@ class FileSessionStore implements SessionStore {
         s.ownerUserId === ownerUserId &&
         s.visibility === visibility &&
         s.endedAt == null &&
-        this.readMessageFile(s.id).length === 0
+        this.sessionSummary(s.id).count === 0
       )
       .toSorted((a, b) => b.startedAt.localeCompare(a.startedAt));
     for (const stale of sessions.slice(1)) {
-      rmSync(this.sessionPath(stale.id), { force: true });
+      rmSync(this.sessionPath(stale.id, this.areaOf(stale.id)), {
+        force: true,
+      });
+      rmSync(this.markerPath(stale.id), { force: true });
     }
     return sessions[0] ?? null;
   }
@@ -655,7 +890,7 @@ class FileSessionStore implements SessionStore {
     return this.listSessionFiles()
       .filter((session) => opts.includeArchived || !session.archived)
       .map((session) => {
-        const last = this.readMessageFile(session.id).at(-1);
+        const last = this.sessionSummary(session.id).last;
         return { ...session, lastMessageAt: last?.createdAt ?? null };
       })
       .toSorted((a, b) =>
@@ -693,12 +928,15 @@ class FileSessionStore implements SessionStore {
     visibility: SessionVisibility,
   ): Promise<void> {
     const session = this.readSessionFile(id);
-    if (session) this.writeSessionFile({ ...session, visibility });
+    if (session) this.moveSession({ ...session, visibility });
   }
 
   async deleteSession(id: string): Promise<void> {
-    rmSync(this.sessionPath(id), { force: true });
-    rmSync(this.messagesPath(id), { force: true });
+    for (const area of HISTORY_AREAS) {
+      rmSync(this.sessionPath(id, area), { force: true });
+      rmSync(this.messagesPath(id, area), { force: true });
+    }
+    rmSync(this.markerPath(id), { force: true });
     rmSync(this.usagePath(id), { force: true });
     this.writeModelUsageFile(
       this.readModelUsageFile().filter((row) => row.sessionId !== id),
@@ -739,7 +977,13 @@ class FileSessionStore implements SessionStore {
       createdAt: now,
       authorUserId: msg.authorUserId ?? null,
     };
-    appendJsonLine(this.messagesPath(msg.sessionId), stored);
+    appendJsonLine(
+      this.messagesPath(
+        msg.sessionId,
+        this.writableArea(this.areaOf(msg.sessionId)),
+      ),
+      stored,
+    );
     return stored;
   }
 
@@ -763,9 +1007,9 @@ class FileSessionStore implements SessionStore {
   ): Promise<Map<string, number>> {
     const wanted = new Set(turnIds);
     const result = new Map<string, number>();
-    for (const msg of this.listAllMessages()) {
-      if (msg.turnId && wanted.has(msg.turnId) && msg.role === "user") {
-        result.set(msg.turnId, msg.id);
+    for (const summary of this.allSummaries()) {
+      for (const [turnId, id] of summary.userMessageByTurn) {
+        if (wanted.has(turnId)) result.set(turnId, id);
       }
     }
     return result;
@@ -827,8 +1071,8 @@ class FileSessionStore implements SessionStore {
   }
 
   async getProjectPinnedMessages(): Promise<StoredMessage[]> {
-    return this.listAllMessages()
-      .filter((m) => m.projectPinned)
+    return this.allSummaries()
+      .flatMap((summary) => summary.projectPinned)
       .toSorted((a, b) => a.id - b.id);
   }
 
@@ -1244,6 +1488,11 @@ class DbSessionStore implements SessionStore {
       .update(genieSessionsTable)
       .set({ visibility })
       .where(eq(genieSessionsTable.id, id));
+  }
+
+  // Database rows aren't committed, so nothing is ever misplaced.
+  relocatePrivateSessions(): Promise<number> {
+    return Promise.resolve(0);
   }
 
   async deleteSession(id: string): Promise<void> {
@@ -1757,6 +2006,10 @@ export class SessionManager {
 
   updateVisibility(id: string, visibility: SessionVisibility): Promise<void> {
     return this.store.updateVisibility(id, visibility);
+  }
+
+  relocatePrivateSessions(): Promise<number> {
+    return this.store.relocatePrivateSessions();
   }
 
   deleteSession(id: string): Promise<void> {

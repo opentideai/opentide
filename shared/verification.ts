@@ -158,6 +158,12 @@ export interface Attestation {
   toolCallId?: string; // provenance: the tool call that produced it
   turnId?: string;
   principalId?: string; // the MCP client whose call minted it (ChangeContext)
+  // "client" when a client ran the review and submitted the verdict
+  // (submit_review); absent when the kernel ran the verifier itself. A client's
+  // pass comes from the agent that wrote the code, so it is weaker evidence than
+  // its refutation.
+  producer?: "client";
+  reviewer?: string; // who the client says reviewed it (model or agent name)
   createdAt: string;
 }
 

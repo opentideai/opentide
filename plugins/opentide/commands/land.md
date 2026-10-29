@@ -11,8 +11,10 @@ Finish the active changeset (project_status names it).
 3. record_verification_run({changeset_id, status, summary, evidence, claimResults,
    residualRisks}). evidence items need summary and status; claimResults items use
    the criterion's own id as claimId. Statuses are passed, failed, partial or manual.
-4. check_changeset_readiness. Fix every error it lists.
-5. complete_changeset. If stateFlushed is false, say so first and loudly: the work
+4. For each "must" criterion without a fresh refute review: request_review
+   {kind: "refute"}, run the packet in a subagent, then submit_review.
+5. check_changeset_readiness. Fix every error it lists.
+6. complete_changeset. If stateFlushed is false, say so first and loudly: the work
    exists only in memory until it is flushed.
 
 changeset_id, if given: $ARGUMENTS

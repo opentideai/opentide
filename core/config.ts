@@ -224,6 +224,10 @@ export const INDEPENDENT_CRITERIA_MAX = 6;
 // Hard cap on one proposed criterion's text, so a runaway generation can't push
 // an essay into the plan JSON (and from there into every later prompt).
 export const INDEPENDENT_CRITERION_MAX_CHARS = 400;
+
+// Review packets the server remembers per kernel (core/reviews.ts). A packet is
+// answered within a turn; past this, the oldest are forgotten.
+export const REVIEW_PACKETS_MAX = 200;
 // npm registry network timeouts: bulk advisory lookup vs per-package metadata.
 export const NPM_AUDIT_BULK_TIMEOUT_MS = 15_000;
 export const NPM_REGISTRY_FETCH_TIMEOUT_MS = 10_000;
@@ -268,7 +272,7 @@ export function appPreviewUrl(port: number, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.6";
+export const OPENTIDE_VERSION = "0.1.7";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
@@ -410,7 +414,72 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // (108 -> 109). Additive, so MINOR.
 // v6.4.0: show_app, the running app live in an MCP App-capable client's chat
 // (109 -> 110). Additive, so MINOR.
-export const MCP_SURFACE_VERSION = "6.4.0";
+// v6.5.0: list_tests takes an optional claim_id and returns each test's
+// verification metadata and changeset. Additive, so MINOR.
+// v6.6.0: get_session_context and manage_sessions are served over MCP
+// (110 -> 112): past sessions are project history every client reads.
+// manage_sessions gains action=end. Additive, so MINOR.
+// v6.7.0: append_session_messages, set_session_summary and record_usage, so
+// every client writes its own session's history (112 -> 115). MCP-only.
+// Additive, so MINOR.
+// v6.8.0: get_code_context, the code a reviewer or refuter reads, in one call
+// (115 -> 116). Additive, so MINOR.
+// v6.9.0: a call that writes the changelog ends its result with a block
+// listing the change ids and their changesets' state. No schema change; the
+// result gains a block, so MINOR.
+// v6.10.0: project_status returns the project's enabled skills. No schema
+// change; the result gains a field, so MINOR.
+// v6.11.0: get_session_context reads the loaded project's sessions only, and
+// refuses a project_path or project_name naming another one. No schema change.
+// MINOR: it closes a read of other projects' private sessions that should never
+// have been served.
+// v6.12.0: complete_changeset can commit the work (`commitOnComplete` in
+// opentide.json; see COMMIT_ON_COMPLETE_DEFAULT) and returns `commit`. No schema
+// change; the result gains a field, so MINOR.
+// v6.13.0: open_session binds a connection to a session, new or resumed. A
+// tool call's `_meta` may carry the turn it belongs to (MCP_TURN_META_KEY),
+// stamped on the change records it makes. append_session_messages takes
+// tool_calls and author_user_id; set_session_summary takes a metadata patch;
+// record_usage takes id, cache_ttl and metadata and returns the turn's total.
+// manage_sessions lists carry ownerUserId. MINOR: one tool and optional fields.
+// v7.0.0: the server stops calling models for reviews. request_review hands
+// out a packet and submit_review records the verdict, for refutation,
+// independent criteria and audits. refute_claims and run_audit leave the
+// surface (a client with a reviewer builds them on the pair), and
+// complete_changeset no longer refutes or reviews criteria itself. MAJOR:
+// two tools removed.
+// v7.1.0: request_review takes kind "imports", the import classifier's input
+// from the last index_codebase in "assist" mode; submit_review merges the
+// classification into the codebase graph. index_codebase "assist" now returns
+// classification status "review_owed" instead of calling a model, and
+// git_commit with no message builds its subject without one. The server calls
+// no model over MCP. MINOR: an enum value and a result status added.
+// v7.2.0: plans can wait for approval. create_changeset and
+// amend_changeset_plan take await_approval; approve_changeset starts a
+// planning changeset; get_changeset returns one as stored.
+// link_session_message links a stored message to changes and changesets.
+// document_query takes action "pinned" and encoding "base64"; document_write
+// takes content_base64, attachment and action "ref"; git_commit takes
+// changeset_id. MINOR: three tools and optional fields added.
+// v7.2.1: get_session_context is read-only, and a read no longer starts the
+// connection's session. PATCH: an annotation.
+// v7.2.2: list_current_project_pins is read-only, and listing or searching
+// sessions no longer starts the connection's session. PATCH: an annotation.
+export const MCP_SURFACE_VERSION = "7.2.2";
+
+// The per-call `_meta` key for turn context:
+// {turn_id, turn_index?, tool_call_id?, user_message?}.
+export const MCP_TURN_META_KEY = "opentide/turn";
+
+// Labels the suggestion line of an MCP error result ("Error [CODE]: message",
+// then this and the suggestion), so a client can tell it from a message that
+// runs over several lines.
+export const MCP_SUGGESTION_PREFIX = "Suggestion: ";
+
+// Whether complete_changeset commits when opentide.json doesn't say. Off for
+// the release that moves existing private sessions into history/private/: a
+// bad move must not be committed in the same release. Flip to true after it.
+export const COMMIT_ON_COMPLETE_DEFAULT = false;
 
 // Default loopback port for the outbound MCP HTTP/SSE transport (mcp-http.ts,
 // `deno task mcp --http`). Distinct from the control server (:3003) and the app
@@ -433,6 +502,31 @@ export const SERVER_TOKEN_BYTES = 32;
 // none is running. A cold start compiles the kernel graph and opens PGlite, so
 // the wait is generous; the poll reads two small files.
 export const MCP_BRIDGE_STARTUP_TIMEOUT_MS = 90_000;
+// How long Tide's agent waits on one tool call over MCP. run_tests and
+// complete_changeset can run for minutes; the in-process calls they replace
+// had no limit at all.
+export const MCP_CLIENT_CALL_TIMEOUT_MS = 600_000;
+
+// How many of a turn's change records Tide's agent reads back over MCP to find
+// the one a tool call made. A turn rarely makes more than a few dozen.
+export const MCP_CHANGE_LIST_LIMIT = 500;
+
+// --- The agent process (`tide agent`) ---
+// Where the agent listens for the IDE, and how long a project switch or
+// shutdown waits for an aborted turn to wind down.
+export const AGENT_DEFAULT_PORT = 3004;
+export const AGENT_TURN_SETTLE_TIMEOUT_MS = 5_000;
+// The name the agent's MCP connection gives serve.
+export const AGENT_MCP_CLIENT_NAME = "chat-agent";
+// The external MCP servers the agent's chat connects to, per project, under
+// the project's .opentide/. Holds auth tokens, so owner-only.
+export const AGENT_MCP_SERVERS_FILE = "agent-mcp-servers.json";
+export const AGENT_MCP_SERVERS_FILE_MODE = 0o600;
+// Where serve kept that list before the agent owned it, in its configs.
+export const LEGACY_MCP_SERVERS_CONFIG = "_genie_mcp_servers";
+// A commit subject the agent's model writes for the IDE's commit button.
+export const COMMIT_SUBJECT_MAX_CHARS = 72;
+export const COMMIT_SUBJECT_MAX_TOKENS = 64;
 export const MCP_BRIDGE_POLL_MS = 200;
 // How long serve's shutdown waits for in-flight HTTP responses (a client's
 // SSE stream, an IDE log stream) before exiting anyway. The project is already
@@ -444,6 +538,24 @@ export const SERVER_SHUTDOWN_GRACE_MS = 3_000;
 export const MCP_WORKSPACES_FILE = "mcp-workspaces.json";
 // Where a serve process the bridge started writes its output, under .opentide/.
 export const SERVE_LOG_FILE = "serve.log";
+// A serve the bridge started exits after this long with no client connected
+// (core/idle-exit.ts). Long enough to cover a client restarting; the next
+// bridge starts a fresh one anyway.
+export const SERVE_IDLE_EXIT_MS = 10 * 60_000;
+export const SERVE_IDLE_POLL_MS = 15_000;
+// The serve flag that turns idle exit on. Only the bridge's spawner passes it:
+// a serve someone started by hand runs until they stop it.
+export const SERVE_EXIT_WHEN_IDLE_FLAG = "exit-when-idle";
+// Tide takes a project over from the serve holding it (core/project-handover.ts):
+// the holder's release route, and how long Tide waits for it to let go. Closing
+// a project saves its state, so allow a few seconds.
+export const CONTROL_PROJECT_RELEASE_PATH = "/api/projects/release";
+export const PROJECT_TAKEOVER_TIMEOUT_MS = 15_000;
+export const PROJECT_TAKEOVER_POLL_MS = 100;
+// A bridge whose serve went away waits this long before looking for the new
+// holder, so whoever took the project over has it first.
+export const MCP_BRIDGE_RECONNECT_DELAY_MS = 1_000;
+export const MCP_BRIDGE_RECONNECT_ATTEMPTS = 3;
 
 // Task forks (docs/opentide-task-forks-plan.md). Each open task is a full copy of
 // the project with its own serve process, so this caps disk and processes, not
@@ -775,9 +887,37 @@ export const MAX_FILE_CONTENT_BYTES = 128 * 1024;
 // docs/agent-cost-reduction.md §4.4).
 export const GIT_STATUS_FILE_LIMIT = 100;
 
+// Response header on GET /api/changelog/turns: how many changes the project
+// has in all, since the list holds only the newest turns.
+export const TOTAL_CHANGES_HEADER = "X-Total-Changes";
+
+// Response header on a windowed GET /api/sessions/:id/messages: how many
+// messages come before the ones sent.
+export const EARLIER_MESSAGES_HEADER = "X-Earlier-Messages";
+
+// GET /api/changelog/records: the most ids one request may name.
+export const MAX_CHANGE_RECORDS_PER_REQUEST = 200;
+
+// A compact message list (compact=1) sends tool results up to this size
+// whole; bigger ones go as a stub naming their size, with what the chat's
+// cards and error marks read from them. The full result is one request away.
+export const TOOL_RESULT_INLINE_BYTES = 8 * 1024;
+export const OMITTED_RESULT_KEY = "_omitted";
+
 // Path prefix under a project that holds Tide's own state and provenance tree.
 // Changes below it are summarised, not listed, by `gitStatus`.
 export const TIDE_PROJECT_STATE_PREFIX = ".opentide/";
+
+// Under a project's history dir: private sessions, which stay on the machine.
+// It carries its own `*` .gitignore, so projects whose .gitignore predates it
+// don't commit it either.
+export const PRIVATE_HISTORY_DIR = "private";
+
+// Under a project's history dir, tracked: one marker per private session,
+// holding its id and owner and nothing else. Changesets and change records
+// made in a private session still name it, so a clone needs to know the session
+// exists even though its content stayed on someone else's machine.
+export const PRIVATE_SESSION_MARKERS_DIR = "private-sessions";
 
 // The `.gitignore` a new Tide project is scaffolded with, and the one an exported
 // project carries. ONE constant: this template used to exist as two byte-identical
@@ -809,6 +949,9 @@ dist/
 .opentide/history/episodes.jsonl
 .opentide/history/cursor.json
 .opentide/history/cache-composition.jsonl
+
+# Private chat sessions stay on this machine.
+.opentide/history/private/
 
 # Task forks are machine-local: their records name directories on this machine.
 .opentide/tasks.json

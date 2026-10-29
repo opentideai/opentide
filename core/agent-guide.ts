@@ -16,14 +16,12 @@
 // (set_system_prompt), which are appended under "This project".
 import type { Kernel } from "./registries.ts";
 import { RESERVED_NAMES_RULE } from "./reserved-names.ts";
-import type { CompositionContext } from "./composition.ts";
-import { canBillUnder } from "./tool-capabilities.ts";
 
 export const CUSTOM_INSTRUCTIONS_CONFIG = "_genie_custom_instructions";
 
 export const GUIDE_OWNERSHIP = `\
 opentide serves one app. Its code, routes, schemas, templates and tests live in \
-the project database this server owns, not in source files.
+the database this server owns, not in source files.
 
 - Change the app only through these tools. Never read or edit .opentide/state/** \
 (a flushed copy, not source) and never hand-edit AGENT.md (generate_project_docs \
@@ -31,44 +29,33 @@ rewrites it).
 - This process owns the database. Never start another opentide process or the IDE \
 against the same project while it runs: a second owner corrupts it.
 - Start with project_status. If its verdict is "stop", report the problems and \
-change nothing.`;
+change nothing.
+- Read past sessions with get_session_context. After landing work, \
+set_session_summary: what changed and why.`;
 
 export const GUIDE_WORK_LOOP = `\
 1. create_changeset({title, plan: {summary, steps, acceptanceCriteria, \
-verificationPlan}}). Here it is approved and started automatically. If a call is \
+verificationPlan}}). It is approved and started at once. If a call is \
 later refused as outside the plan, amend_changeset_plan, then retry.
-2. Make the change, marking each step with update_changeset_step status "done".
+2. Make the change; mark each step "done" with update_changeset_step.
 3. run_tests, then record_verification_run with evidence and claimResults keyed \
-by your own criterion ids.
+by your own criterion ids. A "must" criterion wants a refute review: \
+request_review, run the packet in a subagent, then submit_review.
 4. check_changeset_readiness, then complete_changeset. If it returns \
 stateFlushed: false, tell the user: the work exists only in memory. Work done \
 outside a changeset ends with flush_project_state.
 ${RESERVED_NAMES_RULE}`;
-
-export const GUIDE_COST = `\
-- refute_claims, run_audit and index_codebase with classification "assist" bill \
-the user's model API key. Call them only when asked.
-- Give acceptance criteria priority "should". A "must" criterion makes \
-complete_changeset run a billed refutation agent.`;
-
-// The open assembly carries no audit provider and no agent, so nothing reachable
-// over MCP spends the user's key and the cost section is left out entirely.
-export function costGuide(composition: CompositionContext): string | null {
-  return canBillUnder(composition, "refute_claims") ? GUIDE_COST : null;
-}
 
 export const GUIDE_FAILURE = `\
 - PgliteCorruptError, or a database that will not open: stop and tell the user. \
 Do not repair storage by hand.
 - INVALID_ARGUMENTS names the argument you meant. Fix the call and retry once.`;
 
-export function generalGuide(composition: CompositionContext): string {
-  const cost = costGuide(composition);
+export function generalGuide(): string {
   return [
     GUIDE_OWNERSHIP,
     "Changing the app",
     GUIDE_WORK_LOOP,
-    ...(cost ? ["Cost", cost] : []),
     "When things break",
     GUIDE_FAILURE,
   ].join("\n\n");
@@ -91,12 +78,11 @@ export const INSTRUCTIONS_MAX_CHARS = 2048;
 // project's. Read once at connect; a set_system_prompt mid-session reaches the
 // next connection.
 export function buildAgentInstructions(kernel: Kernel): string {
-  const general = generalGuide(kernel.composition);
+  const general = generalGuide();
   const project = projectGuide(kernel);
   if (!project) return general;
   const inline = `${general}\n\nThis project\n\n${project}`;
   if (inline.length <= INSTRUCTIONS_MAX_CHARS) return inline;
-  return `${general}\n\nThis project\n\nIt has its own rules, too long to ` +
-    "repeat here. project_status returns them in `projectRules`: read them " +
-    "before changing anything.";
+  return `${general}\n\nThis project\n\nIts rules are too long for here. ` +
+    "Read `projectRules` from project_status before changing anything.";
 }

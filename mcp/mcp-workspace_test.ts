@@ -82,7 +82,7 @@ Deno.test(
       folder,
       eager,
       surface: projectedMcpTools(composition),
-      guide: generalGuide(composition),
+      guide: generalGuide(),
       // One serve stands in for every app's: opening an app loads it there.
       locate: async (dir) => {
         located.push(dir);

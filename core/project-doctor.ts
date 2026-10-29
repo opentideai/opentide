@@ -5,6 +5,7 @@ import {
   type OpenDatabase,
 } from "./dynamic-schema-restore-diagnostics.ts";
 import { getProjectPaths } from "./project-manager.ts";
+import { PRIVATE_HISTORY_DIR, PRIVATE_SESSION_MARKERS_DIR } from "./config.ts";
 import type {
   MigrationEntry,
   SchemaEntry,
@@ -189,7 +190,9 @@ export async function doctorProject(
   }
 
   const sessionIds = new Set<string>();
-  for (const path of listJsonFiles(join(paths.historyDir, "sessions"))) {
+  for (
+    const path of historyAreas(paths.historyDir, "sessions", listJsonFiles)
+  ) {
     const session = readJson<JsonObject>(path, addIssue);
     if (!session) continue;
     counts.sessions++;
@@ -208,9 +211,26 @@ export async function doctorProject(
     }
     sessionIds.add(id);
   }
+  // Private sessions whose content isn't on this machine: someone else's, in a
+  // clone. They exist, so references to them hold; their messages can't be
+  // checked.
+  const absentPrivateSessions = new Set<string>();
+  for (
+    const path of listJsonFiles(
+      join(paths.historyDir, PRIVATE_SESSION_MARKERS_DIR),
+    )
+  ) {
+    const marker = readJson<JsonObject>(path, addIssue);
+    if (!marker || !isNonEmptyString(marker.id)) continue;
+    if (!sessionIds.has(marker.id)) absentPrivateSessions.add(marker.id);
+  }
+  const knownSession = (id: string) =>
+    sessionIds.has(id) || absentPrivateSessions.has(id);
 
   const messageIds = new Set<number>();
-  for (const path of listJsonLineFiles(join(paths.historyDir, "messages"))) {
+  for (
+    const path of historyAreas(paths.historyDir, "messages", listJsonLineFiles)
+  ) {
     const messages = readJsonLines<StoredMessage>(path, addIssue);
     for (const message of messages) {
       counts.messages++;
@@ -238,7 +258,7 @@ export async function doctorProject(
     const rows = readJsonLines<TurnUsage>(path, addIssue);
     for (const usage of rows) {
       counts.usageRecords++;
-      if (!sessionIds.has(usage.sessionId)) {
+      if (!knownSession(usage.sessionId)) {
         addIssue(
           "error",
           "USAGE_SESSION_MISSING",
@@ -267,7 +287,7 @@ export async function doctorProject(
       );
     }
     changesetIds.add(changeset.id);
-    if (changeset.sessionId && !sessionIds.has(changeset.sessionId)) {
+    if (changeset.sessionId && !knownSession(changeset.sessionId)) {
       addIssue(
         "error",
         "CHANGESET_SESSION_MISSING",
@@ -275,12 +295,15 @@ export async function doctorProject(
         `Changeset "${changeset.id}" references missing session "${changeset.sessionId}".`,
       );
     }
+    const messagesHere = !absentPrivateSessions.has(changeset.sessionId ?? "");
     for (
-      const id of [
-        ...(changeset.planMessageIds ?? []),
-        ...(changeset.workMessageIds ?? []),
-        ...(changeset.approvalMessageId ? [changeset.approvalMessageId] : []),
-      ]
+      const id of messagesHere
+        ? [
+          ...(changeset.planMessageIds ?? []),
+          ...(changeset.workMessageIds ?? []),
+          ...(changeset.approvalMessageId ? [changeset.approvalMessageId] : []),
+        ]
+        : []
     ) {
       if (!messageIds.has(id)) {
         addIssue(
@@ -307,7 +330,7 @@ export async function doctorProject(
     }
     changelogIds.add(value.id);
     const sessionId = value.context?.sessionId;
-    if (sessionId && !sessionIds.has(sessionId)) {
+    if (sessionId && !knownSession(sessionId)) {
       addIssue(
         "error",
         "CHANGELOG_SESSION_MISSING",
@@ -369,6 +392,19 @@ export async function doctorProject(
   const errors = issues.filter((issue) => issue.severity === "error");
   const warnings = issues.filter((issue) => issue.severity === "warning");
   return { ok: errors.length === 0, errors, warnings, counts, sync };
+}
+
+// A history subdirectory's files in both areas: shared history and the private
+// sessions kept on this machine.
+function historyAreas(
+  historyDir: string,
+  subdir: string,
+  list: (dir: string) => string[],
+): string[] {
+  return [
+    ...list(join(historyDir, subdir)),
+    ...list(join(historyDir, PRIVATE_HISTORY_DIR, subdir)),
+  ];
 }
 
 function listJsonFiles(dir: string): string[] {

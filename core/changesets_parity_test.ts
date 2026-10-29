@@ -47,6 +47,8 @@ const LEDGER_TABLE_DDL =
   tool_call_id TEXT,
   turn_id TEXT,
   principal_id TEXT,
+  producer TEXT,
+  reviewer TEXT,
   created_at TEXT NOT NULL
 )`;
 

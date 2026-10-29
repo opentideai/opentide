@@ -18,12 +18,20 @@ import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { locateServe, type ServeTarget } from "../core/serve-process.ts";
 import type { Result } from "../core/types.ts";
 import { errorMessage } from "../core/util.ts";
+import {
+  MCP_BRIDGE_RECONNECT_ATTEMPTS,
+  MCP_BRIDGE_RECONNECT_DELAY_MS,
+  MCP_BRIDGE_STARTUP_TIMEOUT_MS,
+  SERVE_IDLE_EXIT_MS,
+} from "../core/config.ts";
 
 export function isRequest(
   msg: JSONRPCMessage,
 ): msg is JSONRPCMessage & { id: string | number; method: string } {
   return "method" in msg && "id" in msg;
 }
+
+const INITIALIZED_NOTIFICATION = "notifications/initialized";
 
 // JSON-RPC's "method not found".
 export const METHOD_NOT_FOUND = -32601;
@@ -51,25 +59,60 @@ function negotiatedVersion(msg: JSONRPCMessage): string | null {
   return typeof version === "string" ? version : null;
 }
 
+// Where the bridge relays to: a serve's /mcp and its bearer token.
+export interface BridgeTarget {
+  url: string;
+  token: string;
+}
+
+// Finds the project's serve again after the one the bridge had went away.
+export type Relocate = () => Promise<Result<BridgeTarget>>;
+
+export interface ProxyOptions {
+  relocate?: Relocate;
+  reconnectDelayMs?: number;
+  reconnectAttempts?: number;
+}
+
+// JSON-RPC server error for a call cut off when serve went away mid-call.
+export const UPSTREAM_LOST = -32000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Relay JSON-RPC between `downstream` (the client, normally stdio) and serve's
  * /mcp. Resolves with an exit code: 0 when the client disconnects, 1 when serve
- * goes away or refuses a message. The client restarts us; the restart finds or
- * starts serve again.
+ * goes away for good or refuses a message.
+ *
+ * With `relocate`, losing serve isn't the end. Serve goes away when it idles
+ * out or hands the project to Tide, and clients don't restart a server that
+ * died mid-session. So the bridge finds the project's serve again, replays the
+ * client's initialize there, and carries on. Calls that were in flight get an
+ * error the client can retry.
  */
 export function proxyMcp(
   downstream: Transport,
-  url: string,
-  token: string,
+  first: BridgeTarget,
+  opts: ProxyOptions = {},
 ): Promise<number> {
-  const upstream = new StreamableHTTPClientTransport(new URL(url), {
-    requestInit: { headers: { Authorization: `Bearer ${token}` } },
-  });
+  const delayMs = opts.reconnectDelayMs ?? MCP_BRIDGE_RECONNECT_DELAY_MS;
+  const attempts = opts.reconnectAttempts ?? MCP_BRIDGE_RECONNECT_ATTEMPTS;
   // The HTTP transport stamps every request after initialize with the
   // negotiated version. A real Client sets it; a relay has to read it off the
   // initialize reply.
   const initializeIds = new Set<string | number>();
-  let initializeSent = false;
+  // Requests sent upstream and not yet answered: the ones to fail on a loss.
+  const inFlight = new Set<string | number>();
+  // The client's handshake, replayed against a new serve on reconnect.
+  let initialize: JSONRPCMessage | null = null;
+  let initialized: JSONRPCMessage | null = null;
+  let target = first;
+  let upstream: StreamableHTTPClientTransport;
+  let reconnecting = false;
+  const queued: JSONRPCMessage[] = [];
+  let replay: { id: string; resolve: (msg: JSONRPCMessage) => void } | null =
+    null;
+  let replays = 0;
 
   return new Promise((resolveExit) => {
     let finished = false;
@@ -81,40 +124,164 @@ export function proxyMcp(
       await downstream.close().catch(() => {});
       resolveExit(code);
     };
-    const lost = (err: unknown) => {
-      if (finished) return;
-      console.error(`  MCP bridge lost serve at ${url}: ${errorMessage(err)}`);
-      void finish(1);
+
+    const open = (t: BridgeTarget): StreamableHTTPClientTransport => {
+      const u = new StreamableHTTPClientTransport(new URL(t.url), {
+        requestInit: { headers: { Authorization: `Bearer ${t.token}` } },
+      });
+      u.onmessage = (msg: JSONRPCMessage) => fromUpstream(u, msg);
+      u.onerror = (err: Error) => lost(u, err);
+      return u;
+    };
+
+    const fromUpstream = (
+      u: StreamableHTTPClientTransport,
+      msg: JSONRPCMessage,
+    ) => {
+      if (u !== upstream) return;
+      if ("id" in msg && msg.id !== null) {
+        if (replay && msg.id === replay.id) {
+          replay.resolve(msg);
+          return;
+        }
+        if (initializeIds.delete(msg.id)) {
+          const version = negotiatedVersion(msg);
+          if (version) upstream.setProtocolVersion(version);
+        }
+        if ("result" in msg || "error" in msg) inFlight.delete(msg.id);
+      }
+      downstream.send(msg).catch(() => void finish(1));
+    };
+
+    const toUpstream = (msg: JSONRPCMessage) => {
+      if (reconnecting) {
+        queued.push(msg);
+        return;
+      }
+      if (isRequest(msg)) inFlight.add(msg.id);
+      const u = upstream;
+      u.send(msg).catch((err: unknown) => lost(u, err));
+    };
+
+    // Fail the calls the old serve will never answer.
+    const failInFlight = () => {
+      for (const id of inFlight) {
+        downstream.send({
+          jsonrpc: "2.0",
+          id,
+          error: {
+            code: UPSTREAM_LOST,
+            message: "OpenTide's server went away mid-call (it stopped, or " +
+              "the project was handed over). Retry the call.",
+          },
+        }).catch(() => {});
+      }
+      inFlight.clear();
+      initializeIds.clear();
+    };
+
+    const replayInitialize = async () => {
+      if (!initialize || !("method" in initialize)) return;
+      const id = `opentide-bridge-reinit-${++replays}`;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const answer = new Promise<JSONRPCMessage>((resolve, reject) => {
+        replay = { id, resolve };
+        timer = setTimeout(
+          () => reject(new Error("initialize got no answer")),
+          MCP_BRIDGE_STARTUP_TIMEOUT_MS,
+        );
+      });
+      try {
+        await upstream.send({ ...initialize, id } as JSONRPCMessage);
+        const reply = await answer;
+        if ("error" in reply) throw new Error(reply.error.message);
+        const version = negotiatedVersion(reply);
+        if (version) upstream.setProtocolVersion(version);
+        if (initialized) await upstream.send(initialized);
+      } finally {
+        clearTimeout(timer);
+        replay = null;
+      }
+    };
+
+    const reconnect = async (relocate: Relocate): Promise<boolean> => {
+      const old = upstream;
+      old.onmessage = undefined;
+      old.onerror = undefined;
+      void old.close().catch(() => {});
+      failInFlight();
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        // Whoever took the project over gets it first.
+        await sleep(delayMs);
+        if (finished) return false;
+        const found = await relocate();
+        if (!found.ok) continue; // locateAndReport has said why
+        target = found.data;
+        upstream = open(target);
+        try {
+          await upstream.start();
+          await replayInitialize();
+          console.error(`  MCP bridge reconnected: stdio <-> ${target.url}.`);
+          return true;
+        } catch (err) {
+          console.error(
+            `  MCP bridge couldn't reconnect to ${target.url}: ${
+              errorMessage(err)
+            }`,
+          );
+          await upstream.close().catch(() => {});
+        }
+      }
+      return false;
+    };
+
+    const lost = (u: StreamableHTTPClientTransport, err: unknown) => {
+      if (finished || reconnecting || u !== upstream) return;
+      console.error(
+        `  MCP bridge lost serve at ${target.url}: ${errorMessage(err)}`,
+      );
+      if (!opts.relocate) {
+        void finish(1);
+        return;
+      }
+      reconnecting = true;
+      void reconnect(opts.relocate).then((ok) => {
+        reconnecting = false;
+        if (!ok) {
+          void finish(1);
+          return;
+        }
+        for (const msg of queued.splice(0)) toUpstream(msg);
+      });
     };
 
     downstream.onmessage = (msg: JSONRPCMessage) => {
       if (isRequest(msg) && msg.method === "initialize") {
         initializeIds.add(msg.id);
-        initializeSent = true;
-      } else if (!initializeSent) {
+        initialize = msg;
+      } else if (!initialize) {
         // Notifications before initialize have nowhere to go; drop them.
         if (isRequest(msg)) {
           downstream.send(preInitializeReply(msg)).catch(() => void finish(1));
         }
         return;
+      } else if (
+        "method" in msg && !("id" in msg) &&
+        msg.method === INITIALIZED_NOTIFICATION
+      ) {
+        initialized = msg;
       }
-      upstream.send(msg).catch(lost);
-    };
-    upstream.onmessage = (msg: JSONRPCMessage) => {
-      if ("id" in msg && msg.id !== null && initializeIds.delete(msg.id)) {
-        const version = negotiatedVersion(msg);
-        if (version) upstream.setProtocolVersion(version);
-      }
-      downstream.send(msg).catch(() => void finish(1));
+      toUpstream(msg);
     };
     downstream.onclose = () => void finish(0);
-    upstream.onerror = lost;
     downstream.onerror = (err: Error) =>
       console.error(`  MCP bridge stdio error: ${errorMessage(err)}`);
 
-    upstream.start()
+    upstream = open(first);
+    const initial = upstream;
+    initial.start()
       .then(() => downstream.start())
-      .catch(lost);
+      .catch((err: unknown) => lost(initial, err));
   });
 }
 
@@ -135,7 +302,8 @@ export async function locateAndReport(
   if (started) {
     console.error(
       `  Started opentide serve (pid ${pid}) for ${projectDir}. It keeps ` +
-        `running after this bridge exits; stop it with \`kill ${pid}\`.` +
+        `running after this bridge exits and stops itself after ` +
+        `${SERVE_IDLE_EXIT_MS / 60_000} minutes with no client.` +
         (started.logPath ? `\n  Log: ${started.logPath}` : ""),
     );
   }
@@ -157,5 +325,7 @@ export function stdioTransport(): StdioServerTransport {
 export async function runMcpBridge(projectPath: string): Promise<number> {
   const located = await locateAndReport(projectPath);
   if (!located.ok) return 1;
-  return await proxyMcp(stdioTransport(), located.data.url, located.data.token);
+  return await proxyMcp(stdioTransport(), located.data, {
+    relocate: () => locateAndReport(projectPath),
+  });
 }

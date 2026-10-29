@@ -1,15 +1,12 @@
 // @layer composition — the OPEN layer assembly for the composition roots: core +
-// verification + the agent loop on the generic default brain. It never imports
-// agent/ or tide/ — the closed Tide stack (tuned brain, model-backed audits) is
-// assembled in tide/assembly.ts on top of the pieces exported here, and handed to
-// the same roots as a StackAssembly.
-import { ChatOrchestrator } from "../agent-loop/chat.ts";
-import { DefaultChatIntelligence } from "../agent-loop/default-brain.ts";
+// verification. It never imports agent/ or tide/ — the closed Tide stack
+// (model-backed audits) is assembled in tide/assembly.ts on top of the pieces
+// exported here, and handed to the same roots as a StackAssembly. The chat
+// agent runs as its own process (cli/agent-main.ts).
 import { RoutingModelProvider } from "../providers/model-provider-router.ts";
 import { routingUtilityModelCall } from "../providers/utility-provider.ts";
 import { installUtilityModelProvider } from "../core/utility-model.ts";
 import { createRecoveryChatRuntime } from "../core/recovery-chat.ts";
-import type { ChatIntelligence } from "../core/chat-intelligence.ts";
 import {
   defaultAuditStoreFactory,
   defaultChangesetStoreFactory,
@@ -44,7 +41,11 @@ import type {
 } from "../core/control-server.ts";
 import type { ProjectContext } from "../core/project-loader.ts";
 import type { ExportProjectOptions } from "../core/export.ts";
-import { APP_PORT_AUTO, LAUNCHER_ENV } from "../core/config.ts";
+import {
+  APP_PORT_AUTO,
+  LAUNCHER_ENV,
+  SERVE_EXIT_WHEN_IDLE_FLAG,
+} from "../core/config.ts";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
 import type { Result } from "../core/types.ts";
@@ -71,6 +72,9 @@ export interface ServeArgs {
   // null ⇒ no static UI (dev relies on the separate Vite server). Mirrors the
   // desktop root's existing --ui-dist spelling (desktop/desktop-main.ts).
   uiDist: string | null;
+  // --exit-when-idle: exit once no client has been connected for a while. The
+  // bridge passes it to the serve it starts (core/serve-process.ts).
+  exitWhenIdle: boolean;
 }
 
 export function getServeArgs(
@@ -84,6 +88,7 @@ export function getServeArgs(
       port: { type: "string" },
       "app-port": { type: "string" },
       "ui-dist": { type: "string" },
+      [SERVE_EXIT_WHEN_IDLE_FLAG]: { type: "boolean" },
     },
     allowPositionals: true,
   });
@@ -102,6 +107,7 @@ export function getServeArgs(
     port,
     appPort,
     uiDist: values["ui-dist"] ?? null,
+    exitWhenIdle: values[SERVE_EXIT_WHEN_IDLE_FLAG] === true,
   };
 }
 
@@ -346,12 +352,8 @@ export function getOrchestratorArgs(
 }
 
 // The OpenTide composition — core + verification, no agent: stores, changeset
-// governance, and the ledger hook are present, but the model-backed audit
-// provider and the agent's refutation handlers are absent. This is the executable
-// proof that model-backed audits + refutation live entirely in the agent assembly
-// (OpenTide §Phase 6): executeAudit returns "not configured" and refute_claims is
-// hidden from the MCP surface, while deterministic verification still works. The
-// Tide composition (tide/assembly.ts) is this plus the agent seams.
+// governance, and the ledger hook are present. Audits and the other reviews run
+// on the client's model (request_review); Tide's agent is one such client.
 export function verificationOnlyComposition(): CompositionContext {
   // The open/BYO-key stack runs the same utility jobs (session naming, commit
   // subjects, completions), so it installs the same routing utility provider
@@ -361,9 +363,7 @@ export function verificationOnlyComposition(): CompositionContext {
     changesetStoreFactory: defaultChangesetStoreFactory,
     auditStoreFactory: defaultAuditStoreFactory,
     mcpAuditStoreFactory: defaultMcpAuditStoreFactory,
-    auditProvider: null,
     verificationTools: defaultVerificationToolHandlers,
-    agentTools: null,
     verificationDiagnostics: null,
     saveRiskPolicy: defaultSaveRiskPolicy,
     initHooks: [initVerificationLedger, refreshModelsOnStart],
@@ -475,31 +475,15 @@ const buildTargetExtras: BuildTargetExtras = {
 };
 
 // The request-time options a composition root spreads into startControlServer:
-// the agent loop on `brain`, the recovery chat, and the verification/audit/
-// production routes. Both stacks share everything but the brain.
+// the recovery chat and the verification/audit/production routes. The chat
+// agent is its own process (cli/agent-main.ts); serve has no chat runtime.
 export type StackServerOptions = Pick<
   ControlServerOptions,
-  "chatFactory" | "recoveryChatFactory" | "mountRoutes" | "buildTargetExtras"
+  "recoveryChatFactory" | "mountRoutes" | "buildTargetExtras"
 >;
 
-export function assembleStack(
-  brain: () => ChatIntelligence,
-): StackServerOptions {
+export function assembleStack(): StackServerOptions {
   return {
-    // The ChatOrchestrator takes a ModelProvider as its 5th arg (the multi-model
-    // transport seam, docs/multi-model-harness-plan.md). The client-side loop drives the
-    // RoutingModelProvider, which per turn dispatches to the provider backing the resolved
-    // model (Anthropic or OpenAI). Each impl self-sources its key lazily and degrades to
-    // MODEL_UNCONFIGURED when keyless — the loop's resolveModel check fires first, so no
-    // dead id is shipped.
-    chatFactory: (project, mcp) =>
-      new ChatOrchestrator(
-        project.kernel,
-        project.rebuild,
-        mcp,
-        brain(),
-        new RoutingModelProvider(),
-      ),
     recoveryChatFactory: () =>
       createRecoveryChatRuntime(new RoutingModelProvider()),
     mountRoutes: [
@@ -512,15 +496,6 @@ export function assembleStack(
   };
 }
 
-// The OPEN OpenTide stack: the agentic loop driven by the generic
-// DefaultChatIntelligence. Paired with verificationOnlyComposition(), this runs
-// chat end-to-end with zero agent/ code, BYO-key on whichever provider the user
-// configured — model-backed audits return "not configured" while the loop, tools,
-// and deterministic verification all work.
-export function assembleOpenStack(): StackServerOptions {
-  return assembleStack(() => new DefaultChatIntelligence());
-}
-
 // Everything a composition root needs to boot one flavour of the stack: the
 // per-Kernel composition and the control server's request-time options. The
 // roots take one of these (defaulting to openAssembly); Tide passes its own.
@@ -531,5 +506,5 @@ export interface StackAssembly {
 
 export const openAssembly: StackAssembly = {
   composition: verificationOnlyComposition,
-  serverOptions: assembleOpenStack,
+  serverOptions: assembleStack,
 };

@@ -19,6 +19,7 @@ import type {
   ModelUsageRecord,
   RecordModelUsageInput,
 } from "./types.ts";
+import type { ReviewPacket, ReviewVerdict } from "./reviews.ts";
 
 // The runtime inputs the loop gathers from the kernel (enabled skills, registered
 // secrets, custom instructions) and hands to the brain to compose the system prompt.
@@ -62,8 +63,41 @@ export interface ApprovalDecisionContext {
   recordUsage?: (input: RecordModelUsageInput) => Promise<ModelUsageRecord>;
 }
 
+// What a reviewer gets besides the packet.
+export interface ReviewRunContext {
+  sessionId: string | null;
+  changesetId: string | null;
+  // Refute attempts per claim, when the caller asked for a number.
+  attempts?: number;
+  recordUsage?: (input: RecordModelUsageInput) => Promise<ModelUsageRecord>;
+}
+
+export type ReviewOutcome =
+  | { status: "ok"; verdict: ReviewVerdict; reviewer: string }
+  // No model or no key: nothing ran and nothing is owed to the caller but the
+  // reason.
+  | {
+    status: "unavailable";
+    code: string;
+    message: string;
+    suggestion?: string;
+  }
+  // The model ran and its answer was unusable. Nothing is submitted.
+  | { status: "failed"; message: string };
+
+// Runs review packets (core/reviews.ts) on the brain's own model, in a fresh
+// context: refutation, the independent criteria review and audits.
+export interface Reviewer {
+  review(packet: ReviewPacket, ctx: ReviewRunContext): Promise<ReviewOutcome>;
+}
+
 // The injected intelligence the open loop needs from the closed (or default) brain.
 export interface ChatIntelligence {
+  // Runs review packets. With one, the loop offers refute_claims and run_audit
+  // to its model, and runs the reviews a changeset owes before completing it.
+  // Without one, the model gets request_review and submit_review like any MCP
+  // client.
+  reviewer?: Reviewer;
   // The base system prompt with the project sections (skills, secrets,
   // custom instructions) composed in. The loop wraps session context around this.
   baseSystemPrompt(opts: PromptOpts): string;

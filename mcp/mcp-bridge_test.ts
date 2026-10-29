@@ -11,10 +11,11 @@ import { startControlServer } from "../core/control-server.ts";
 import { createProject } from "../core/project-manager.ts";
 import { unloadProject } from "../core/project-loader.ts";
 import { isProjectLockHeld } from "../core/project-lock.ts";
+import { takeOverProject } from "../core/project-handover.ts";
 import { readServerToken } from "../core/server-token.ts";
 import { testComposition } from "../cli/test-composition.ts";
 import { locateServe, type SpawnedServe } from "../core/serve-process.ts";
-import { proxyMcp } from "./mcp-bridge.ts";
+import { proxyMcp, UPSTREAM_LOST } from "./mcp-bridge.ts";
 import { mountMcpRoutes } from "./mcp-mount.ts";
 import { isolateHome } from "../core/test-home_test.ts";
 
@@ -50,7 +51,10 @@ Deno.test(
     const url = `http://127.0.0.1:${control.server.addr.port}/mcp`;
     const bridge = async () => {
       const [clientSide, bridgeSide] = InMemoryTransport.createLinkedPair();
-      const exit = proxyMcp(bridgeSide, url, readServerToken(a.dir)!);
+      const exit = proxyMcp(bridgeSide, {
+        url,
+        token: readServerToken(a.dir)!,
+      });
       const client = new Client({ name: "bridge-test", version: "0.0.0" });
       await client.connect(clientSide);
       return { client, exit };
@@ -69,7 +73,10 @@ Deno.test(
       // "method not found" from the bridge instead of killing it, and the
       // client's initialize still goes through.
       const [probeSide, probeBridge] = InMemoryTransport.createLinkedPair();
-      const probeExit = proxyMcp(probeBridge, url, readServerToken(a.dir)!);
+      const probeExit = proxyMcp(probeBridge, {
+        url,
+        token: readServerToken(a.dir)!,
+      });
       const replies: unknown[] = [];
       probeSide.onmessage = (m: unknown) => void replies.push(m);
       await probeSide.start();
@@ -91,8 +98,8 @@ Deno.test(
       await probed.close();
       assertEquals(await probeExit, 0);
 
-      // Serve drops the session (a project switch does): the bridge fails, so
-      // the client sees its server die and restarts it.
+      // Serve drops the session (a project switch does) and the bridge has no
+      // way to find another: it fails, so the client sees its server die.
       const second = await bridge();
       await second.client.listTools();
       await control.setProject.open(b.dir);
@@ -104,6 +111,82 @@ Deno.test(
       stopCompiler();
       a.cleanup();
       b.cleanup();
+    }
+  },
+);
+
+// Retries a call cut off by the handover, as a client would.
+async function retryLost<T>(call: () => Promise<T>): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      if ((err as { code?: unknown }).code !== UPSTREAM_LOST) throw err;
+      lastError = err;
+    }
+  }
+  throw lastError;
+}
+
+Deno.test(
+  "a bridge follows its project to the process that took it over",
+  testOpts,
+  async () => {
+    await initCompiler();
+    const a = tempProject("Bridge Handover");
+    const servers = [];
+    try {
+      const first = await startControlServer(null, 0, {
+        composition: testComposition(),
+        projectAppPort: 0,
+        mountRoutes: [mountMcpRoutes],
+        onRelease: () => {},
+      });
+      servers.push(first);
+      await first.setProject.open(a.dir);
+      const tide = await startControlServer(null, 0, {
+        composition: testComposition(),
+        projectAppPort: 0,
+        mountRoutes: [mountMcpRoutes],
+      });
+      servers.push(tide);
+
+      const located = await locateServe(a.dir, { ...FAST, spawn: noSpawn });
+      assert(located.ok);
+      const [clientSide, bridgeSide] = InMemoryTransport.createLinkedPair();
+      const exit = proxyMcp(bridgeSide, located.data, {
+        relocate: () => locateServe(a.dir, { ...FAST, spawn: noSpawn }),
+        reconnectDelayMs: 50,
+      });
+      const client = new Client({ name: "bridge-test", version: "0.0.0" });
+      await client.connect(clientSide);
+      assert((await client.listTools()).tools.length > 0);
+
+      const taken = await takeOverProject(a.dir);
+      assert(taken.ok, taken.ok ? "" : taken.error.message);
+      await tide.setProject.open(a.dir);
+
+      // Same client, same bridge, new serve.
+      const { tools } = await retryLost<{ tools: unknown[] }>(() =>
+        client.listTools()
+      );
+      assert(tools.length > 0);
+      const located2 = await locateServe(a.dir, { ...FAST, spawn: noSpawn });
+      assert(located2.ok);
+      assertEquals(located2.data.controlPort, tide.server.addr.port);
+
+      await client.close();
+      assertEquals(await exit, 0);
+    } finally {
+      for (const control of servers) {
+        const ctx = control.setProject.current();
+        if (ctx) await unloadProject(ctx);
+        await control.setProject.close();
+        await control.server.shutdown();
+      }
+      stopCompiler();
+      a.cleanup();
     }
   },
 );

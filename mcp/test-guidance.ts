@@ -26,7 +26,7 @@ export function unadvertisedToolMentions(
     projectedMcpTools(composition).map((t) => t.name),
   );
   const texts = [
-    generalGuide(composition),
+    generalGuide(),
     ...MCP_PROMPTS.map((p) =>
       p.render({ goal: "g", changeset_id: "c" }, composition)
     ),

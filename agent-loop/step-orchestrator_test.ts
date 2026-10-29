@@ -10,6 +10,7 @@ import {
   type StepGates,
   type StepLoopDeps,
 } from "./step-orchestrator.ts";
+import { inProcessChangesetClient } from "./chat-backend.ts";
 import type { RunTurnOptions, TurnResult, TurnStopReason } from "./chat.ts";
 import type { ChatEvent } from "../core/chat-contract.ts";
 import type { ChatIntelligence } from "../core/chat-intelligence.ts";
@@ -179,9 +180,7 @@ function baseDeps(
   let freshSessions = 0;
   const deps: StepLoopDeps & { freshSessions: () => number } = {
     runTurn: runner.runTurn,
-    changesets: kernel.changesets,
-    sessions: kernel.sessions,
-    changelog: kernel.changelog,
+    changesets: inProcessChangesetClient(kernel),
     brain: stubBrain,
     isCancelled: () => false,
     startFreshStepSession: () => {
@@ -388,6 +387,39 @@ Deno.test("runPlan completes the changeset once every step is done and readiness
     assertEquals(final!.status, "completed");
     const completed = events.filter((e) => e.type === "changeset_completed");
     assertEquals(completed.length, 1);
+  } finally {
+    await db.close();
+  }
+});
+
+Deno.test("runPlan runs the owed reviews once every step is settled, before readiness", async () => {
+  const db = await Database.create({ driver: "pglite" });
+  const kernel = new Kernel(db, { composition: testStoreComposition() });
+  try {
+    const cs = await inProgressChangeset(kernel, 2);
+    const runner = fakeRunner();
+    const order: string[] = [];
+    await runPlan(
+      cs,
+      baseDeps(kernel, runner, {
+        beforeCompletion: (changeset) => {
+          order.push(
+            `reviews:${
+              changeset.plan.steps.every((s) => s.status === "done")
+                ? "settled"
+                : "unsettled"
+            }`,
+          );
+          return Promise.resolve();
+        },
+        checkReadiness: (changeset) => {
+          order.push("readiness");
+          return checkChangesetReadiness(changeset);
+        },
+      }),
+    );
+    assertEquals(order.slice(0, 2), ["reviews:settled", "readiness"]);
+    assertEquals(order.filter((o) => o.startsWith("reviews")).length, 1);
   } finally {
     await db.close();
   }

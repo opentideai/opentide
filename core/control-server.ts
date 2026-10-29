@@ -1,28 +1,15 @@
+import { compress } from "hono/compress";
 import { type Context, Hono, type MiddlewareHandler } from "hono";
 import { upgradeWebSocket } from "hono/deno";
-import type { ChatEventHandler, ChatRuntime } from "./chat-contract.ts";
 import type { RecoveryChatRuntime } from "./recovery-chat.ts";
 import {
   diagnoseRecoveryProject,
   recoveryInitialMessage,
 } from "./recovery-diagnostics.ts";
-// The chat contract lives in core (chat-contract.ts); the control server no
-// longer imports the agent (chat.ts). Re-exported so existing importers/tests
-// keep resolving these names from control-server.
-export type {
-  ChatEvent,
-  ChatEventHandler,
-  ChatRuntime,
-} from "./chat-contract.ts";
-import { MCPManager, type MCPServerConfig } from "./mcp.ts";
-import {
-  parseMcpServerConfigInput,
-  resolveProjectFilePath,
-} from "./control-helpers.ts";
+import { resolveProjectFilePath } from "./control-helpers.ts";
 import {
   auditSnapshot,
   dispatchTool,
-  isMutationTool,
   reindexSourceBackedCodebase,
   runFormalSpecVerification,
   runKernelTests,
@@ -61,7 +48,7 @@ import {
   setVersion,
 } from "./build.ts";
 import { errorMessage, stripModelContextContent } from "./util.ts";
-import { contextOccupancyTokens, PRICING_VERIFIED_AS_OF } from "./usage.ts";
+import { PRICING_VERIFIED_AS_OF } from "./usage.ts";
 import { type RouteSchema, sortRoutes } from "./types.ts";
 import { DOCUMENT_SCOPES, type DocumentScope } from "./documents.ts";
 import { generateOpenAPISpec } from "./openapi.ts";
@@ -799,8 +786,14 @@ import {
   unloadProject,
 } from "./project-loader.ts";
 import { acquireProjectLock } from "./project-lock.ts";
+import type { ActivityMonitor } from "./idle-exit.ts";
+import { takeoverCandidate, takeOverProject } from "./project-handover.ts";
 import { isAllowedWebSocketRequest } from "./loopback-guard.ts";
-import { resolveServerToken, writeServerToken } from "./server-token.ts";
+import {
+  bearerMatches,
+  resolveServerToken,
+  writeServerToken,
+} from "./server-token.ts";
 import type { CompositionContext } from "./composition.ts";
 import { DynamicSchemaRestoreError } from "./db.ts";
 import {
@@ -851,7 +844,7 @@ import {
   restoreDbTables,
   saveBackup,
 } from "./backup.ts";
-import { maybePeriodicBackup, noteBackupTaken } from "./backup-cadence.ts";
+import { noteBackupTaken } from "./backup-cadence.ts";
 import {
   existsSync,
   mkdirSync,
@@ -898,10 +891,12 @@ import {
   clearOpenaiBaseUrl,
   clearProviderKey,
   CONSENT_VERSION,
+  CONTROL_PROJECT_RELEASE_PATH,
   DEFAULT_AGENT_MODEL,
   DEFAULT_CODE_MODEL,
   DEV_SERVER_HOST,
   DOCUMENT_UPLOAD_MAX_BYTES,
+  EARLIER_MESSAGES_HEADER,
   getAgentModel,
   getAgentModelForRequest,
   getAvailableModels,
@@ -920,9 +915,9 @@ import {
   getUtilityModelForRequest,
   getVerificationModel,
   getVerificationModelForRequest,
-  hasAnyProviderKey,
   isKnownProviderId,
   type KernelSettings,
+  MAX_CHANGE_RECORDS_PER_REQUEST,
   MAX_FILE_CONTENT_BYTES,
   MODEL_UNCONFIGURED_LABEL,
   type ModelProviderId,
@@ -946,11 +941,17 @@ import {
   setVerificationModel,
   SOURCE_EDIT_CHANGE_CATEGORY,
   type TelemetrySettings,
+  TOTAL_CHANGES_HEADER,
 } from "./config.ts";
+import {
+  compactToolCalls,
+  messageWindowFrom,
+  pageMessages,
+} from "./message-page.ts";
 import { isOrchestratedChild } from "./orchestrator/handshake.ts";
 import { callUtilityModel } from "./utility-model.ts";
 import { recommendModelsFromCatalog } from "./model-recommend.ts";
-import { egressAllowed, TelemetryManager } from "./telemetry.ts";
+import { TelemetryManager } from "./telemetry.ts";
 import { entitySurvivalRate } from "./episodes.ts";
 import { canReadUserSession, type CurrentUser } from "./auth.ts";
 import { type AuthProvider, LocalAuthProvider } from "./auth-provider.ts";
@@ -964,10 +965,10 @@ import {
 import { diffTask, STATE_FLUSH_PATH } from "./tasks/task-diff.ts";
 import { mergeTask } from "./tasks/task-merge.ts";
 import { rewindForAbandon } from "./changeset-snapshots.ts";
+import { approveChangeset } from "./changeset-approval.ts";
 
 export interface ControlServer {
   server: Deno.HttpServer<Deno.NetAddr>;
-  chat: ChatRuntime | null;
   setProject: {
     open: (path: string) => Promise<ProjectEntry>;
     current: () => ProjectContext | null;
@@ -1021,10 +1022,6 @@ export interface BuildTargetExtras {
 }
 
 export interface ControlServerOptions {
-  chatFactory?: (
-    ctx: ProjectContext,
-    mcpManager: MCPManager,
-  ) => ChatRuntime;
   recoveryChatFactory?: () => RecoveryChatRuntime;
   staticUiDir?: string;
   projectAppPort?: number;
@@ -1041,6 +1038,11 @@ export interface ControlServerOptions {
   // The assembled upper-layer seams, threaded into every project this server
   // loads (initial load happens in the root; project switches happen here).
   composition?: CompositionContext;
+  // Told about every request, so a serve can exit when nobody is connected.
+  activity?: ActivityMonitor;
+  // Set by a single-project serve: it hands its project over when asked
+  // (core/project-handover.ts) and calls this once the project is closed.
+  onRelease?: () => void;
 }
 
 const STATIC_UI_RESERVED_PREFIXES = [
@@ -1052,7 +1054,6 @@ const STATIC_UI_RESERVED_PREFIXES = [
 ];
 const MAX_SESSION_LIST_LIMIT = 100;
 const SESSION_LIST_VERIFICATION_CHANGESET_LIMIT = 500;
-const CLOSE_ACTIVE_TURN_TIMEOUT_MS = 5_000;
 
 // A1 (Stream A): the control-panel mutation endpoints below (env vars, secrets,
 // app configs, package add/remove) are operator-initiated — a human acting
@@ -1218,18 +1219,20 @@ async function enrichSessionsWithVerification(
   try {
     const sessionIds = new Set(sessions.map((session) => session.id));
     const grouped = new Map<string, ChangesetWithReadiness[]>();
-    const consistencyReport = ctx.kernel.projectDir
+    const changesets = (await ctx.kernel.changesets.list({
+      limit: SESSION_LIST_VERIFICATION_CHANGESET_LIMIT,
+    })).filter((changeset) =>
+      changeset.sessionId !== null && changeset.sessionId !== undefined &&
+      sessionIds.has(changeset.sessionId) &&
+      isOpenVerificationChangeset(changeset)
+    );
+    // The doctor reads the whole project; only an open changeset needs it.
+    const consistencyReport = changesets.length > 0 && ctx.kernel.projectDir
       ? await doctorProject(ctx.kernel.projectDir, ctx.kernel.db)
       : undefined;
-    const changesets = await ctx.kernel.changesets.list({
-      limit: SESSION_LIST_VERIFICATION_CHANGESET_LIMIT,
-    });
 
     for (const changeset of changesets) {
-      if (!changeset.sessionId || !sessionIds.has(changeset.sessionId)) {
-        continue;
-      }
-      if (!isOpenVerificationChangeset(changeset)) continue;
+      if (!changeset.sessionId) continue;
       const enriched: ChangesetWithReadiness = {
         ...changeset,
         readiness: await checkProjectAwareReadiness(
@@ -1360,83 +1363,22 @@ export function resolveScreenshotArtifactPath(
   return join(getProjectPaths(projectDir).screenshotArtifactsDir, name);
 }
 
-function addAttachmentSourcesToContent(
-  content: string,
-  attachments?: Array<{ name: string; type: string; data: string }>,
-): string {
-  if (!attachments?.length) return content;
-  const match = content.match(/<attachments>([\s\S]*?)<\/attachments>/);
-  if (!match) return content;
-
-  try {
-    const parsed = JSON.parse(match[1]!) as Array<
-      { name: string; type: string; thumb?: string; src?: string }
-    >;
-    const withSources = parsed.map((meta, index) => {
-      const attachment = attachments[index];
-      if (!attachment || !attachment.type.startsWith("image/")) return meta;
-      return {
-        ...meta,
-        src: `data:${attachment.type};base64,${attachment.data}`,
-      };
-    });
-    return content.replace(
-      match[0],
-      `<attachments>${JSON.stringify(withSources)}</attachments>`,
-    );
-  } catch {
-    return content;
-  }
-}
-
 export async function startControlServer(
   initialProject: ProjectContext | null,
   port = 3003,
   opts: ControlServerOptions = {},
 ): Promise<ControlServer> {
   let ctx = initialProject;
-  let chat: ChatRuntime | null = null;
-  let busy = false;
-  let activeTurnPromise: Promise<void> | null = null;
-  let resolveActiveTurn: (() => void) | null = null;
-  let pendingCompaction: { sessionId: string; user: CurrentUser } | null = null;
-  let compactionFlushInFlight = false;
-  // deno-lint-ignore no-explicit-any
-  let currentChatWs: any = null;
   let debugManager: DebugManager | null = null;
-  const mcpManager = new MCPManager();
   // The current project's MCP bearer token (core/server-token.ts). Set by
   // advertiseProject once the listener is bound, cleared on close.
   let serverToken: string | null = null;
   const projectCloseListeners: (() => Promise<void>)[] = [];
   const telemetry = new TelemetryManager({
     getContext: () => ctx,
-    getCurrentSessionId: () => chat?.getCurrentSessionId() ?? null,
   });
   const auth: AuthProvider = opts.authProvider ?? new LocalAuthProvider();
   const requestUsers = new WeakMap<Request, CurrentUser>();
-
-  class CloseActiveTurnTimeoutError extends Error {
-    constructor() {
-      super(
-        "Timed out waiting for active chat turn to settle after cancellation",
-      );
-      this.name = "CloseActiveTurnTimeoutError";
-    }
-  }
-
-  function beginActiveTurn(): void {
-    activeTurnPromise = new Promise<void>((resolve) => {
-      resolveActiveTurn = resolve;
-    });
-  }
-
-  function finishActiveTurn(): void {
-    const resolve = resolveActiveTurn;
-    resolveActiveTurn = null;
-    activeTurnPromise = null;
-    resolve?.();
-  }
 
   function isRecoverableDatabaseOpenError(err: unknown): boolean {
     return err instanceof PgliteCorruptError ||
@@ -1451,32 +1393,29 @@ export async function startControlServer(
   // broken — the request conflicts with the state of the system, and the fix is
   // the caller's to make. Distinct from DB_CORRUPT on purpose, because the IDE's
   // recovery dialog must NOT offer to reset a database that is merely busy.
-  function projectLockedResponse(c: Context, err: unknown): Response | null {
+  // With the project's path, it also says who could hand the project over, so
+  // the IDE can offer to take it.
+  function projectLockedResponse(
+    c: Context,
+    err: unknown,
+    projectPath?: string,
+  ): Response | null {
     if (!(err instanceof ProjectLockedError)) return null;
-    return c.json({
-      error: err.message,
-      code: err.code,
-      ...(err.detail.suggestion ? { suggestion: err.detail.suggestion } : {}),
-    }, 409);
+    return lockRefusal(c, { ...err.detail, code: err.code }, projectPath);
   }
 
-  async function waitForActiveTurnToSettle(): Promise<void> {
-    const turn = activeTurnPromise;
-    if (!turn) return;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    try {
-      await Promise.race([
-        turn,
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new CloseActiveTurnTimeoutError()),
-            CLOSE_ACTIVE_TURN_TIMEOUT_MS,
-          );
-        }),
-      ]);
-    } finally {
-      if (timeout) clearTimeout(timeout);
-    }
+  function lockRefusal(
+    c: Context,
+    error: { code: string; message: string; suggestion?: string },
+    projectPath?: string,
+  ): Response {
+    const takeover = projectPath ? takeoverCandidate(projectPath) : null;
+    return c.json({
+      error: error.message,
+      code: error.code,
+      ...(error.suggestion ? { suggestion: error.suggestion } : {}),
+      ...(takeover ? { takeover } : {}),
+    }, error.code === "PROJECT_ALREADY_OPEN" ? 409 : 500);
   }
 
   interface RegistryInfoEntry {
@@ -1701,96 +1640,11 @@ export async function startControlServer(
   }
   refreshAvailableModels();
 
-  function getMcpServers(): MCPServerConfig[] {
-    if (!ctx) return [];
-    return (ctx.kernel.configs.get("_genie_mcp_servers") as
-      | MCPServerConfig[]
-      | undefined) ?? [];
-  }
-
-  function saveMcpServers(servers: MCPServerConfig[]): void {
-    if (!ctx) return;
-    ctx.kernel.configs.set("_genie_mcp_servers", servers);
-    const paths = getProjectPaths(ctx.entry.path);
-    saveKernelState(ctx.kernel, paths.stateDir);
-  }
-
-  async function syncMcp(): Promise<{ errors: string[] }> {
-    const result = await mcpManager.sync(getMcpServers());
-    if (ctx && result.errors.length > 0) {
-      for (const err of result.errors) {
-        ctx.kernel.log.log("error", "system", `MCP: ${err}`);
-      }
-    }
-    return result;
-  }
-
-  async function initChat(): Promise<void> {
-    if (!ctx) return;
-    // The integrated agent is an optional plug-in (OpenTide §3.3). Without a
-    // registered chat provider the core runs LLM-neutral: no agent, no MCP sync.
-    if (!opts.chatFactory) {
-      console.log("  No agent configured — chat disabled.");
-      return;
-    }
-    // Skip the whole MCP-connect + agent-init cold start when NO provider key is
-    // configured — MCP tools are only ever consumed by the agent, and the agent
-    // can't be created without a key (F-06). Gate on any provider (not Anthropic
-    // alone) so an OpenAI-only install still initializes the agent; the resolved
-    // agent model then decides per turn whether its provider's key is present
-    // (a missing one is refused with MODEL_UNCONFIGURED, not a dead id). Setting a
-    // key later via PUT /api/config/api-key re-runs initChat(), so this is lazy.
-    if (!hasAnyProviderKey()) {
-      console.log(
-        "  No API key — chat disabled until a key is set in Settings.",
-      );
-      return;
-    }
-    console.log("  Connecting MCP servers...");
-    const { errors } = await syncMcp();
-    for (const e of errors) console.log(`  MCP error: ${e}`);
-
-    const orchestrator = opts.chatFactory(ctx, mcpManager);
-    const paths = getProjectPaths(ctx.entry.path);
-    // The interval, the disabled check and the failure handling all live in
-    // backup-cadence.ts, which the MCP tool-dispatch path also goes through — so the
-    // two faces share one clock over this project instead of each keeping its own and
-    // evicting the other's backups under maxDbBackups.
-    orchestrator.setOnTurnComplete(() => {
-      if (!ctx) return;
-      saveKernelState(ctx.kernel, paths.stateDir);
-      maybePeriodicBackup(ctx.kernel, ctx.entry.path)
-        .then((meta) => {
-          if (!meta) return;
-          sendToChat({
-            type: "backup_created",
-            trigger: "periodic",
-            tableCount: meta.tableCount,
-            rowCount: meta.rowCount,
-            branchSnapshotCount: meta.branchSnapshotCount,
-            includesProjectState: meta.includesProjectState,
-          });
-        })
-        .catch(() => {});
-    });
-    console.log("  Initializing AI agent...");
-    await orchestrator.initialize();
-    chat = orchestrator;
-    console.log("  AI agent ready");
-  }
-
-  if (ctx) {
-    try {
-      await initChat();
-    } catch (err) {
-      console.log(`  AI agent failed to initialize: ${errorMessage(err)}`);
-      console.log(
-        "  Chat will be unavailable. Set a valid API key in Settings to enable it.",
-      );
-    }
-  }
-
   const app = new Hono();
+
+  // The IDE reaches serve over a network as often as over loopback (a remote
+  // box, a tailnet), and some of its reads run to megabytes of JSON.
+  app.use("/api/*", compress());
 
   // Reject WebSocket upgrades from foreign Origins / non-loopback Hosts before
   // they reach upgradeWebSocket. Applied to the /chat, /debug, /terminal routes.
@@ -1855,94 +1709,6 @@ export async function startControlServer(
     return session;
   }
 
-  async function clearActiveChatSessionIf(sessionId: string): Promise<void> {
-    const activeChat = chat;
-    if (!activeChat || sessionId !== activeChat.getCurrentSessionId()) return;
-    await ctx!.kernel.sessions.endSession(sessionId);
-    if (pendingCompaction?.sessionId === sessionId) pendingCompaction = null;
-    activeChat.clearCurrentSession();
-    await activeChat.clearContext();
-  }
-
-  async function queueCompactionForCurrentSession(
-    user: CurrentUser,
-  ): Promise<
-    | { ok: true; sessionId: string; coalesced: boolean }
-    | { ok: false; status: number; error: string }
-  > {
-    const activeChat = chat;
-    const sessionId = activeChat?.getCurrentSessionId();
-    if (!activeChat || !sessionId) {
-      return { ok: false, status: 400, error: "No active session" };
-    }
-
-    const session = await ctx!.kernel.sessions.getSession(sessionId);
-    if (!session) return { ok: false, status: 404, error: "Session not found" };
-    if (!canReadSession(user, session)) {
-      return { ok: false, status: 403, error: "Forbidden" };
-    }
-    if (session.archived) {
-      return {
-        ok: false,
-        status: 409,
-        error: "Archived sessions must be unarchived before compacting",
-      };
-    }
-
-    const coalesced = pendingCompaction?.sessionId === sessionId;
-    if (!coalesced) {
-      pendingCompaction = {
-        sessionId,
-        user,
-      };
-    }
-    return { ok: true, sessionId, coalesced };
-  }
-
-  async function flushPendingCompaction(
-    activeChat: ChatRuntime,
-    onEvent?: ChatEventHandler,
-  ): Promise<void> {
-    if (compactionFlushInFlight || !pendingCompaction || !ctx) return;
-    const pending = pendingCompaction;
-    if (activeChat.getCurrentSessionId() !== pending.sessionId) return;
-    compactionFlushInFlight = true;
-    try {
-      pendingCompaction = null;
-      const session = await ctx.kernel.sessions.getSession(pending.sessionId);
-      if (
-        !session ||
-        session.archived ||
-        !canReadSession(pending.user, session)
-      ) {
-        return;
-      }
-      const summarized = await summarizeSession(ctx.kernel, {
-        sessionId: pending.sessionId,
-        kind: "handoff",
-        store: true,
-        refresh: true,
-        requester: "user",
-        accountingCaller: "session_compaction",
-      });
-      const summary = summarized?.summary ?? session.summary ?? "";
-      if (!summary.trim()) return;
-      const compacted = await activeChat.compactSession(summary, pending.user);
-      onEvent?.({
-        type: "session_compacted",
-        sessionId: compacted.sessionId,
-        sessionName: session.name,
-        text: "Context compacted after the current agent turn completed.",
-      });
-    } catch (err) {
-      const msg = errorMessage(err);
-      ctx?.kernel.log.log("error", "agent", `queued compaction failed: ${msg}`);
-      onEvent?.({ type: "error", text: `Queued compaction failed: ${msg}` });
-    } finally {
-      compactionFlushInFlight = false;
-    }
-  }
-
   async function shouldRedactPrivateSession(
     user: CurrentUser,
     sessionId: string | null | undefined,
@@ -2004,6 +1770,42 @@ export async function startControlServer(
   // (mountAuthRoutes) and is contributed via the mountRoutes hook by the Tide
   // composition roots. In open mode (LocalAuthProvider) there is no login surface
   // at all. Core keeps only the thin /api/auth/me identity endpoint above.
+
+  // Another process taking the project over (core/project-handover.ts). Ahead
+  // of the user-auth middleware: the caller is a process, not a signed-in
+  // user, and the project's bearer token is what proves it may ask.
+  app.post(CONTROL_PROJECT_RELEASE_PATH, async (c) => {
+    if (!opts.onRelease || !ctx) {
+      return c.json({
+        error: "This server doesn't hand its project over.",
+        code: "TAKEOVER_UNSUPPORTED",
+      }, 409);
+    }
+    if (
+      !serverToken ||
+      !bearerMatches(c.req.header("authorization") ?? null, serverToken)
+    ) {
+      return c.json({ error: "Missing or wrong bearer token." }, 401);
+    }
+    const active = await ctx.kernel.activeChangesetId();
+    if (active) {
+      return c.json({
+        error:
+          `A change is in progress on this project (changeset ${active}). ` +
+          `Finish or abandon it in the client that started it, then try again.`,
+        code: "CHANGESET_ACTIVE",
+      }, 409);
+    }
+    try {
+      await closeCurrentProject();
+    } catch (err) {
+      return c.json({ error: errorMessage(err), code: "TAKEOVER_FAILED" }, 500);
+    }
+    // After the response is on its way: the release is the last thing this
+    // server does.
+    setTimeout(opts.onRelease, 0);
+    return c.json({ ok: true });
+  });
 
   app.use("/api/*", async (c, next) => {
     if (c.req.path.startsWith("/api/auth/")) return next();
@@ -2122,17 +1924,11 @@ export async function startControlServer(
 
   async function closeCurrentProject(): Promise<void> {
     if (!ctx) return;
-    if (busy && chat) {
-      chat.abort();
-      await waitForActiveTurnToSettle();
-    }
     if (debugManager) {
       await debugManager.stop().catch(() => {});
       debugManager = null;
       debugEventsSubscribed = false;
     }
-    if (chat) await chat.close();
-    await mcpManager.closeAll();
     for (const listener of projectCloseListeners) {
       await listener().catch((err) =>
         ctx!.kernel.log.log(
@@ -2145,7 +1941,6 @@ export async function startControlServer(
     serverToken = null;
     await unloadProject(ctx);
     ctx = null;
-    chat = null;
   }
 
   // Tell other processes this project is served here: the lock record names the
@@ -2161,6 +1956,7 @@ export async function startControlServer(
     ctx.lock?.advertise({
       role: "serve",
       controlPort: (server.addr as Deno.NetAddr).port,
+      ...(opts.onRelease ? { handover: true } : {}),
     });
   }
 
@@ -2172,11 +1968,6 @@ export async function startControlServer(
     advertiseProject();
     loadRegistryCache();
     warmRegistryCache();
-    try {
-      await initChat();
-    } catch (err) {
-      console.log(`  AI agent failed to initialize: ${errorMessage(err)}`);
-    }
     telemetry.track("project_opened", await projectTelemetryProperties("open"));
     maybeSyncTelemetry();
   }
@@ -2341,9 +2132,25 @@ export async function startControlServer(
   });
 
   app.post("/api/projects/open", async (c) => {
-    const body = await c.req.json<{ path: string }>().catch(() => null);
+    const body = await c.req.json<{ path: string; takeOver?: boolean }>()
+      .catch(() => null);
     if (!body?.path) return c.json({ error: "path is required" }, 400);
 
+    if (body.takeOver === true) {
+      const taken = await takeOverProject(body.path);
+      if (!taken.ok) {
+        return c.json(
+          { error: taken.error.message, code: taken.error.code },
+          409,
+        );
+      }
+    } else if (ctx?.entry.path !== body.path) {
+      // Refuse a held project before closing the open one, so a refusal (or a
+      // declined takeover) leaves the person where they were.
+      const probe = acquireProjectLock(body.path, "this kernel");
+      if (!probe.ok) return lockRefusal(c, probe.error, body.path);
+      probe.data.release();
+    }
     try {
       await closeCurrentProject();
       await openAndInitProject(body.path);
@@ -2351,7 +2158,7 @@ export async function startControlServer(
         project: { path: ctx!.entry.path, name: ctx!.entry.name },
       });
     } catch (err) {
-      const locked = projectLockedResponse(c, err);
+      const locked = projectLockedResponse(c, err, body.path);
       if (locked) return locked;
       if (isRecoverableDatabaseOpenError(err)) {
         return recoverableDatabaseError(c, err);
@@ -2373,9 +2180,6 @@ export async function startControlServer(
       await closeCurrentProject();
       return c.json({ ok: true });
     } catch (err) {
-      if (err instanceof CloseActiveTurnTimeoutError) {
-        return c.json({ error: err.message }, 409);
-      }
       return c.json({ error: errorMessage(err) }, 500);
     }
   });
@@ -2857,13 +2661,10 @@ export async function startControlServer(
     if (guard) return guard;
     const body = await c.req.json<{ message?: string }>().catch(() => null);
     try {
-      const resolvedMessage = await resolveGitCommitMessage(
+      const resolvedMessage = resolveGitCommitMessage(
         ctx!.entry.path,
         body?.message,
         flushCurrentProjectState,
-        {
-          recordUsage: (input) => ctx!.kernel.sessions.recordModelUsage(input),
-        },
       );
       return c.json({
         ok: true,
@@ -3046,44 +2847,9 @@ export async function startControlServer(
   }
 
   function maybeSyncTelemetry(): void {
-    const settings = getTelemetrySettings();
-    if (!settings.endpoint.trim()) return;
-    // Fire only when some category is permitted to egress. Feedback consent is
-    // independent of the passive-telemetry master switch, so a feedback-only
-    // consent still flushes; sync() itself filters per-record via egressAllowed.
-    if (
-      !egressAllowed(settings, "event") && !egressAllowed(settings, "feedback")
-    ) {
-      return;
-    }
-    telemetry.sync().catch((err) => {
+    telemetry.syncIfAllowed()?.catch((err) => {
       console.warn(`Telemetry sync failed: ${errorMessage(err)}`);
     });
-  }
-
-  function bucketTokens(value: number): string {
-    if (value <= 0) return "0";
-    if (value <= 1_000) return "1-1k";
-    if (value <= 5_000) return "1k-5k";
-    if (value <= 20_000) return "5k-20k";
-    if (value <= 100_000) return "20k-100k";
-    return "100k+";
-  }
-
-  function bucketCost(value: number): string {
-    if (value <= 0) return "0";
-    if (value <= 0.01) return "0-0.01";
-    if (value <= 0.10) return "0.01-0.10";
-    if (value <= 1) return "0.10-1";
-    if (value <= 10) return "1-10";
-    return "10+";
-  }
-
-  function modelFamily(model: string): string {
-    if (model.includes("opus")) return "claude-opus";
-    if (model.includes("sonnet")) return "claude-sonnet";
-    if (model.includes("haiku")) return "claude-haiku";
-    return "other";
   }
 
   // --- IDE endpoints (require an open project) ---
@@ -3099,18 +2865,6 @@ export async function startControlServer(
       schemas: (await kernel.db.listSchemas()).length,
       configKeys: kernel.configs.list().length,
       runtime: runtimeMetadata(kernel.runtime),
-    });
-  });
-
-  app.get("/api/chat/status", (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const detail = c.req.query("detail") === "full" ? "full" : "compact";
-    const inProgress = chat?.getInProgressState(detail) ?? null;
-    return c.json({
-      busy,
-      currentSessionId: chat?.getCurrentSessionId() ?? null,
-      inProgress,
     });
   });
 
@@ -3145,6 +2899,7 @@ export async function startControlServer(
       requests: kernel.requestLog.recent(50),
       changelog,
       changelogCursor,
+      appRevision: kernel.appRevision,
       devViews: kernel.devViews.list().map((v) => {
         const linkedType = !v.builtIn
           ? kernel.types.get(v.targetType)
@@ -4791,31 +4546,6 @@ export async function startControlServer(
   const parseProviderParam = (raw: string): ModelProviderId | null =>
     isKnownProviderId(raw) ? (raw as ModelProviderId) : null;
 
-  // Shared post-write side effects for a key change (set OR clear), identical to the
-  // pre-Stage-6 Anthropic-only endpoint: re-run discovery, then rebuild the chat
-  // context (or lazily init it on a first set) and notify the user. `verb` reads into
-  // the system_message notice ("changed" / "was removed").
-  const afterProviderKeyChange = async (
-    providerId: ModelProviderId,
-    verb: string,
-  ) => {
-    refreshAvailableModels();
-    if (chat) {
-      await chat.reloadApiKey();
-      sendToChat({
-        type: "system_message",
-        text:
-          `Agent context was rebuilt because the ${providerId} API key ${verb}. Recent conversation was reloaded from local history.`,
-      });
-    } else if (ctx) {
-      try {
-        await initChat();
-      } catch (err) {
-        console.log(`  AI agent failed to initialize: ${errorMessage(err)}`);
-      }
-    }
-  };
-
   const providerKeyStatusResponse = (providerId: ModelProviderId) => {
     const status = getProviderKeyStatuses().find((s) => s.id === providerId);
     return { set: status?.set ?? false, display: status?.display ?? null };
@@ -4838,7 +4568,7 @@ export async function startControlServer(
     const body = await c.req.json<{ key: string }>().catch(() => null);
     if (!body?.key?.trim()) return c.json({ error: "key is required" }, 400);
     setProviderKey(providerId, body.key.trim());
-    await afterProviderKeyChange(providerId, "changed");
+    refreshAvailableModels();
     return c.json({ set: true, display: obfuscateKey(body.key.trim()) });
   });
 
@@ -4846,7 +4576,7 @@ export async function startControlServer(
     const providerId = parseProviderParam(c.req.param("provider"));
     if (!providerId) return c.json({ error: "unknown provider" }, 400);
     clearProviderKey(providerId);
-    await afterProviderKeyChange(providerId, "was removed");
+    refreshAvailableModels();
     return c.json({ set: false, display: null });
   });
 
@@ -4862,22 +4592,21 @@ export async function startControlServer(
     const body = await c.req.json<{ key: string }>().catch(() => null);
     if (!body?.key?.trim()) return c.json({ error: "key is required" }, 400);
     setProviderKey(legacyAnthropic, body.key.trim());
-    await afterProviderKeyChange(legacyAnthropic, "changed");
+    refreshAvailableModels();
     return c.json({ set: true, display: obfuscateKey(body.key.trim()) });
   });
 
   app.delete("/api/config/api-key", async (c) => {
     clearProviderKey(legacyAnthropic);
-    await afterProviderKeyChange(legacyAnthropic, "was removed");
+    refreshAvailableModels();
     return c.json({ set: false, display: null });
   });
 
   // --- OpenAI base URL (route the openai provider at any compatible endpoint) ---
   //
-  // A base-URL change reroutes chat + utility + discovery, so it runs the same
-  // afterProviderKeyChange side effects as a key change ("openai": re-discover, reload
-  // the chat client). Accepts only an http(s) URL; empty/absent clears back to default.
-  const openaiProvider: ModelProviderId = "openai";
+  // A base-URL change reroutes chat + utility + discovery, so it re-runs model
+  // discovery as a key change does. Accepts only an http(s) URL; empty/absent clears
+  // back to default.
   const isHttpUrl = (raw: string): boolean => {
     try {
       const parsed = new URL(raw);
@@ -4898,13 +4627,13 @@ export async function startControlServer(
       return c.json({ error: "invalid base URL" }, 400);
     }
     setOpenaiBaseUrl(baseUrl);
-    await afterProviderKeyChange(openaiProvider, "changed");
+    refreshAvailableModels();
     return c.json({ baseUrl });
   });
 
   app.delete("/api/config/openai-base-url", async (c) => {
     clearOpenaiBaseUrl();
-    await afterProviderKeyChange(openaiProvider, "changed");
+    refreshAvailableModels();
     return c.json({ baseUrl: null });
   });
 
@@ -5050,16 +4779,6 @@ export async function startControlServer(
     if (body.codeModel) setUtilityModel(body.codeModel);
     if (body.utilityModel) setUtilityModel(body.utilityModel);
     if (body.verificationModel) setVerificationModel(body.verificationModel);
-    if (chat) {
-      await chat.reloadModel();
-      if (body.agentModel) {
-        sendToChat({
-          type: "system_message",
-          text:
-            "Agent context was rebuilt because the agent model changed. Recent conversation was reloaded from local history.",
-        });
-      }
-    }
     return c.json({
       roles: {
         agent: getAgentModel(),
@@ -5089,24 +4808,13 @@ export async function startControlServer(
   // Run the deterministic recommend engine over the live catalog and persist the
   // picks (Feature G, G3). setRecommendedModels writes ONLY the recommendedModels
   // map, so the new recommendation flows to every role on "default" and never
-  // touches an explicit pin (the G5 structural guarantee). If the agent role is on
-  // "default" and its resolved model actually changed, rebuild the chat context —
-  // matching the PUT's reload/system_message behavior rather than inventing new
-  // semantics. Deterministic-only: the optional agent-assisted refinement (G3) is a
-  // closed-brain concern and is deferred behind this seam (see model-recommend.ts).
+  // touches an explicit pin (the G5 structural guarantee). The agent reads its
+  // model at the start of each turn. Deterministic-only: the optional
+  // agent-assisted refinement (G3) is a closed-brain concern and is deferred
+  // behind this seam (see model-recommend.ts).
   app.post("/api/config/models/recommend", async (c) => {
     try {
-      const beforeAgentModel = getAgentModelForRequest();
       setRecommendedModels(recommendModelsFromCatalog(getAvailableModels()));
-      const agentModelChanged = getAgentModelForRequest() !== beforeAgentModel;
-      if (chat && agentModelChanged) {
-        await chat.reloadModel();
-        sendToChat({
-          type: "system_message",
-          text:
-            "Agent context was rebuilt because the recommended agent model changed. Recent conversation was reloaded from local history.",
-        });
-      }
       return c.json(modelsResponseBody());
     } catch (err) {
       return c.json(
@@ -5635,117 +5343,6 @@ export async function startControlServer(
     return c.json({ message: `Secret "${key}" deleted.` });
   });
 
-  // --- MCP Servers ---
-
-  app.get("/api/mcp-servers", (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const servers = getMcpServers();
-    return c.json(servers.map((s) => ({
-      ...s,
-      ...mcpManager.getStatus(s.name),
-    })));
-  });
-
-  app.post("/api/mcp-servers", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const body = await readJsonObject(c);
-    if (body instanceof Response) return body;
-    const parsed = parseMcpServerConfigInput(body);
-    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
-
-    const servers = getMcpServers();
-    if (servers.some((s) => s.name === parsed.config.name)) {
-      return c.json(
-        { error: `Server "${parsed.config.name}" already exists` },
-        409,
-      );
-    }
-
-    const config = parsed.config;
-    servers.push(config);
-    saveMcpServers(servers);
-    const { errors } = await syncMcp();
-    const status = mcpManager.getStatus(config.name);
-    return c.json({ ok: true, ...status, syncErrors: errors }, 201);
-  });
-
-  app.put("/api/mcp-servers/:name", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const name = c.req.param("name");
-    const body = await readJsonObject(c);
-    if (body instanceof Response) return body;
-    const servers = getMcpServers();
-    const server = servers.find((s) => s.name === name);
-    if (!server) return c.json({ error: `Server "${name}" not found` }, 404);
-
-    if (body.url !== undefined) {
-      if (typeof body.url !== "string") {
-        return c.json({ error: "url must be a string" }, 400);
-      }
-      server.url = body.url;
-    }
-    if (body.authToken !== undefined) {
-      if (typeof body.authToken !== "string") {
-        return c.json({ error: "authToken must be a string" }, 400);
-      }
-      server.authToken = body.authToken;
-    }
-    if (body.command !== undefined) {
-      if (typeof body.command !== "string") {
-        return c.json({ error: "command must be a string" }, 400);
-      }
-      server.command = body.command;
-    }
-    if (body.args !== undefined) {
-      if (
-        !Array.isArray(body.args) ||
-        !body.args.every((a) => typeof a === "string")
-      ) return c.json({ error: "args must be an array of strings" }, 400);
-      server.args = body.args;
-    }
-    if (body.env !== undefined) {
-      if (
-        !isRecord(body.env) ||
-        !Object.values(body.env).every((v) => typeof v === "string")
-      ) return c.json({ error: "env must be an object of string values" }, 400);
-      server.env = body.env as Record<string, string>;
-    }
-    if (body.enabled !== undefined) {
-      if (typeof body.enabled !== "boolean") {
-        return c.json({ error: "enabled must be a boolean" }, 400);
-      }
-      server.enabled = body.enabled;
-    }
-
-    saveMcpServers(servers);
-    const { errors } = await syncMcp();
-    const status = mcpManager.getStatus(name);
-    return c.json({ ok: true, ...status, syncErrors: errors });
-  });
-
-  app.delete("/api/mcp-servers/:name", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const name = c.req.param("name");
-    const servers = getMcpServers();
-    const idx = servers.findIndex((s) => s.name === name);
-    if (idx === -1) return c.json({ error: `Server "${name}" not found` }, 404);
-    servers.splice(idx, 1);
-    saveMcpServers(servers);
-    await syncMcp();
-    return c.json({ ok: true });
-  });
-
-  app.post("/api/mcp-servers/sync", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const { errors } = await syncMcp();
-    return c.json({ ok: true, errors });
-  });
-
   // --- Skills ---
 
   app.get("/api/skills", async (c) => {
@@ -5935,21 +5532,13 @@ export async function startControlServer(
     if (guard) return guard;
     const id = c.req.param("id");
     try {
-      const existing = await ctx!.kernel.changesets.get(id);
-      if (!existing) return c.json({ error: "Not found" }, 404);
-
-      let cs = existing;
-      if (existing.status === "planning") {
-        await ctx!.kernel.changesets.approve(id);
-        cs = await ctx!.kernel.changesets.startWork(id);
-      } else if (existing.status === "approved") {
-        cs = await ctx!.kernel.changesets.startWork(id);
-      } else if (existing.status !== "in_progress") {
-        return c.json(
-          { error: `Cannot approve changeset in status "${existing.status}"` },
-          400,
-        );
+      const approved = await approveChangeset(ctx!.kernel, id);
+      if (!approved.ok) {
+        return approved.error.code === "CHANGESET_NOT_FOUND"
+          ? c.json({ error: "Not found" }, 404)
+          : c.json({ error: approved.error.message }, 400);
       }
+      const cs = approved.data;
       const changes = await ctx!.kernel.changelog.listByChangeset(id);
       telemetry.track("changeset_approved", {
         change_count: changes.length,
@@ -6703,9 +6292,13 @@ export async function startControlServer(
     const limit = Number(c.req.query("limit") ?? 30);
     const includeSnapshots = c.req.query("includeSnapshots") === "1" ||
       c.req.query("includeSnapshots") === "true";
-    const turns = await ctx!.kernel.changelog.listTurns(limit, {
-      includeSnapshots,
-    });
+    const [turns, total] = await Promise.all([
+      ctx!.kernel.changelog.listTurns(limit, { includeSnapshots }),
+      ctx!.kernel.changelog.count(),
+    ]);
+    // The list is the newest `limit` turns; the panel needs the whole count to
+    // say how much it isn't showing.
+    c.header(TOTAL_CHANGES_HEADER, String(total));
     const turnIds = turns.map((t) => t.turnId).filter((id) =>
       !id.startsWith("solo_")
     );
@@ -6721,6 +6314,27 @@ export async function startControlServer(
       messageId: messageIdMap.get(t.turnId) ?? undefined,
     })));
     return c.json(enriched);
+  });
+
+  // Several records in one request: the chat's change cards on load.
+  app.get("/api/changelog/records", async (c) => {
+    const guard = requireKernel(c);
+    if (guard) return guard;
+    const ids = (c.req.query("ids") ?? "").split(",")
+      .map(Number)
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+    if (ids.length > MAX_CHANGE_RECORDS_PER_REQUEST) {
+      return c.json({
+        error: `At most ${MAX_CHANGE_RECORDS_PER_REQUEST} ids per request`,
+      }, 400);
+    }
+    const user = currentUser(c);
+    const records = await ctx!.kernel.changelog.getMany(ids);
+    return c.json(
+      await Promise.all(
+        records.map((record) => redactChangeRecordForUser(user, record)),
+      ),
+    );
   });
 
   app.get("/api/changelog/:id{[0-9]+}", async (c) => {
@@ -7023,14 +6637,6 @@ export async function startControlServer(
     // An explicit backup restarts the periodic clock — asking for one and then getting
     // an automatic duplicate a moment later is just eviction pressure on maxDbBackups.
     noteBackupTaken(ctx!.entry.path);
-    sendToChat({
-      type: "backup_created",
-      trigger: "manual",
-      tableCount: backup.metadata.tableCount,
-      rowCount: backup.metadata.rowCount,
-      branchSnapshotCount: backup.metadata.branchSnapshotCount,
-      includesProjectState: backup.metadata.includesProjectState,
-    });
     return c.json(backup.metadata, 201);
   });
 
@@ -7253,10 +6859,6 @@ export async function startControlServer(
       () => null,
     );
     const input = body?.args ?? {};
-    if (name === "rename_session" && !input.session_id) {
-      const currentId = chat?.getCurrentSessionId();
-      if (currentId) input.session_id = currentId;
-    }
     const result = await dispatchTool(name, input, ctx!.kernel, ctx!.rebuild);
     if (result.ok) {
       return c.json({ ok: true, result: result.data });
@@ -7435,7 +7037,8 @@ export async function startControlServer(
     return new Response(stream, {
       headers: {
         "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-cache",
+        // no-transform: compressing would hold progress lines back.
+        "Cache-Control": "no-cache, no-transform",
       },
     });
   });
@@ -7483,23 +7086,6 @@ export async function startControlServer(
     return c.json(await enrichSessionsWithVerification(ctx!, page));
   });
 
-  app.get("/api/sessions/current", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    const id = chat?.getCurrentSessionId();
-    if (!id) return c.json({ error: "No active session" }, 404);
-    const session = await ctx!.kernel.sessions.getSession(id);
-    if (!session) return c.json({ error: "Session not found" }, 404);
-    if (session.archived) {
-      await clearActiveChatSessionIf(id);
-      return c.json({ error: "No active session" }, 404);
-    }
-    if (!canReadSession(currentUser(c), session)) {
-      return c.json({ error: "Forbidden" }, 403);
-    }
-    return c.json(session);
-  });
-
   app.get("/api/sessions/:id", async (c) => {
     const guard = requireKernel(c);
     if (guard) return guard;
@@ -7514,9 +7100,12 @@ export async function startControlServer(
     const sessionId = c.req.param("id");
     const session = await requireReadableSession(c, sessionId);
     if (session instanceof Response) return session;
+    const messageWindow = messageWindowFrom((name) => c.req.query(name));
     const limitParam = c.req.query("limit");
-    const limit = limitParam === "all" ? undefined : Number(limitParam ?? 100);
-    const offset = Number(c.req.query("offset") ?? 0);
+    const limit = messageWindow || limitParam === "all"
+      ? undefined
+      : Number(limitParam ?? 100);
+    const offset = messageWindow ? 0 : Number(c.req.query("offset") ?? 0);
     const pinnedOnly = c.req.query("pinned") === "true";
     const messages = await ctx!.kernel.sessions.getMessages(sessionId, {
       limit,
@@ -7546,13 +7135,39 @@ export async function startControlServer(
       assignedTurnIds.add(message.turnId);
     }
 
-    return c.json(
-      messages.map((message) =>
-        message.turnId && usageMessageIds.has(message.id)
-          ? { ...message, usage: usageByTurnId.get(message.turnId) }
-          : message
-      ),
+    // Usage goes on each turn's last assistant message across the whole
+    // session, so it's placed before a window cuts the list.
+    const withUsage = messages.map((message) =>
+      message.turnId && usageMessageIds.has(message.id)
+        ? { ...message, usage: usageByTurnId.get(message.turnId) }
+        : message
     );
+    const compact = c.req.query("compact") === "1";
+    const shaped = compact
+      ? withUsage.map((message) => ({
+        ...message,
+        toolCalls: compactToolCalls(message.toolCalls),
+      }))
+      : withUsage;
+    if (!messageWindow) return c.json(shaped);
+    const page = pageMessages(shaped, messageWindow);
+    c.header(EARLIER_MESSAGES_HEADER, String(page.earlier));
+    return c.json(page.messages);
+  });
+
+  // One message's tool calls with their results whole: what a compact list
+  // cut short, fetched when the call is opened.
+  app.get("/api/sessions/:id/messages/:messageId/tool-calls", async (c) => {
+    const guard = requireKernel(c);
+    if (guard) return guard;
+    const sessionId = c.req.param("id");
+    const session = await requireReadableSession(c, sessionId);
+    if (session instanceof Response) return session;
+    const messageId = Number(c.req.param("messageId"));
+    const message = (await ctx!.kernel.sessions.getMessages(sessionId))
+      .find((m) => m.id === messageId);
+    if (!message) return c.json({ error: "Message not found" }, 404);
+    return c.json(message.toolCalls ? JSON.parse(message.toolCalls) : []);
   });
 
   app.post("/api/chat/shell", async (c) => {
@@ -7560,18 +7175,19 @@ export async function startControlServer(
     if (guard) return guard;
     const originGuard = requireTrustedRestOrigin(c);
     if (originGuard) return originGuard;
-    const body = await c.req.json<{ command?: unknown }>().catch(() => null);
+    const body = await c.req.json<{ command?: unknown; sessionId?: unknown }>()
+      .catch(() => null);
     const command = typeof body?.command === "string"
       ? body.command.trim()
       : "";
     if (!command) return c.json({ error: "command is required" }, 400);
 
-    const sessionId = chat?.getCurrentSessionId();
+    // The IDE names the session it shows; the chat that owns it runs elsewhere.
+    const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
     if (!sessionId) return c.json({ error: "No active session" }, 400);
     const session = await requireReadableSession(c, sessionId);
     if (session instanceof Response) return session;
     if (session.archived) {
-      await clearActiveChatSessionIf(sessionId);
       return c.json({
         error: "Archived sessions must be unarchived before sending",
       }, 409);
@@ -7602,11 +7218,6 @@ export async function startControlServer(
     if (guard) return guard;
     const session = await requireReadableSession(c, c.req.param("id"));
     if (session instanceof Response) return session;
-    if (busy) {
-      return c.json({
-        error: "Agent is busy. Wait for the current turn to complete.",
-      }, 409);
-    }
     type SummarizeRequest = {
       kind?: string;
       throughMessageId?: number;
@@ -7680,75 +7291,17 @@ export async function startControlServer(
     return c.json(pins);
   });
 
+  // The chat-less forms: the agent process serves these to the IDE, attached
+  // to its live turn. These record the session for any other client.
   app.post("/api/sessions/new", async (c) => {
     const guard = requireKernel(c);
     if (guard) return guard;
-    if (chat) {
-      const result = await chat.clearSession(currentUser(c));
-      return c.json(result);
-    }
     const user = currentUser(c);
     const session = await ctx!.kernel.sessions.createSession(undefined, {
       ownerUserId: user.id,
       userProfile: user,
     });
     return c.json({ newSessionId: session.id });
-  });
-
-  app.post("/api/sessions/clear", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    if (!chat) return c.json({ error: "Chat not initialized" }, 500);
-    if (busy) {
-      return c.json({
-        error: "Agent is busy. Wait for the current turn to complete.",
-      }, 409);
-    }
-    await chat.clearContext();
-    return c.json({ ok: true });
-  });
-
-  app.post("/api/sessions/compact", async (c) => {
-    const guard = requireKernel(c);
-    if (guard) return guard;
-    if (!chat) return c.json({ error: "Chat not initialized" }, 500);
-    const body = await c.req.json<{ summary?: string; defer?: boolean }>()
-      .catch(() => null);
-    if (busy) {
-      if (body?.defer) {
-        const queued = await queueCompactionForCurrentSession(currentUser(c));
-        if (!queued.ok) {
-          if (queued.status === 403) {
-            return c.json({ error: queued.error }, 403);
-          }
-          if (queued.status === 404) {
-            return c.json({ error: queued.error }, 404);
-          }
-          if (queued.status === 409) {
-            return c.json({ error: queued.error }, 409);
-          }
-          return c.json({ error: queued.error }, 400);
-        }
-        return c.json(
-          {
-            queued: true,
-            sessionId: queued.sessionId,
-            coalesced: queued.coalesced,
-          },
-          202,
-        );
-      }
-      return c.json({
-        error: "Agent is busy. Wait for the current turn to complete.",
-      }, 409);
-    }
-    if (!body?.summary) return c.json({ error: "summary is required" }, 400);
-    try {
-      const result = await chat.compactSession(body.summary, currentUser(c));
-      return c.json(result);
-    } catch (err) {
-      return c.json({ error: errorMessage(err) }, 500);
-    }
   });
 
   app.post("/api/sessions/resume", async (c) => {
@@ -7765,29 +7318,11 @@ export async function startControlServer(
         error: "Archived sessions must be unarchived before resuming",
       }, 409);
     }
-    if (!chat) {
-      const session = await ctx!.kernel.sessions.getSession(body.sessionId);
-      if (!session) return c.json({ error: "Session not found" }, 404);
-      await ctx!.kernel.sessions.reopenSession(session.id);
-      return c.json({
-        newSessionId: session.id,
-        session: await ctx!.kernel.sessions.getSession(session.id),
-      });
-    }
-    if (busy) {
-      return c.json({
-        error: "Agent is busy. Wait for the current turn to complete.",
-      }, 409);
-    }
-    try {
-      const result = await chat.resumeSession(body.sessionId, currentUser(c));
-      return c.json({
-        ...result,
-        session: await ctx!.kernel.sessions.getSession(result.newSessionId),
-      });
-    } catch (err) {
-      return c.json({ error: errorMessage(err) }, 500);
-    }
+    await ctx!.kernel.sessions.reopenSession(readable.id);
+    return c.json({
+      newSessionId: readable.id,
+      session: await ctx!.kernel.sessions.getSession(readable.id),
+    });
   });
 
   app.post("/api/sessions/:id/rename", async (c) => {
@@ -7865,14 +7400,9 @@ export async function startControlServer(
       messages.every(isIgnorableEmptySessionMessage);
     if (!hardDeleteAllowed) {
       await ctx!.kernel.sessions.archiveSession(id);
-      await clearActiveChatSessionIf(id);
       return c.json({ ok: true, archived: true, deleted: false });
     }
     await ctx!.kernel.sessions.deleteSession(id);
-    if (id === chat?.getCurrentSessionId()) {
-      chat?.clearCurrentSession();
-      await chat?.clearContext();
-    }
     return c.json({ ok: true, archived: false, deleted: true });
   });
 
@@ -7886,7 +7416,6 @@ export async function startControlServer(
       return c.json({ error: "Forbidden" }, 403);
     }
     await ctx!.kernel.sessions.archiveSession(id);
-    await clearActiveChatSessionIf(id);
     return c.json({
       ok: true,
       session: await ctx!.kernel.sessions.getSession(id),
@@ -8776,63 +8305,11 @@ export async function startControlServer(
             repl.attach(ctx.kernel);
             repl.setCwd(ctx.entry.path);
           }
-          repl.setAgentFn(async (question: string) => {
-            if (!chat) {
-              return "\x1b[91mNo agent connected. Set an API key in Settings.\x1b[0m";
-            }
-            if (busy) {
-              return "\x1b[91mAgent is busy. Wait for current turn to finish.\x1b[0m";
-            }
-            const activeChat = chat;
-            busy = true;
-            beginActiveTurn();
-            try {
-              await ctx!.kernel.changelog.withActor(
-                user.id,
-                () =>
-                  activeChat.sendMessage(
-                    question,
-                    (event) => {
-                      if (event.type === "text_delta" && event.text) {
-                        ws.send(
-                          JSON.stringify({
-                            type: "agent_delta",
-                            text: event.text,
-                          }),
-                        );
-                      } else if (
-                        event.type === "tool_use_start" && event.toolName
-                      ) {
-                        ws.send(
-                          JSON.stringify({
-                            type: "agent_delta",
-                            text:
-                              `\x1b[90m[calling ${event.toolName}...]\x1b[0m\n`,
-                          }),
-                        );
-                      }
-                    },
-                    undefined,
-                    undefined,
-                    undefined,
-                    user,
-                  ),
-              );
-              ws.send(JSON.stringify({ type: "agent_delta", text: "\r\n" }));
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              ws.send(
-                JSON.stringify({
-                  type: "agent_delta",
-                  text: `\x1b[91m${msg}\x1b[0m\r\n`,
-                }),
-              );
-            } finally {
-              await flushPendingCompaction(activeChat);
-              busy = false;
-              finishActiveTurn();
-            }
-            return "";
+          // ask("...") goes to the agent process, which serve doesn't know:
+          // the terminal hands the question back to the IDE to send there.
+          repl.setAgentFn((question: string) => {
+            ws.send(JSON.stringify({ type: "agent_ask", question }));
+            return Promise.resolve("");
           });
           ws.send(JSON.stringify({ type: "ready" }));
         },
@@ -8983,299 +8460,6 @@ export async function startControlServer(
     }),
   );
 
-  function sendToChat(data: unknown): void {
-    try {
-      currentChatWs?.send(JSON.stringify(data));
-    } catch { /* ws closing */ }
-  }
-
-  app.get(
-    "/chat",
-    wsOriginGuard,
-    upgradeWebSocket((c) => {
-      const userPromise = auth.resolveUser(c.req.raw);
-      return {
-        async onOpen(_evt, ws) {
-          const user = await userPromise;
-          if (!user) {
-            ws.close(1008, "Unauthorized");
-            return;
-          }
-          currentChatWs = ws;
-          if (busy && chat) {
-            const state = chat.getInProgressState("compact");
-            if (state) {
-              ws.send(JSON.stringify({
-                type: "agent_status",
-                busy: true,
-                text: state.text,
-                toolCalls: state.toolCalls,
-                segmentText: state.segmentText,
-                segmentToolCalls: state.segmentToolCalls,
-              }));
-            } else {
-              ws.send(JSON.stringify({ type: "agent_status", busy: true }));
-            }
-          }
-        },
-        async onMessage(evt, ws) {
-          const user = await userPromise;
-          if (!user) {
-            ws.close(1008, "Unauthorized");
-            return;
-          }
-          currentChatWs = ws;
-
-          if (!ctx) {
-            ws.send(JSON.stringify({ type: "error", text: "No project open" }));
-            return;
-          }
-          if (!chat) {
-            ws.send(
-              JSON.stringify({
-                type: "error",
-                text:
-                  "AI agent not initialized. Set a valid API key in Settings.",
-              }),
-            );
-            return;
-          }
-
-          let activeTurnStartedForMessage = false;
-          try {
-            const data = JSON.parse(String(evt.data)) as {
-              type: string;
-              sessionId?: string | null;
-              content?: string;
-              attachments?: Array<{ name: string; type: string; data: string }>;
-              rerun?: boolean;
-              changesetId?: string;
-              documentRefs?: Array<{ id: string; versionHash?: string }>;
-            };
-            if (data.type === "cancel") {
-              if (busy && chat) {
-                chat.abort();
-              }
-              return;
-            }
-            if (data.type !== "user_message" || !data.content) {
-              ws.send(
-                JSON.stringify({
-                  type: "error",
-                  text: "Expected { type: 'user_message', content: string }",
-                }),
-              );
-              return;
-            }
-            const activeChat = chat;
-            const content = data.content;
-            if (!activeChat) {
-              ws.send(
-                JSON.stringify({
-                  type: "error",
-                  text:
-                    "AI agent not initialized. Set a valid API key in Settings.",
-                }),
-              );
-              return;
-            }
-            if (busy) {
-              ws.send(
-                JSON.stringify({
-                  type: "error",
-                  text: "Agent is busy. Wait for message_complete.",
-                }),
-              );
-              ctx!.kernel.log.log(
-                "warn",
-                "agent",
-                "Message rejected: agent is busy",
-              );
-              return;
-            }
-            busy = true;
-            beginActiveTurn();
-            activeTurnStartedForMessage = true;
-            if (data.sessionId) {
-              const session = await ctx!.kernel.sessions.getSession(
-                data.sessionId,
-              );
-              if (!session) {
-                busy = false;
-                finishActiveTurn();
-                ws.send(
-                  JSON.stringify({ type: "error", text: "Session not found" }),
-                );
-                return;
-              }
-              if (!canReadSession(user, session)) {
-                busy = false;
-                finishActiveTurn();
-                ws.send(JSON.stringify({ type: "error", text: "Forbidden" }));
-                return;
-              }
-              if (session.archived) {
-                busy = false;
-                finishActiveTurn();
-                ws.send(
-                  JSON.stringify({
-                    type: "error",
-                    text: "Archived sessions must be unarchived before sending",
-                  }),
-                );
-                return;
-              }
-              if (activeChat.getCurrentSessionId() !== data.sessionId) {
-                try {
-                  await activeChat.resumeSession(data.sessionId, user);
-                  sendToChat({
-                    type: "system_message",
-                    text:
-                      "Agent context was realigned with the active visible session before sending.",
-                  });
-                } catch (err) {
-                  busy = false;
-                  finishActiveTurn();
-                  const msg = err instanceof Error ? err.message : String(err);
-                  ws.send(JSON.stringify({ type: "error", text: msg }));
-                  ctx!.kernel.log.log("error", "agent", msg);
-                  return;
-                }
-              }
-            }
-            if (!data.sessionId) {
-              const activeSessionId = activeChat.getCurrentSessionId();
-              if (activeSessionId) {
-                const session = await ctx!.kernel.sessions.getSession(
-                  activeSessionId,
-                );
-                if (
-                  !session || session.archived ||
-                  !canReadSession(user, session)
-                ) {
-                  if (session?.archived) {
-                    await ctx!.kernel.sessions.endSession(activeSessionId);
-                  }
-                  activeChat.clearCurrentSession();
-                  await activeChat.clearContext();
-                }
-              }
-            }
-            if (data.rerun) {
-              await activeChat.clearContext();
-            }
-            telemetry.track("chat_message_sent", {
-              message_has_attachments: (data.attachments?.length ?? 0) > 0,
-              active_project: true,
-              active_changeset: Boolean(data.changesetId),
-              rerun: Boolean(data.rerun),
-            });
-            maybeSyncTelemetry();
-            try {
-              let turnHadChangeset = false;
-              ctx!.kernel.changelog.withActor(
-                user.id,
-                () =>
-                  activeChat.sendMessage(
-                    content,
-                    (event) => {
-                      sendToChat(event);
-                      if (event.type === "turn_usage" && event.usage) {
-                        telemetry.track("agent_turn_completed", {
-                          duration_ms: event.usage.durationMs,
-                          tool_calls_count: event.usage.toolCallsCount,
-                          input_tokens_bucket: bucketTokens(
-                            contextOccupancyTokens(event.usage),
-                          ),
-                          output_tokens_bucket: bucketTokens(
-                            event.usage.outputTokens,
-                          ),
-                          estimated_cost_usd_bucket: bucketCost(
-                            event.usage.costUsd,
-                          ),
-                          model_family: modelFamily(event.usage.model),
-                          completed_with_changeset: turnHadChangeset,
-                        });
-                        maybeSyncTelemetry();
-                      }
-                      if (event.type === "error" && event.text) {
-                        ctx!.kernel.log.log("error", "agent", event.text);
-                        telemetry.track("agent_turn_failed", {
-                          failure_kind: "stream_error",
-                          model_family: "unknown",
-                        });
-                        maybeSyncTelemetry();
-                      }
-                      if (
-                        event.type === "changeset_created" && event.changeset
-                      ) {
-                        turnHadChangeset = true;
-                        const changeset = event.changeset as {
-                          status?: string;
-                          changes?: unknown[];
-                          plan?: unknown;
-                        };
-                        telemetry.track("changeset_created", {
-                          changeset_kind: changeset.plan ? "plan" : "direct",
-                          change_count: Array.isArray(changeset.changes)
-                            ? changeset.changes.length
-                            : 0,
-                        });
-                        maybeSyncTelemetry();
-                      }
-                      if (
-                        event.type === "tool_use_end" && event.toolName &&
-                        isMutationTool(event.toolName)
-                      ) {
-                        sendToChat({ type: "reload_preview" });
-                      }
-                    },
-                    data.attachments,
-                    addAttachmentSourcesToContent(content, data.attachments),
-                    data.changesetId,
-                    user,
-                    data.documentRefs,
-                  ),
-              ).catch((err) => {
-                const msg = err instanceof Error ? err.message : String(err);
-                sendToChat({ type: "error", text: msg });
-                ctx!.kernel.log.log("error", "agent", msg);
-                telemetry.track("agent_turn_failed", {
-                  failure_kind: "send_message_error",
-                  model_family: "unknown",
-                });
-                maybeSyncTelemetry();
-              }).finally(async () => {
-                await flushPendingCompaction(activeChat, sendToChat);
-                busy = false;
-                sendToChat({ type: "agent_status", busy: false });
-                finishActiveTurn();
-              });
-            } catch (err) {
-              busy = false;
-              finishActiveTurn();
-              activeTurnStartedForMessage = false;
-              const msg = err instanceof Error ? err.message : String(err);
-              ws.send(JSON.stringify({ type: "error", text: msg }));
-              ctx!.kernel.log.log("error", "agent", msg);
-              telemetry.track("agent_turn_failed", {
-                failure_kind: "send_message_exception",
-                model_family: "unknown",
-              });
-              maybeSyncTelemetry();
-            }
-          } catch {
-            if (activeTurnStartedForMessage) {
-              busy = false;
-              finishActiveTurn();
-            }
-            ws.send(JSON.stringify({ type: "error", text: "Invalid JSON" }));
-          }
-        },
-      };
-    }),
-  );
-
   // Let upper layers contribute their routes (OpenTide §3.3). Mounted here —
   // after all core routes and their middleware (auth/CORS), before the static
   // catch-all — so contributed routes are auth-guarded and not shadowed.
@@ -9302,7 +8486,10 @@ export async function startControlServer(
 
   const server = Deno.serve(
     { hostname: DEV_SERVER_HOST, port, onListen: () => {} },
-    (req) => app.fetch(req),
+    (req, info) => {
+      if (opts.activity) info.completed.finally(opts.activity.begin());
+      return app.fetch(req);
+    },
   );
   advertiseProject();
 
@@ -9315,8 +8502,8 @@ export async function startControlServer(
     current(): ProjectContext | null {
       return ctx;
     },
-    // Unload the open project the way a switch does: chat, debugger, MCP
-    // sessions and the other project-close listeners first. Shutdown needs
+    // Unload the open project the way a switch does: debugger, MCP sessions
+    // and the other project-close listeners first. Shutdown needs
     // this: an MCP session left open holds its SSE response, and
     // server.shutdown() waits for every response to finish.
     close(): Promise<void> {
@@ -9324,5 +8511,5 @@ export async function startControlServer(
     },
   };
 
-  return { server, chat, setProject };
+  return { server, setProject };
 }

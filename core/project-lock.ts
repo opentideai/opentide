@@ -43,6 +43,8 @@ export interface ProjectLockHolder {
   // server and nothing can attach to it.
   role?: ProjectLockRole;
   controlPort?: number;
+  // Set by a serve that closes the project when asked (core/project-handover.ts).
+  handover?: boolean;
 }
 
 export type ProjectLockRole = "serve" | "mcp";
@@ -50,6 +52,7 @@ export type ProjectLockRole = "serve" | "mcp";
 export interface ProjectLockAdvert {
   role: ProjectLockRole;
   controlPort?: number;
+  handover?: boolean;
 }
 
 export interface ProjectLock {
@@ -89,6 +92,7 @@ export function readLockHolder(projectDir: string): ProjectLockHolder | null {
         ...(typeof parsed.controlPort === "number"
           ? { controlPort: parsed.controlPort }
           : {}),
+        ...(parsed.handover === true ? { handover: true } : {}),
       }
       : null;
   } catch {

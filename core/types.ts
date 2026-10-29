@@ -774,56 +774,6 @@ export type {
   RefreshTargetStatus,
 } from "../shared/lock-refresh.ts";
 
-// Adversarial-refutation result vocabulary, relocated here from refute-agent.ts
-// so the core tool-capability registry can type the runClaimRefutation handler
-// without importing upward into the agent layer (§3.2). refute-agent.ts
-// re-exports them. (The model-call injection type RefuteModelCall stays in
-// refute-agent.ts — it is agent-internal mechanism, not shared vocabulary.)
-export interface RefutationVerdict {
-  refuted: boolean;
-  confidence: "high" | "medium" | "low";
-  counterexample?: string; // concrete failing input/scenario
-  reasoning: string;
-}
-
-export interface ClaimRefutationResult {
-  claimId: string;
-  claimText: string;
-  attempts: RefutationVerdict[];
-  refuted: boolean; // any high-confidence, concrete counterexample
-  counterexample?: string; // the winning counterexample, when refuted
-  summary: string;
-  model: string;
-  provider?: string;
-  costUsd: number;
-  pricingStatus?: "priced" | "unpriced";
-  durationMs: number;
-}
-
-// Independent-criteria result vocabulary, here for the same §3.2 reason as the
-// refutation types above: the core tool-capability registry types the
-// runIndependentCriteria handler without importing upward into agent/.
-// criteria-agent.ts re-exports these; its CriteriaModelCall injection type stays
-// there, being agent-internal mechanism rather than shared vocabulary.
-export interface IndependentCriteriaResult {
-  // Every criterion the independent reviewer proposed, each tagged with the
-  // acceptance criterion that covers it (if any).
-  proposals: ProposedCriterion[];
-  // The subset with no covering acceptance criterion — the gaps worth reporting.
-  uncovered: ProposedCriterion[];
-  // False when the model returned nothing usable. The caller must then record NO
-  // attestation: an empty `proposals` from a broken response would otherwise be
-  // indistinguishable from a genuine "I looked and found no gap", which is the
-  // fail-open bug this field exists to prevent.
-  usable: boolean;
-  summary: string;
-  model: string;
-  provider?: string;
-  costUsd: number;
-  pricingStatus?: string;
-  durationMs: number;
-}
-
 // --- Pricing research (Stage 2B Slice 2, D10) ---
 // The extraction half of agent-driven pricing: a model reads a moving/reshaped
 // source and reports per-model rates. These vocabulary types live here (core) so

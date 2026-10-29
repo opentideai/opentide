@@ -14,7 +14,9 @@ import {
   opentideCwd,
   opentideInvocation,
   type SpawnedServe,
+  spawnedServeArgs,
 } from "./serve-process.ts";
+import { getServeArgs } from "../cli/assembly.ts";
 import { isolateHome } from "./test-home_test.ts";
 
 isolateHome();
@@ -175,4 +177,12 @@ Deno.test("opentideInvocation: from a clone, serve is the opentide task plus ser
     ),
   );
   assert(opentideCwd(clone) !== null);
+});
+
+// The bridge starts serve and nobody stops it, so it has to stop itself.
+Deno.test("a serve the bridge starts exits when idle", () => {
+  const parsed = getServeArgs(3003, spawnedServeArgs("/p", 4321));
+  assertEquals(parsed.projectPath, "/p");
+  assertEquals(parsed.port, 4321);
+  assertEquals(parsed.exitWhenIdle, true);
 });

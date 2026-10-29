@@ -150,6 +150,7 @@ export const MODULE_LAYERS: Record<string, Layer> = {
   "tide/test-composition.ts": "composition",
   // The Tauri desktop entry (its §6 home is desktop/, beside the shell it packages).
   "desktop/desktop-main.ts": "composition",
+  "desktop/bundled-esbuild.ts": "composition",
 };
 
 // Resolve the layer of a repo-relative module path (first segment = folder =

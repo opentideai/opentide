@@ -359,7 +359,10 @@ function describePin(
 }
 
 export async function getPinnedMessageInfos(
-  sessions: SessionManager,
+  sessions: Pick<
+    SessionManager,
+    "getProjectPinnedMessages" | "getPinnedMessages" | "getSession"
+  >,
   scope: "session" | "project",
   sessionId?: string,
 ): Promise<PinnedMessageInfo[]> {

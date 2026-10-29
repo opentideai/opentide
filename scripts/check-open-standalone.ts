@@ -77,8 +77,9 @@ export const CLIENT_PACKAGE_PATHS: readonly string[] = [
   "claude-desktop",
 ];
 
-// Verbs only the closed agent can serve. The open MCP surface must not list them.
-const CLOSED_ONLY_VERBS: readonly string[] = ["refute_claims"];
+// Verbs a client with its own reviewer builds on request_review and
+// submit_review. The server has no handler for them, so no surface lists them.
+const CLOSED_ONLY_VERBS: readonly string[] = ["refute_claims", "run_audit"];
 
 const DENO_RUN_FLAGS = [
   "--allow-net",

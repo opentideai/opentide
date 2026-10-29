@@ -410,6 +410,86 @@ export function gitCommit(
   return gitStatus(projectDir);
 }
 
+// True when `projectDir` is inside any git work tree, its own or a parent's.
+export function insideWorkTree(projectDir: string): boolean {
+  const result = runGit(
+    projectDir,
+    ["rev-parse", "--is-inside-work-tree"],
+    false,
+  );
+  return result.ok && result.stdout.trim() === "true";
+}
+
+const EXCLUDE_PREFIX = ":(exclude)";
+
+function isExcludeSpec(spec: string): boolean {
+  return spec.startsWith(EXCLUDE_PREFIX);
+}
+
+// An exclude spec still worth passing. One naming a path git already ignores
+// is dropped: git won't stage an ignored file anyway, and `git add` exits 1
+// when any pathspec names one, excludes included, after staging the rest.
+function neededExclude(projectDir: string, spec: string): boolean {
+  const path = spec.slice(EXCLUDE_PREFIX.length);
+  return !runGit(projectDir, ["check-ignore", "-q", "--", path], false).ok;
+}
+
+// The include specs that match a file git could stage: tracked, or untracked
+// and not ignored, once `excludes` are applied. Git refuses an explicitly named
+// path that matches nothing, and an empty directory matches nothing.
+function actionableSpecs(
+  projectDir: string,
+  includes: string[],
+  excludes: string[],
+): string[] {
+  return includes.filter((spec) =>
+    runGit(
+      projectDir,
+      [
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        spec,
+        ...excludes,
+      ],
+      false,
+    ).stdout.trim() !== ""
+  );
+}
+
+// Commits exactly `pathspecs` and nothing else, in a repo of its own if the
+// project has none. `git commit --only` builds the commit from HEAD plus these
+// paths, so whatever the user has staged stays staged and out of it. Returns
+// the new commit's sha, or null when the paths hold no changes.
+export function gitCommitPaths(
+  projectDir: string,
+  message: string,
+  pathspecs: string[],
+): string | null {
+  if (!insideWorkTree(projectDir)) runGit(projectDir, ["init", "-q"]);
+  const excludes = pathspecs.filter((spec) =>
+    isExcludeSpec(spec) && neededExclude(projectDir, spec)
+  );
+  const includes = actionableSpecs(
+    projectDir,
+    pathspecs.filter((spec) => !isExcludeSpec(spec)),
+    excludes,
+  );
+  if (includes.length === 0) return null;
+  const specs = [...includes, ...excludes];
+  runGit(projectDir, ["add", "-A", "--", ...specs]);
+  const staged = runGit(
+    projectDir,
+    ["diff", "--cached", "--quiet", "--", ...specs],
+    false,
+  );
+  if (staged.ok) return null;
+  runGit(projectDir, ["commit", "-q", "-m", message, "--only", "--", ...specs]);
+  return runGit(projectDir, ["rev-parse", "HEAD"]).stdout.trim();
+}
+
 export function gitPush(
   projectDir: string,
   name = "origin",

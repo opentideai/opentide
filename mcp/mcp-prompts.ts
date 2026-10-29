@@ -5,11 +5,7 @@
 // These are not how an agent learns the rules — a prompt runs only when someone
 // invokes it. The rules travel in the server instructions (core/agent-guide.ts);
 // the prompts reuse the same sections, so the two cannot drift apart.
-import {
-  costGuide,
-  GUIDE_FAILURE,
-  GUIDE_WORK_LOOP,
-} from "../core/agent-guide.ts";
+import { GUIDE_FAILURE, GUIDE_WORK_LOOP } from "../core/agent-guide.ts";
 import type { CompositionContext } from "../core/composition.ts";
 
 export interface McpPromptArgument {
@@ -44,16 +40,7 @@ Orient in this opentide project before changing anything.
 
 Change nothing in this step.`;
 
-// The cost rules as a trailing section, or nothing when no verb can bill.
-function costSection(composition: CompositionContext): string {
-  const cost = costGuide(composition);
-  return cost ? `\n\n${cost}` : "";
-}
-
-function change(
-  goal: string | undefined,
-  composition: CompositionContext,
-): string {
+function change(goal: string | undefined): string {
   return `\
 Make this change to the app: ${goal?.trim() || "(ask the user what to change)"}
 
@@ -79,15 +66,10 @@ The plan shape create_changeset expects, exactly:
   }
 }
 Use change_class "light" only for a copy or style tweak: it refuses routes,
-schemas, SQL, secrets, env vars, packages and snapshots.${
-    costSection(composition)
-  }`;
+schemas, SQL, secrets, env vars, packages and snapshots.`;
 }
 
-function land(
-  changesetId: string | undefined,
-  composition: CompositionContext,
-): string {
+function land(changesetId: string | undefined): string {
   const target = changesetId?.trim()
     ? `changeset ${changesetId.trim()}`
     : "the active changeset (project_status names it)";
@@ -99,9 +81,11 @@ Finish ${target}.
 3. record_verification_run({changeset_id, status, summary, evidence, claimResults,
    residualRisks}). evidence items need summary and status; claimResults items use
    the criterion's own id as claimId. Statuses are passed, failed, partial or manual.
-4. check_changeset_readiness. Fix every error it lists.
-5. complete_changeset. If stateFlushed is false, say so first and loudly: the work
-   exists only in memory until it is flushed.${costSection(composition)}`;
+4. For each "must" criterion without a fresh refute review: request_review
+   {kind: "refute"}, run the packet in a subagent, then submit_review.
+5. check_changeset_readiness. Fix every error it lists.
+6. complete_changeset. If stateFlushed is false, say so first and loudly: the work
+   exists only in memory until it is flushed.`;
 }
 
 const RECOVER = `\
@@ -141,7 +125,7 @@ export const MCP_PROMPTS: readonly McpPromptDefinition[] = [
       description: "What to change, in plain words.",
       required: true,
     }],
-    render: (args, composition) => change(args.goal, composition),
+    render: (args) => change(args.goal),
   },
   {
     name: "land",
@@ -151,7 +135,7 @@ export const MCP_PROMPTS: readonly McpPromptDefinition[] = [
       name: "changeset_id",
       description: "The changeset to finish. Defaults to the active one.",
     }],
-    render: (args, composition) => land(args.changeset_id, composition),
+    render: (args) => land(args.changeset_id),
   },
   {
     name: "recover",

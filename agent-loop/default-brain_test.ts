@@ -7,6 +7,7 @@ import {
   DefaultChatIntelligence,
 } from "./default-brain.ts";
 import { ChatOrchestrator } from "./chat.ts";
+import { inProcessChatBackend } from "./chat-backend.ts";
 import { FakeModelProvider } from "../core/model-provider-fake.ts";
 import { DEFAULT_MODEL_ID, getAgentModelForRequest } from "../core/config.ts";
 import { Database } from "../core/db.ts";
@@ -162,8 +163,7 @@ Deno.test("ChatOrchestrator runs on the open DefaultChatIntelligence", async () 
   const db = await Database.create({ driver: "pglite" });
   const kernel = new Kernel(db);
   const chat = new ChatOrchestrator(
-    kernel,
-    () => {},
+    inProcessChatBackend(kernel, () => {}),
     new MCPManager(),
     new DefaultChatIntelligence(),
     new FakeModelProvider([]),

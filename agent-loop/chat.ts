@@ -2,21 +2,29 @@
 // changeset-lifecycle driving, session/context assembly). Carries no agent-facing
 // intelligence: the system prompt, model choice, and approval heuristic arrive via an
 // injected ChatIntelligence brain (core/chat-intelligence.ts). Must not import agent/.
-import type { Kernel } from "../core/registries.ts";
+import type { KernelLog } from "../core/registries.ts";
 import type { ChatIntelligence } from "../core/chat-intelligence.ts";
-import { AGENT_TOOLS } from "../core/tools/definitions.ts";
-import { checkToolArgs, formatArgIssues } from "../core/tools/validate-args.ts";
+import { AGENT_TOOLS, CLIENT_REVIEW_TOOLS } from "../core/tools/definitions.ts";
 import {
-  dispatchTool,
-  flushKernelProjectState,
-  isMutationTool,
-  runExportTypeCheck,
-  runKernelTests,
-} from "../core/tools/dispatch.ts";
-import { gitCommit, GitProjectError } from "../core/git.ts";
-import { checkProjectAwareReadiness } from "../core/project-readiness.ts";
-import { computeCoverage } from "../core/coverage.ts";
-import { testApp } from "../core/browser.ts";
+  callWithReviews,
+  REVIEW_PACKET_TOOL_NAMES,
+  type ReviewRun,
+  runClientReviewTool,
+  runOwedGateReviews,
+} from "./reviews.ts";
+import { checkToolArgs, formatArgIssues } from "../core/tools/validate-args.ts";
+import { commitProject } from "./commit-subject.ts";
+import type {
+  ChangelogClient,
+  ChangesetClient,
+  ChatBackend,
+  DocumentClient,
+  GateClient,
+  HistoryClient,
+  ProjectClient,
+  ToolTransport,
+} from "./chat-backend.ts";
+import { isMutationTool, type ToolResult } from "../core/tools/dispatch.ts";
 import type {
   ChangeContext,
   ChangeRecord,
@@ -27,7 +35,6 @@ import type { MCPManager } from "../core/mcp.ts";
 import type {
   ModelUsageRecord,
   RecordModelUsageInput,
-  Result,
   Session,
   StoredMessage,
   TurnUsage,
@@ -83,13 +90,11 @@ import {
   maxOutputTokensFor,
   modelInputCapacity,
 } from "../core/context-window.ts";
-import { summarizeSession } from "../core/session-summary.ts";
 import {
   CACHE_STABLE_PREFIX_MESSAGES,
   CacheCompositionTracer,
   type PendingCacheTrace,
 } from "../core/cache-composition.ts";
-import { getProjectPaths } from "../core/project-manager.ts";
 import {
   decodeBase64,
   encodeBase64,
@@ -125,7 +130,6 @@ import {
   runPlan,
   stepCommitMessage,
 } from "./step-orchestrator.ts";
-import { sortRoutes } from "../core/types.ts";
 
 // Whether an approved plan is worth driving as a per-step loop. Per-step execution
 // exists to give each step a FRESH bounded context, so with one remaining step it
@@ -143,21 +147,17 @@ import {
 } from "../core/work-items.ts";
 import {
   formatPinnedMessagesContext,
-  getPinnedMessageInfos,
+  type PinnedMessageInfo,
 } from "../core/project-context.ts";
 import {
   ATTACHMENT_DOCUMENT_SOURCE,
-  type DocumentRecord,
-  type DocumentRef,
   type DocumentRefRole,
   type DocumentStore,
-  PLAN_DOCUMENT_KIND,
-  PLAN_DOCUMENT_SOURCE,
-  SCREENSHOT_DOCUMENT_KIND,
-  SCREENSHOT_DOCUMENT_SOURCE,
 } from "../core/documents.ts";
 
-const AGENT_TOOLS_BY_NAME = new Map(AGENT_TOOLS.map((t) => [t.name, t]));
+const AGENT_TOOLS_BY_NAME = new Map(
+  [...AGENT_TOOLS, ...CLIENT_REVIEW_TOOLS].map((t) => [t.name, t]),
+);
 
 export interface WireAttachment {
   name: string;
@@ -181,6 +181,19 @@ const CHANGESET_LIFECYCLE_TOOLS: ReadonlySet<string> = new Set([
   "complete_changeset",
   "abandon_changeset",
   "adopt_changeset",
+]);
+
+// Verbs the loop calls itself and never hands its model.
+const LOOP_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "approve_changeset",
+  "get_changeset",
+]);
+
+// A plan the model writes waits for the user's approval, wherever the tools
+// run: over MCP a changeset is otherwise started at once.
+const AWAITS_APPROVAL_TOOLS: ReadonlySet<string> = new Set([
+  "create_changeset",
+  "amend_changeset_plan",
 ]);
 
 // The plan-authoring subset of the changeset tools: their results carry a `_changeset`
@@ -225,7 +238,7 @@ export function selectChatTurnModelRole(opts: {
 
 type SessionNameGenerator = (
   firstUserMessage: string,
-  log: Kernel["log"],
+  log: KernelLog,
   opts?: {
     sessionId?: string | null;
     recordUsage?: (
@@ -335,7 +348,7 @@ export interface ResolvedDocumentMention {
 // not sink the turn). Recording the message ref is the caller's job (it needs the
 // stored message id) via DocumentStore.recordRef against `resolved`.
 export async function resolveDocumentMentions(
-  store: DocumentStore,
+  store: DocumentClient,
   refs: WireDocumentRef[],
 ): Promise<ResolvedDocumentMention> {
   const blocks: UserContentBlock[] = [];
@@ -385,7 +398,7 @@ export async function resolveDocumentMentions(
 // fix; the prompt-injection wiring onto the reload turn is deferred to Slice A.2 (it
 // needs a content-block channel on reload, which the text system-prompt path lacks).
 export async function resolveMessageAttachments(
-  store: DocumentStore,
+  store: DocumentClient & Pick<DocumentStore, "listRefsByTarget">,
   messageId: number | string,
 ): Promise<ResolvedDocumentMention> {
   const refs = await store.listRefsByTarget(
@@ -398,163 +411,6 @@ export async function resolveMessageAttachments(
     versionHash: ref.versionHash ?? undefined,
   }));
   return await resolveDocumentMentions(store, wire);
-}
-
-// Render a changeset's plan as a self-contained markdown document — the durable,
-// human-readable capture of title + summary + steps (D4, Slice B). Deterministic (no
-// timestamps or ids), so an unchanged re-plan content-addresses to the same blob and
-// DocumentStore.update dedupes it to a no-op.
-export function renderChangesetPlanDocument(cs: Changeset): string {
-  const lines = [`# ${cs.title}`];
-  const summary = cs.plan.summary.trim();
-  if (summary) lines.push("", summary);
-  if (cs.plan.steps.length > 0) {
-    lines.push("", "## Steps", "");
-    cs.plan.steps.forEach((step, index) => {
-      lines.push(`${index + 1}. ${step.description}`);
-    });
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-// Capture a changeset's plan as a versioned agent document + a single changeset/plan
-// ref citing the head (D4, minimal — plan §8, Slice B). ADDITIVE provenance: the jsonb
-// `plan` on _genie_changesets stays authoritative; this is a durable, versioned pointer
-// beside it. The plan doc is found by its ORIGIN — metadata.source=PLAN_DOCUMENT_SOURCE
-// + sourceId=<changeset id> — NOT via the changeset/plan ref, so the pass is idempotent
-// per changeset even if a prior ref write failed: a re-plan always rediscovers and
-// updates the SAME doc instead of minting a duplicate. First plan → create() a
-// session-scoped doc stamped with that origin; RE-PLAN (update/amend) → update() the
-// same doc, minting a new immutable version and moving the head (D2) while versions
-// accumulate but the doc does not. recordUniqueRef then re-points the single
-// changeset/plan ref at the new head (atomically), so listRefsByTarget("changeset", id,
-// "plan") always returns exactly one live ref — and a lost ref self-heals on the next
-// capture. Best-effort: returns the store Result (never throws for the store's own
-// errors) so the caller can degrade a provenance-write failure (e.g. PROJECT_REQUIRED
-// with no project loaded) to a debug log without sinking the turn or blocking the
-// changeset lifecycle.
-export async function captureChangesetPlanDocument(
-  store: DocumentStore,
-  cs: Changeset,
-): Promise<Result<DocumentRef>> {
-  const content = renderChangesetPlanDocument(cs);
-  const sessionId = cs.sessionId ?? undefined;
-
-  const existing = await store.findBySource(PLAN_DOCUMENT_SOURCE, cs.id, {
-    sessionId,
-  });
-
-  let doc: DocumentRecord;
-  if (existing) {
-    const updated = await store.update(existing.id, {
-      content,
-      createdBy: "agent",
-    });
-    if (!updated.ok) return updated;
-    doc = updated.data;
-  } else {
-    const created = await store.create({
-      name: `Plan: ${cs.title}`,
-      kind: PLAN_DOCUMENT_KIND,
-      content,
-      scope: "session",
-      sessionId,
-      createdBy: "agent",
-      metadata: {
-        source: PLAN_DOCUMENT_SOURCE,
-        sourceId: cs.id,
-        title: cs.title,
-      },
-    });
-    if (!created.ok) return created;
-    doc = created.data;
-  }
-
-  return await store.recordUniqueRef({
-    documentId: doc.id,
-    refType: "changeset",
-    refId: cs.id,
-    role: "plan",
-    versionHash: doc.currentVersionHash,
-    sessionId,
-  });
-}
-
-// The stable, composite origin key for one screenshot BLOB produced by a tool call (Slice
-// C-rich, SECONDARY). The producing tool-call id is the natural stable origin — but a single
-// tool call can return an ARRAY of images, so the per-image index is composed in to keep
-// each shot a distinct target. Like the run-evidence key, this ONE key is used both as the
-// doc's metadata.sourceId (findBySource rediscovery) AND the ledger ref's refId
-// (listRefsByTarget resolution), so a re-dispatch of the same tool call is a clean per-image
-// no-op rather than a second doc or duplicate ref.
-export function screenshotEvidenceLedgerKey(
-  toolCallId: string,
-  imageIndex: number,
-): string {
-  return `${toolCallId}:image:${imageIndex}`;
-}
-
-// Capture one screenshot PNG blob as a versioned agent image/png document + a single
-// ledger/evidence ref citing the head (plan §8/§11, Slice C-rich — SECONDARY, agent-loop
-// `_images` seam). This is a DIFFERENT seam from the core evidence-item capture: the raw
-// bytes only exist here, in the open loop's tool-result handler, where DocumentStore is
-// already wired as `this.kernel.documents` — so no helper is forced across both. The bytes
-// are stored VERBATIM (DocumentStore.create accepts Uint8Array; content-addressing dedupes
-// identical shots). ADDITIVE provenance, same contract as the item docs: the doc is found by
-// its ORIGIN (metadata.source=SCREENSHOT_DOCUMENT_SOURCE + sourceId=<composite key>), so a
-// re-dispatch rediscovers/updates the SAME doc and recordUniqueRef re-points the single ref
-// at the head. Best-effort: returns the store Result (never throws for the store's own
-// errors) so the caller degrades a provenance-write failure (e.g. PROJECT_REQUIRED with no
-// project loaded) to a debug log without sinking the turn.
-export async function captureScreenshotEvidenceDocument(
-  store: DocumentStore,
-  toolCallId: string,
-  imageIndex: number,
-  png: Uint8Array,
-  sessionId: string | undefined,
-): Promise<Result<DocumentRef>> {
-  const ledgerKey = screenshotEvidenceLedgerKey(toolCallId, imageIndex);
-
-  const existing = await store.findBySource(
-    SCREENSHOT_DOCUMENT_SOURCE,
-    ledgerKey,
-    { sessionId },
-  );
-
-  let doc: DocumentRecord;
-  if (existing) {
-    const updated = await store.update(existing.id, {
-      content: png,
-      createdBy: "agent",
-    });
-    if (!updated.ok) return updated;
-    doc = updated.data;
-  } else {
-    const created = await store.create({
-      name: `Screenshot: ${ledgerKey}`,
-      kind: SCREENSHOT_DOCUMENT_KIND,
-      content: png,
-      scope: "session",
-      sessionId,
-      createdBy: "agent",
-      metadata: {
-        source: SCREENSHOT_DOCUMENT_SOURCE,
-        sourceId: ledgerKey,
-        title: `Screenshot ${ledgerKey}`,
-      },
-    });
-    if (!created.ok) return created;
-    doc = created.data;
-  }
-
-  return await store.recordUniqueRef({
-    documentId: doc.id,
-    refType: "ledger",
-    refId: ledgerKey,
-    role: "evidence",
-    versionHash: doc.currentVersionHash,
-    sessionId,
-  });
 }
 
 function truncateForContext(
@@ -577,6 +433,12 @@ function summarizeChangeRecords(changes: ChangeRecord[], limit = 8): string {
   return listed.join(", ");
 }
 
+function allStepsSettled(cs: Changeset): boolean {
+  return cs.plan.steps.every((s) =>
+    s.status === "done" || s.status === "skipped"
+  );
+}
+
 function summarizeChangesetSteps(cs: Changeset, limit = 4): string {
   const steps = cs.plan.steps.slice(0, limit).map((step) =>
     `[${step.status}] ${truncateForContext(step.description, 180)}`
@@ -585,210 +447,6 @@ function summarizeChangesetSteps(cs: Changeset, limit = 4): string {
     steps.push(`... ${cs.plan.steps.length - steps.length} more step(s)`);
   }
   return steps.join("; ");
-}
-
-function moduleSuffix(module: string | undefined): string {
-  return module ? ` [${module}]` : "";
-}
-
-function summarizeLimited(lines: string[], limit: number): string[] {
-  if (lines.length <= limit) return lines;
-  return [...lines.slice(0, limit), `- ... ${lines.length - limit} more`];
-}
-
-function summarizeRouteSchema(
-  schema: { summary?: string; tags?: string[] } | undefined,
-): string {
-  if (!schema) return " no schema";
-  const parts = ["schema"];
-  if (schema.summary) parts.push(truncateForContext(schema.summary, 80));
-  if (schema.tags?.length) parts.push(`tags=${schema.tags.join(",")}`);
-  return ` ${parts.join("; ")}`;
-}
-
-function summarizeSourceEntry(
-  entry: {
-    name: string;
-    module?: string;
-    purpose?: string;
-    runtimeId?: string;
-    language?: string;
-    returnType?: string;
-  },
-): string {
-  const parts = [`- ${entry.name}${moduleSuffix(entry.module)}`];
-  if (entry.purpose) parts.push(`: ${truncateForContext(entry.purpose, 120)}`);
-  const metadata = [
-    entry.returnType ? `returns ${entry.returnType}` : "",
-    entry.language,
-    entry.runtimeId,
-  ].filter(Boolean).join(", ");
-  if (metadata) parts.push(` (${metadata})`);
-  return parts.join("");
-}
-
-export async function formatCurrentAppMapForContext(
-  kernel: Kernel,
-): Promise<string> {
-  const routes = sortRoutes(kernel.routes.list());
-  const handlers = kernel.handlers.list().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const functions = kernel.functions.list().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const templates = kernel.templates.list().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const assets = kernel.assets.list().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const configs = kernel.configs.list().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const types = kernel.types.serialize().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const tests = kernel.tests.list().toSorted((a, b) =>
-    a.name.localeCompare(b.name)
-  );
-  const modules = kernel.listModules();
-  const schemas = (await kernel.db.listSchemas()).toSorted((a, b) =>
-    a.tableName.localeCompare(b.tableName)
-  );
-  const recentRequests = kernel.requestLog.recent(5);
-
-  const hasAppEntities = routes.length || handlers.length || functions.length ||
-    schemas.length || templates.length || assets.length || configs.length ||
-    types.length || tests.length || modules.length;
-  if (!hasAppEntities) return "";
-
-  const lines = [
-    "Use this current app map before choosing inspection tools. It is metadata, not full source.",
-    "Prefer targeted get_* source tools for entities named here; use query_database only for row data in listed schemas.",
-  ];
-
-  if (modules.length) lines.push(`modules: ${modules.join(", ")}`);
-
-  if (routes.length) {
-    lines.push("routes:");
-    lines.push(
-      ...summarizeLimited(
-        routes.map((r) =>
-          `- ${r.method} ${r.path} -> ${r.handlerName}${
-            moduleSuffix(r.module)
-          };${summarizeRouteSchema(r.schema)}`
-        ),
-        40,
-      ),
-    );
-  }
-
-  if (handlers.length) {
-    lines.push("handlers:");
-    lines.push(...summarizeLimited(handlers.map(summarizeSourceEntry), 50));
-  }
-
-  if (functions.length) {
-    lines.push("functions:");
-    lines.push(...summarizeLimited(functions.map(summarizeSourceEntry), 60));
-  }
-
-  if (schemas.length) {
-    lines.push("schemas:");
-    lines.push(...summarizeLimited(
-      schemas.map((s) => {
-        const cols = s.columns.map((c) =>
-          `${c.name}:${c.type}${c.primaryKey ? " pk" : ""}${
-            c.nullable ? " nullable" : ""
-          }`
-        ).join(", ");
-        return `- ${s.tableName}${moduleSuffix(s.module)} (${cols})`;
-      }),
-      40,
-    ));
-  }
-
-  if (templates.length) {
-    lines.push("templates:");
-    lines.push(
-      ...summarizeLimited(
-        templates.map((t) =>
-          `- ${t.name}${moduleSuffix(t.module)} (${t.content.length} chars)`
-        ),
-        40,
-      ),
-    );
-  }
-
-  if (assets.length) {
-    lines.push("assets:");
-    lines.push(
-      ...summarizeLimited(
-        assets.map((a) =>
-          `- ${a.name}${
-            moduleSuffix(a.module)
-          } (${a.mimeType}, ${a.size} bytes)`
-        ),
-        40,
-      ),
-    );
-  }
-
-  if (configs.length) {
-    lines.push("configs:");
-    lines.push(
-      ...summarizeLimited(
-        configs.map((c) =>
-          `- ${c.name}${moduleSuffix(c.module)} (${c.type})${
-            c.description ? `: ${truncateForContext(c.description, 100)}` : ""
-          }`
-        ),
-        40,
-      ),
-    );
-  }
-
-  if (types.length) {
-    lines.push("types:");
-    lines.push(
-      ...summarizeLimited(
-        types.map((t) =>
-          `- ${t.name}${moduleSuffix(t.module)} (${t.fields.length} fields)${
-            t.description ? `: ${truncateForContext(t.description, 100)}` : ""
-          }`
-        ),
-        40,
-      ),
-    );
-  }
-
-  if (tests.length) {
-    lines.push("tests:");
-    lines.push(
-      ...summarizeLimited(
-        tests.map((t) =>
-          `- ${t.name}${moduleSuffix(t.module)}${
-            t.lastResult
-              ? ` (${t.lastResult.passed ? "passed" : "failed"})`
-              : ""
-          }`
-        ),
-        50,
-      ),
-    );
-  }
-
-  if (recentRequests.length) {
-    lines.push("recent requests:");
-    lines.push(
-      ...recentRequests.map((r) =>
-        `- ${r.method} ${r.path} -> ${r.status} (${Math.round(r.durationMs)}ms)`
-      ),
-    );
-  }
-
-  return lines.join("\n");
 }
 
 export function formatProjectHistoryForContext(
@@ -1306,10 +964,15 @@ export interface TurnResult {
 }
 
 export class ChatOrchestrator implements ChatRuntime {
-  private kernel: Kernel;
-  private sessions: SessionManager;
+  private tools: ToolTransport;
+  private changesets: ChangesetClient;
+  private changelog: ChangelogClient;
+  private documents: DocumentClient;
+  private gates: GateClient;
+  private project: ProjectClient;
+  private log: KernelLog;
+  private sessions: HistoryClient;
   private mcpManager: MCPManager;
-  private rebuild: () => void;
   private brain: ChatIntelligence;
   private model: string;
   // The injected transport seam (multi-model harness). The composition root injects a
@@ -1388,8 +1051,7 @@ export class ChatOrchestrator implements ChatRuntime {
   private sessionNameGenerator: SessionNameGenerator;
 
   constructor(
-    kernel: Kernel,
-    rebuild: () => void,
+    backend: ChatBackend,
     mcpManager: MCPManager,
     brain: ChatIntelligence,
     // The transport seam, injected by the composition root. Drives every turn; the
@@ -1397,10 +1059,15 @@ export class ChatOrchestrator implements ChatRuntime {
     provider: ModelProvider,
     sessionNameGenerator: SessionNameGenerator = SessionManager.generateName,
   ) {
-    this.kernel = kernel;
-    this.sessions = kernel.sessions;
+    this.tools = backend.tools;
+    this.changesets = backend.changesets;
+    this.changelog = backend.changelog;
+    this.documents = backend.documents;
+    this.gates = backend.gates;
+    this.project = backend.project;
+    this.log = backend.log;
+    this.sessions = backend.history;
     this.mcpManager = mcpManager;
-    this.rebuild = rebuild;
     this.brain = brain;
     this.provider = provider;
     this.sessionNameGenerator = sessionNameGenerator;
@@ -1459,9 +1126,8 @@ export class ChatOrchestrator implements ChatRuntime {
       this.cacheTracer = null;
       return null;
     }
-    const projectDir = this.kernel.projectDir;
-    if (!projectDir) return null;
-    const historyDir = getProjectPaths(projectDir).historyDir;
+    const historyDir = this.project.historyDir();
+    if (!historyDir) return null;
     if (!this.cacheTracer || this.cacheTracerDir !== historyDir) {
       this.cacheTracer = new CacheCompositionTracer(historyDir);
       this.cacheTracerDir = historyDir;
@@ -1470,18 +1136,11 @@ export class ChatOrchestrator implements ChatRuntime {
   }
 
   private async getPromptOpts(sessionId?: string | null) {
-    const skills = await this.kernel.skills.listEnabled();
-    const secrets = this.kernel.secrets.list().map((s) => ({
-      key: s.key,
-      description: s.description,
-      status: this.kernel.secrets.status(s.key),
-    }));
+    const facts = await this.project.promptFacts();
     return {
-      customInstructions:
-        (this.kernel.configs.get("_genie_custom_instructions") as string) ??
-          undefined,
-      skills: skills.map((s) => ({ name: s.name, prompt: s.prompt })),
-      secrets,
+      customInstructions: facts.customInstructions,
+      skills: facts.skills.map((s) => ({ name: s.name, prompt: s.prompt })),
+      secrets: facts.secrets,
       residentDocuments: await this.getResidentDocuments(sessionId),
     };
   }
@@ -1495,11 +1154,11 @@ export class ChatOrchestrator implements ChatRuntime {
     sessionId?: string | null,
   ): Promise<Array<{ name: string; versionHash: string; content: string }>> {
     if (!sessionId) return [];
-    const ids = await this.kernel.documents.listPinned(sessionId);
+    const ids = await this.documents.listPinned(sessionId);
     const out: Array<{ name: string; versionHash: string; content: string }> =
       [];
     for (const id of ids) {
-      const read = await this.kernel.documents.readContent(id);
+      const read = await this.documents.readContent(id);
       if (read.ok) {
         out.push({
           name: read.data.document.name,
@@ -1599,7 +1258,7 @@ export class ChatOrchestrator implements ChatRuntime {
       contextParts.push(`## Current Focus\n${session.focus}`);
     }
     const [sessionPins, projectPins] = await Promise.all([
-      getPinnedMessageInfos(this.sessions, "session", sessionId),
+      this.sessions.pinnedMessages("session", sessionId),
       this.getReadableProjectPins(opts?.user),
     ]);
     if (projectPins.length > 0) {
@@ -1681,8 +1340,8 @@ export class ChatOrchestrator implements ChatRuntime {
 
   private async getReadableProjectPins(
     user?: CurrentUser,
-  ): Promise<Awaited<ReturnType<typeof getPinnedMessageInfos>>> {
-    const pins = await getPinnedMessageInfos(this.sessions, "project");
+  ): Promise<PinnedMessageInfo[]> {
+    const pins = await this.sessions.pinnedMessages("project");
     const effectiveUser = user ?? localUser();
     const out = [];
     for (const pin of pins) {
@@ -1693,13 +1352,13 @@ export class ChatOrchestrator implements ChatRuntime {
   }
 
   private async getActiveChangesetForTurn(): Promise<Changeset | null> {
-    const scoped = await this.kernel.changesets.getActive(
+    const scoped = await this.changesets.getActive(
       this.currentSessionId ?? undefined,
     );
     if (scoped) return scoped;
 
     // Compatibility for changesets created before session IDs were recorded.
-    const global = await this.kernel.changesets.getActive();
+    const global = await this.changesets.getActive();
     return global?.sessionId == null ? global : null;
   }
 
@@ -1708,7 +1367,7 @@ export class ChatOrchestrator implements ChatRuntime {
   ): Promise<Changeset | null> {
     if (!changesetId) return await this.getActiveChangesetForTurn();
 
-    const cs = await this.kernel.changesets.get(changesetId);
+    const cs = await this.changesets.get(changesetId);
     if (!cs) throw new Error(`Changeset "${changesetId}" not found`);
     if (
       this.currentSessionId && cs.sessionId &&
@@ -1756,7 +1415,7 @@ export class ChatOrchestrator implements ChatRuntime {
     }
     if (cs.status === "approved") {
       return {
-        changeset: await this.kernel.changesets.startWork(cs.id),
+        changeset: await this.changesets.approve(cs.id),
         approvalStarted: false,
       };
     }
@@ -1764,9 +1423,8 @@ export class ChatOrchestrator implements ChatRuntime {
       cs.status === "planning" &&
       (approvalDecision ?? await this.isApprovalForChangeset(content, cs))
     ) {
-      await this.kernel.changesets.approve(cs.id);
       return {
-        changeset: await this.kernel.changesets.startWork(cs.id),
+        changeset: await this.changesets.approve(cs.id),
         approvalStarted: true,
       };
     }
@@ -1797,11 +1455,87 @@ export class ChatOrchestrator implements ChatRuntime {
   // tool set the client-side loop exposes on every turn (multi-model harness).
   private buildNeutralTools(): NeutralTool[] {
     const mcpTools = this.mcpManager.getCustomTools();
-    const remainingMcpSlots = Math.max(0, MAX_AGENT_TOOLS - AGENT_TOOLS.length);
+    const ownTools = this.ownTools();
+    const remainingMcpSlots = Math.max(0, MAX_AGENT_TOOLS - ownTools.length);
     return toNeutralTools([
-      ...AGENT_TOOLS,
+      ...ownTools,
       ...mcpTools.slice(0, remainingMcpSlots),
     ]);
+  }
+
+  // The loop's own verbs stay out of its model's tools: it approves plans on
+  // the user's word and reads changesets for itself. A brain with a reviewer
+  // runs reviews itself too: its model gets refute_claims and run_audit
+  // instead of the packet pair.
+  private ownTools() {
+    const tools = AGENT_TOOLS.filter((t) => !LOOP_TOOL_NAMES.has(t.name));
+    if (!this.brain.reviewer) return tools;
+    return [
+      ...tools.filter((t) => !REVIEW_PACKET_TOOL_NAMES.has(t.name)),
+      ...CLIENT_REVIEW_TOOLS,
+    ];
+  }
+
+  // The reviews the completion gate reads, before the loop completes a
+  // changeset itself (end of turn, or the per-step driver), as before the
+  // model's own complete_changeset. Returns the changeset as it then stands.
+  private async runOwedReviews(
+    changeContext: ChangeContext,
+    changeset: Changeset,
+  ): Promise<Changeset> {
+    const run = this.reviewRun(changeContext);
+    if (!run) return changeset;
+    try {
+      await runOwedGateReviews(run, changeset);
+      return await this.changesets.get(changeset.id) ?? changeset;
+    } catch (err) {
+      this.log.log(
+        "warn",
+        "system",
+        `Reviews before completing "${changeset.id}" failed: ${
+          errorMessage(err)
+        }`,
+      );
+      return changeset;
+    }
+  }
+
+  // An audit outside a turn, as the IDE's Audits panel asks for one: the same
+  // packet round trip as the model's run_audit.
+  async runAudit(category: string): Promise<ToolResult> {
+    const run = this.reviewRun({});
+    if (!run) {
+      return {
+        ok: false,
+        error: {
+          code: "NO_REVIEWER",
+          message: "This agent's brain has no reviewer to run audits with.",
+        },
+      };
+    }
+    return await runClientReviewTool(run, "run_audit", { category });
+  }
+
+  // The IDE's commit button: the typed message, or one the utility model
+  // writes from the project's status.
+  async commit(message?: string): Promise<ToolResult> {
+    return await commitProject(this.tools, message, {
+      context: this.gateContext(),
+      recordUsage: (input) => this.sessions.recordModelUsage(input),
+    });
+  }
+
+  private reviewRun(changeContext: ChangeContext): ReviewRun | null {
+    const reviewer = this.brain.reviewer;
+    if (!reviewer) return null;
+    return {
+      tools: this.tools,
+      changesets: this.changesets,
+      reviewer,
+      context: changeContext,
+      recordUsage: (input) => this.sessions.recordModelUsage(input),
+      warn: (message) => this.log.log("warn", "system", message),
+    };
   }
 
   // The per-turn system prompt: the brain's base prompt (skills, secrets, custom
@@ -1885,7 +1619,7 @@ export class ChatOrchestrator implements ChatRuntime {
     // attachments are). The resolved versions are threaded to runTurn to record a
     // message-role mention ref once the durable message is stored.
     const mention = documentRefs?.length
-      ? await resolveDocumentMentions(this.kernel.documents, documentRefs)
+      ? await resolveDocumentMentions(this.documents, documentRefs)
       : { blocks: [], resolved: [] };
 
     // The array is the memory (D2), so the user message is NOT re-wrapped in reconstructed
@@ -2049,7 +1783,7 @@ export class ChatOrchestrator implements ChatRuntime {
       );
       if (approvalStarted && activeWorkCs) {
         try {
-          const updated = await this.kernel.changesets.setApprovalMessageId(
+          const updated = await this.changesets.setApprovalMessageId(
             activeWorkCs.id,
             userMsg.id,
           );
@@ -2512,8 +2246,6 @@ export class ChatOrchestrator implements ChatRuntime {
           ) {
             changesetNeedsApproval = true;
           }
-          // Screenshot evidence capture (G6) for a tool result carrying image bytes.
-          await this.captureLocalScreenshots(tu.id, result);
           // Wire payload: strip the loop-private side channels (`_changeset` is a
           // verbatim duplicate of `data`, `_changesetEvent` is a routing tag) that the
           // IDE-facing `visibleResult` above still needs. Filter the raw `result`, NOT
@@ -2749,6 +2481,15 @@ export class ChatOrchestrator implements ChatRuntime {
         };
       }
     }
+    if (LOOP_TOOL_NAMES.has(tu.name)) {
+      return {
+        ok: false,
+        error: {
+          code: "UNKNOWN_TOOL",
+          message: `Unknown tool: ${tu.name}`,
+        },
+      };
+    }
     try {
       const toolInput = tu.input as Record<string, unknown>;
       if (
@@ -2778,13 +2519,14 @@ export class ChatOrchestrator implements ChatRuntime {
           },
         };
       }
-      return await dispatchTool(
-        tu.name,
-        checked.args,
-        this.kernel,
-        this.rebuild,
-        { ...changeContext, toolCallId: tu.id },
-      );
+      const callContext = { ...changeContext, toolCallId: tu.id };
+      const args = AWAITS_APPROVAL_TOOLS.has(tu.name)
+        ? { ...checked.args, await_approval: true }
+        : checked.args;
+      const run = this.reviewRun(callContext);
+      return run
+        ? await callWithReviews(run, tu.name, args)
+        : await this.tools.callTool(tu.name, args, callContext);
     } catch (err) {
       return {
         ok: false,
@@ -2845,7 +2587,7 @@ export class ChatOrchestrator implements ChatRuntime {
     if (!isMutationTool(toolName)) return;
     if ((result as Record<string, unknown>)?.ok === false) return;
     try {
-      const records = await this.kernel.changelog.list({ turnId });
+      const records = await this.changelog.list({ turnId });
       const change = records.find((r) => r.context?.toolCallId === toolCallId);
       if (!change) return;
       await flush();
@@ -2856,7 +2598,7 @@ export class ChatOrchestrator implements ChatRuntime {
         content: encodeWorkItemMessage(workItem),
         turnId,
       });
-      const updatedChange = await this.kernel.changelog.updateWorkblockMetadata(
+      const updatedChange = await this.changelog.updateWorkblockMetadata(
         change.id,
         {
           rationale: workItem.rationale.why,
@@ -2866,11 +2608,11 @@ export class ChatOrchestrator implements ChatRuntime {
       ) ?? change;
       workItem.change = updatedChange;
       if (change.changesetId) {
-        await this.kernel.changesets.addWorkMessageId(
+        await this.changesets.addWorkMessageId(
           change.changesetId,
           stored.id,
         ).catch(() => {});
-        const updated = await this.kernel.changesets.get(change.changesetId);
+        const updated = await this.changesets.get(change.changesetId);
         if (updated) {
           onEvent?.({ type: "changeset_updated", changeset: updated });
         }
@@ -2885,56 +2627,12 @@ export class ChatOrchestrator implements ChatRuntime {
     }
   }
 
-  // Capture each screenshot PNG a tool result carries (`_images`) as a durable,
-  // versioned image/png document + one ledger/evidence ref (Slice C-rich, Stage 3d —
-  // closes gap G6's screenshot half for the local loop). The Managed path does this
-  // inline while building the model's image content blocks; the local loop feeds the
-  // raw result to the provider adapter, so the capture is factored out here and driven
-  // from the local tool loop. Best-effort — a provenance-persistence failure never
-  // alters the turn (each image is guarded independently).
-  private async captureLocalScreenshots(
-    toolCallId: string,
-    result: unknown,
-  ): Promise<void> {
-    const images = (result as Record<string, unknown> | undefined)?._images as
-      | Array<{ png: Uint8Array }>
-      | undefined;
-    if (!images?.length) return;
-    for (let i = 0; i < images.length; i++) {
-      try {
-        const captured = await captureScreenshotEvidenceDocument(
-          this.kernel.documents,
-          toolCallId,
-          i,
-          images[i]!.png,
-          this.currentSessionId ?? undefined,
-        );
-        if (!captured.ok) {
-          this.kernel.log.log(
-            "debug",
-            "agent",
-            `Screenshot for tool call "${toolCallId}" not captured as a ` +
-              `document: ${captured.error.code} (${captured.error.message})`,
-          );
-        }
-      } catch (err) {
-        this.kernel.log.log(
-          "warn",
-          "agent",
-          `Capturing screenshot for tool call "${toolCallId}" failed: ${
-            errorMessage(err)
-          }`,
-        );
-      }
-    }
-  }
-
   // Handle the changeset lifecycle event a plan/changeset tool's result carries, mirroring
   // runTurn's inline changeset block (Stage 3d — closes gap G6's inline half for the local
   // loop). For a plan tool it flushes the pending assistant segment to obtain a message id,
   // anchors that id onto the changeset (addPlanMessageId), rewrites the tool result to carry
-  // the anchored changeset, then emits the changeset lifecycle event, tracks the active
-  // changesetId on the change context, and captures the plan document (best-effort). Returns
+  // the anchored changeset, then emits the changeset lifecycle event and tracks the active
+  // changesetId on the change context. Tool dispatch captures the plan document. Returns
   // whether the turn should pause for approval (a freshly created changeset or an amended
   // plan). `flush` persists the caller's pending assistant segment and returns its message id.
   private async handleLocalChangesetEvent(opts: {
@@ -2953,7 +2651,7 @@ export class ChatOrchestrator implements ChatRuntime {
     const csId = (changeset as { id?: unknown } | undefined)?.id;
     if (planTool && messageId !== null && typeof csId === "string") {
       try {
-        changeset = await this.kernel.changesets.addPlanMessageId(
+        changeset = await this.changesets.addPlanMessageId(
           csId,
           messageId,
         );
@@ -2985,33 +2683,6 @@ export class ChatOrchestrator implements ChatRuntime {
       changeContext.changesetId === cs.id
     ) {
       delete changeContext.changesetId;
-    }
-    if (planTool) {
-      const planCs = changeset as Changeset | undefined;
-      if (planCs?.id) {
-        try {
-          const captured = await captureChangesetPlanDocument(
-            this.kernel.documents,
-            planCs,
-          );
-          if (!captured.ok) {
-            this.kernel.log.log(
-              "debug",
-              "agent",
-              `Changeset "${planCs.id}" plan not captured as a document: ` +
-                `${captured.error.code} (${captured.error.message})`,
-            );
-          }
-        } catch (err) {
-          this.kernel.log.log(
-            "warn",
-            "agent",
-            `Capturing changeset "${planCs.id}" plan failed: ${
-              errorMessage(err)
-            }`,
-          );
-        }
-      }
     }
     const wouldPause = toolResult._changesetEvent === "changeset_created" ||
       call.name === "amend_changeset_plan";
@@ -3051,19 +2722,16 @@ export class ChatOrchestrator implements ChatRuntime {
     if (cls?.effective !== "light" || cls.escalated) return false;
     if (getKernelSettings().proportionalVerification === "never") return false;
     try {
-      await this.kernel.changesets.approve(changeset.id);
-      const started = await this.kernel.changesets.startWork(changeset.id);
-      // Record that the kernel approved this, and WHY. `approvalMessageId` is left
+      // The light lane stamps the class auto-approved. `approvalMessageId` is left
       // null on purpose — a kernel auto-approval must never be recorded as a human one.
-      const stamped = await this.kernel.changesets.recordChangeClass(
-        started.id,
-        { ...cls, autoApproved: true },
-      );
+      const stamped = await this.changesets.approve(changeset.id, {
+        lightLane: true,
+      });
       changeContext.changesetId = stamped.id;
       onEvent?.({ type: "changeset_updated", changeset: stamped });
       return true;
     } catch (err) {
-      this.kernel.log.log(
+      this.log.log(
         "warn",
         "agent",
         `Auto-approving light changeset "${changeset.id}" failed; falling back ` +
@@ -3096,30 +2764,24 @@ export class ChatOrchestrator implements ChatRuntime {
     );
     if (builderToolTypes.size === 0) return;
     try {
-      const cs = await this.kernel.changesets.get(changeContext.changesetId);
+      const cs = await this.changesets.get(changeContext.changesetId);
       if (!cs || cs.status !== "in_progress") return;
       const pending = cs.plan.steps.filter((s) => s.status === "pending");
       const toAdvance = Math.min(builderToolTypes.size, pending.length);
       let updated = cs;
       for (let i = 0; i < toAdvance; i++) {
-        updated = await this.kernel.changesets.updateStep(
+        updated = await this.changesets.updateStep(
           cs.id,
           pending[i]!.id,
           "done",
         );
       }
       onEvent?.({ type: "changeset_updated", changeset: updated });
-      if (
-        updated.plan.steps.every((s) =>
-          s.status === "done" || s.status === "skipped"
-        ) && (await checkProjectAwareReadiness(this.kernel, updated)).passed
-      ) {
-        const completed = await this.kernel.changesets.complete(updated.id);
-        const aggregated = await this.kernel.changesets.aggregate(
-          completed.id,
-          this.kernel.sessions,
-          this.kernel.changelog,
-        );
+      if (!allStepsSettled(updated)) return;
+      updated = await this.runOwedReviews(changeContext, updated);
+      if ((await this.changesets.readiness(updated)).passed) {
+        const completed = await this.changesets.complete(updated.id);
+        const aggregated = await this.changesets.aggregate(completed.id);
         onEvent?.({ type: "changeset_completed", changeset: aggregated });
       }
     } catch {
@@ -3141,7 +2803,7 @@ export class ChatOrchestrator implements ChatRuntime {
       for (const segment of segments) {
         if (segment.toolCalls.length === 0) continue;
         try {
-          const updated = await this.kernel.changesets.addWorkMessageId(
+          const updated = await this.changesets.addWorkMessageId(
             changeContext.changesetId,
             segment.messageId,
           );
@@ -3168,7 +2830,7 @@ export class ChatOrchestrator implements ChatRuntime {
       }
       for (const id of planChangesetIds) {
         try {
-          const updated = await this.kernel.changesets.addPlanMessageId(
+          const updated = await this.changesets.addPlanMessageId(
             id,
             segment.messageId,
           );
@@ -3191,21 +2853,16 @@ export class ChatOrchestrator implements ChatRuntime {
   ): Promise<void> {
     if (!changeContext.changesetId) return;
     try {
-      let cs = await this.kernel.changesets.get(changeContext.changesetId);
-      if (
-        cs?.status === "in_progress" &&
-        cs.plan.steps.every((s) =>
-          s.status === "done" || s.status === "skipped"
-        ) &&
-        (await checkProjectAwareReadiness(this.kernel, cs)).passed
-      ) {
-        cs = await this.kernel.changesets.complete(cs.id);
+      let cs = await this.changesets.get(changeContext.changesetId);
+      if (cs?.status === "in_progress" && allStepsSettled(cs)) {
+        cs = await this.runOwedReviews(changeContext, cs);
+        if ((await this.changesets.readiness(cs)).passed) {
+          cs = await this.changesets.complete(cs.id);
+        }
       }
       if (cs?.status === "completed") {
-        const updated = await this.kernel.changesets.aggregate(
+        const updated = await this.changesets.aggregate(
           changeContext.changesetId,
-          this.kernel.sessions,
-          this.kernel.changelog,
         );
         onEvent?.({ type: "changeset_completed", changeset: updated });
       }
@@ -3247,7 +2904,7 @@ export class ChatOrchestrator implements ChatRuntime {
         messageId: userMsg.id,
       });
       try {
-        const updated = await this.kernel.changesets.setApprovalMessageId(
+        const updated = await this.changesets.setApprovalMessageId(
           activeWorkCs.id,
           userMsg.id,
         );
@@ -3270,22 +2927,28 @@ export class ChatOrchestrator implements ChatRuntime {
     // gates, repair, completion — is the SAME open code.
     const fullText = await runPlan(activeWorkCs, {
       runTurn: (o) => this.runStepTurn(o),
-      changesets: this.kernel.changesets,
-      sessions: this.kernel.sessions,
-      changelog: this.kernel.changelog,
+      changesets: this.changesets,
       brain: this.brain,
       onEvent: stepEvents,
       isCancelled: () => this.cancelledFlag,
       startFreshStepSession: () => this.startFreshStepSession(),
-      checkReadiness: (changeset) =>
-        checkProjectAwareReadiness(this.kernel, changeset),
+      checkReadiness: (changeset) => this.changesets.readiness(changeset),
+      beforeCompletion: async (changeset) => {
+        await this.runOwedReviews({
+          ...(this.currentSessionId
+            ? { sessionId: this.currentSessionId }
+            : {}),
+          changesetId: changeset.id,
+        }, changeset);
+      },
       gates: {
         checkExportTypes: () => this.gateExportTypes(),
         runTests: () => this.gateTests(),
         checkCoverage: (created) => this.gateCoverage(created),
         checkBrowser: () => this.gateBrowser(),
       },
-      commitStep: (step, stepIndex) => this.commitStep(step, stepIndex),
+      commitStep: (step, stepIndex) =>
+        this.commitStep(step, stepIndex, activeWorkCs.id),
     });
 
     this.inProgressBusy = false;
@@ -3337,8 +3000,13 @@ export class ChatOrchestrator implements ChatRuntime {
   // summary/issues into the diagnostics that seed a repair sub-turn. They live here (not
   // in the open orchestrator) because the executors are kernel-side and must be injected,
   // keeping step-orchestrator.ts free of any core/tools import.
+  // The gates' context: the session they ran for.
+  private gateContext(): ChangeContext {
+    return this.currentSessionId ? { sessionId: this.currentSessionId } : {};
+  }
+
   private async gateExportTypes(): Promise<GateOutcome> {
-    const result = await runExportTypeCheck(this.kernel);
+    const result = await this.gates.checkExportTypes(this.gateContext());
     if (!result.ok) {
       return {
         passed: false,
@@ -3356,7 +3024,7 @@ export class ChatOrchestrator implements ChatRuntime {
   }
 
   private async gateTests(): Promise<GateOutcome> {
-    const result = await runKernelTests(this.kernel);
+    const result = await this.gates.runTests(this.gateContext());
     if (!result.ok) {
       return {
         passed: false,
@@ -3385,7 +3053,7 @@ export class ChatOrchestrator implements ChatRuntime {
   // no test surfaces as its untested handler — routes need no separate key here.
   private async gateCoverage(createdEntities: string[]): Promise<GateOutcome> {
     if (createdEntities.length === 0) return { passed: true, diagnostics: "" };
-    const report = await computeCoverage(this.kernel);
+    const report = await this.gates.coverage(this.gateContext());
     const untested = new Set(report.untested);
     const missing = createdEntities.filter((key) => untested.has(key));
     if (missing.length === 0) return { passed: true, diagnostics: "" };
@@ -3407,7 +3075,7 @@ export class ChatOrchestrator implements ChatRuntime {
     for (let attempt = 0; attempt < BROWSER_GATE_ATTEMPTS; attempt++) {
       let pageErrors: string[];
       try {
-        const result = await testApp(this.kernel.appPort, "/", []);
+        const result = await this.gates.loadApp("/", this.gateContext());
         pageErrors = result.pageErrors;
       } catch (err) {
         return {
@@ -3437,43 +3105,38 @@ export class ChatOrchestrator implements ChatRuntime {
   // in the open orchestrator) because git is kernel-side and must be injected, keeping
   // step-orchestrator.ts free of any core/git.ts import. Fully guarded — git is a
   // checkpoint, never a step-breaker (§7 risk #4) — so it never rethrows into the loop:
-  //   • no project dir loaded → no-op (a BYO-key / no-project run simply has no checkpoints);
-  //   • NOTHING_TO_COMMIT (schema-only steps with no file delta) → swallowed silently;
-  //   • any other GitProjectError (or unexpected error) → logged and swallowed.
-  // Mirrors the git_commit tool's call shape (core/tools/dispatch.ts): the flush persists
-  // in-memory project state to disk before staging so the commit captures the step's work.
-  private commitStep(step: PlanStep, stepIndex: number): Promise<void> {
-    const projectDir = this.kernel.projectDir;
-    if (!projectDir) return Promise.resolve();
+  //   • no project dir, commits turned off, or nothing changed → no-op;
+  //   • any git failure → logged and swallowed.
+  // It commits what the landing commit does (core/landing-commit.ts): OpenTide's paths
+  // and the files this changeset wrote, never the user's other dirty or staged files.
+  private async commitStep(
+    step: PlanStep,
+    stepIndex: number,
+    changesetId: string,
+  ): Promise<void> {
     const message = stepCommitMessage(step, stepIndex);
     try {
-      gitCommit(
-        projectDir,
-        message,
-        () => flushKernelProjectState(this.kernel),
-      );
-      this.kernel.log.log("info", "agent", `Checkpoint committed: ${message}`);
-    } catch (err) {
-      if (err instanceof GitProjectError && err.code === "NOTHING_TO_COMMIT") {
-        // Schema-only / no-delta step: nothing to checkpoint. Expected, not a failure.
-        this.kernel.log.log(
+      if (!(await this.project.commit(message, changesetId))) {
+        // No project, commits off, or a schema-only step with no file delta.
+        this.log.log(
           "debug",
           "agent",
-          `No file delta to checkpoint for "${message}"; continuing.`,
+          `Nothing to checkpoint for "${message}"; continuing.`,
         );
-      } else {
-        // Any other git failure (not a repository, bad message, git binary missing) must
-        // not break execution — log and continue; the prior commit stays the last good
-        // checkpoint that bounds any rollback.
-        const detail = err instanceof Error ? err.message : String(err);
-        this.kernel.log.log(
-          "warn",
-          "agent",
-          `Step checkpoint commit failed for "${message}": ${detail}`,
-        );
+        return;
       }
+      this.log.log("info", "agent", `Checkpoint committed: ${message}`);
+    } catch (err) {
+      // Any git failure (bad message, git binary missing, no identity) must not
+      // break execution — log and continue; the prior commit stays the last
+      // good checkpoint that bounds any rollback.
+      const detail = err instanceof Error ? err.message : String(err);
+      this.log.log(
+        "warn",
+        "agent",
+        `Step checkpoint commit failed for "${message}": ${detail}`,
+      );
     }
-    return Promise.resolve();
   }
 
   // Record one message-role document ref against the stored user message, citing the
@@ -3487,7 +3150,7 @@ export class ChatOrchestrator implements ChatRuntime {
     versionHash: string,
     sessionId: string,
   ): Promise<unknown> {
-    return this.kernel.documents.recordRef({
+    return this.documents.recordRef({
       documentId,
       refType: "message",
       refId: String(messageId),
@@ -3512,7 +3175,7 @@ export class ChatOrchestrator implements ChatRuntime {
     if (!attachments?.length) return;
     for (const att of attachments) {
       try {
-        const created = await this.kernel.documents.create({
+        const created = await this.documents.create({
           name: att.name,
           kind: att.type,
           content: decodeBase64(att.data),
@@ -3522,7 +3185,7 @@ export class ChatOrchestrator implements ChatRuntime {
           metadata: { source: ATTACHMENT_DOCUMENT_SOURCE },
         });
         if (!created.ok) {
-          this.kernel.log.log(
+          this.log.log(
             "debug",
             "agent",
             `Attachment "${att.name}" not persisted as a document: ` +
@@ -3538,7 +3201,7 @@ export class ChatOrchestrator implements ChatRuntime {
           sessionId,
         );
       } catch (err) {
-        this.kernel.log.log(
+        this.log.log(
           "warn",
           "agent",
           `Persisting attachment "${att.name}" failed: ${errorMessage(err)}`,
@@ -3871,7 +3534,7 @@ export class ChatOrchestrator implements ChatRuntime {
     });
     if (plan.edits.length === 0) return;
     applyContextTrim(plan);
-    this.kernel.log.log(
+    this.log.log(
       "info",
       "agent",
       "Dropped settled turns' reasoning while the cache prefix was cold",
@@ -3894,7 +3557,7 @@ export class ChatOrchestrator implements ChatRuntime {
     pressure: ContextPressure,
     extra: Record<string, unknown> = {},
   ): void {
-    this.kernel.log.log(level, "agent", message, {
+    this.log.log(level, "agent", message, {
       metadata: {
         model: pressure.model,
         occupancy: pressure.occupancy,
@@ -4103,7 +3766,7 @@ export class ChatOrchestrator implements ChatRuntime {
 
     // Self-generate the handoff summary (stored) — falling back to any existing
     // summary if the utility model is unavailable, so a compaction still proceeds.
-    const summarized = await summarizeSession(this.kernel, {
+    const summarized = await this.sessions.summarize({
       sessionId: this.currentSessionId,
       kind: "handoff",
       store: true,
@@ -4191,7 +3854,7 @@ export class ChatOrchestrator implements ChatRuntime {
     try {
       const namePromise = this.sessionNameGenerator(
         userMessage,
-        this.kernel.log,
+        this.log,
         {
           sessionId,
           recordUsage: (input) => this.sessions.recordModelUsage(input),
@@ -4199,7 +3862,7 @@ export class ChatOrchestrator implements ChatRuntime {
       );
       void this.finishAutoNameFirstUserMessage(sessionId, namePromise, onEvent);
     } catch (err) {
-      this.kernel.log.log(
+      this.log.log(
         "warn",
         "system",
         `session async auto-name failed: ${errorMessage(err)}`,
@@ -4225,7 +3888,7 @@ export class ChatOrchestrator implements ChatRuntime {
       await this.sessions.renameSession(sessionId, name);
       onEvent?.({ type: "session_renamed", sessionId, sessionName: name });
     } catch (err) {
-      this.kernel.log.log(
+      this.log.log(
         "warn",
         "system",
         `session async auto-name failed: ${errorMessage(err)}`,

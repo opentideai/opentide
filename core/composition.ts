@@ -16,12 +16,8 @@ import type {
   ChangesetStore,
   McpAuditStore,
 } from "./types.ts";
-import type { AuditProvider } from "./audit-provider.ts";
 import type { ProjectInitHook } from "./project-hooks.ts";
-import type {
-  AgentToolHandlers,
-  VerificationToolHandlers,
-} from "./tool-capabilities.ts";
+import type { VerificationToolHandlers } from "./tool-capabilities.ts";
 import type { Kernel } from "./registries.ts";
 import type { DiagnosticEntry } from "./language-service.ts";
 
@@ -99,12 +95,9 @@ export interface CompositionContext {
   auditStoreFactory: AuditStoreFactory | null;
   // The MCP call audit. Null ⇒ kernel.mcpAudit is null and calls go unrecorded.
   mcpAuditStoreFactory: McpAuditStoreFactory | null;
-  // Model-backed audit (agent). Null ⇒ executeAudit returns "not configured".
-  auditProvider: AuditProvider | null;
   // Capability tool handlers. Null ⇒ the verbs that need them throw on dispatch
   // and are hidden from the outbound MCP projection.
   verificationTools: VerificationToolHandlers | null;
-  agentTools: AgentToolHandlers | null;
   // Line-anchored verification diagnostics contributed to the merged stream
   // (core/diagnostics.ts). Null ⇒ no `verify`-sourced diagnostics today.
   verificationDiagnostics: VerificationDiagnosticsProvider | null;
@@ -122,9 +115,7 @@ export function coreOnlyComposition(): CompositionContext {
     changesetStoreFactory: null,
     auditStoreFactory: null,
     mcpAuditStoreFactory: null,
-    auditProvider: null,
     verificationTools: null,
-    agentTools: null,
     verificationDiagnostics: null,
     saveRiskPolicy: null,
     initHooks: [],

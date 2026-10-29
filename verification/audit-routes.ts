@@ -1,9 +1,9 @@
 // @layer verification — audit HTTP routes, mounted into the core app via the
 // route-mount hook (OpenTide §3.3) so the control server no longer imports audit
-// logic. The model-backed run goes through executeAudit → the audit-provider hook.
+// logic. Running an audit takes a model, so it's a client's job (request_review);
+// Tide's agent serves the IDE's POST /api/audits/run.
 import type { Hono } from "hono";
 import type { CoreRouteContext } from "../core/route-mount.ts";
-import { executeAudit } from "./audit-runner.ts";
 import { BUILTIN_AUDIT_CONFIGS } from "./audit-configs.ts";
 import type { AuditCategory } from "../core/types.ts";
 import { BUILTIN_AUDIT_CATEGORIES } from "../core/types.ts";
@@ -57,51 +57,6 @@ export function mountAuditRoutes(app: Hono, core: CoreRouteContext): void {
       }, 404);
     }
     return c.json(result);
-  });
-
-  app.post("/api/audits/run", async (c) => {
-    const guard = core.requireKernel(c);
-    if (guard) return guard;
-    const k = core.kernel();
-    const body = await c.req.json() as {
-      category: string;
-      options?: Record<string, unknown>;
-    };
-    const allCategories = [
-      ...BUILTIN_AUDIT_CATEGORIES,
-      ...k.customAudits.list().map((a) => a.name),
-    ];
-    if (!allCategories.includes(body.category)) {
-      return c.json({
-        error: true,
-        code: "INVALID_CATEGORY",
-        message: `Unknown audit category "${body.category}"`,
-      }, 400);
-    }
-    const started = performance.now();
-    core.track("audit_run_started", { category: body.category });
-    try {
-      const result = await executeAudit(
-        body.category as AuditCategory,
-        k,
-        body.options,
-      );
-      core.track("audit_run_completed", {
-        category: body.category,
-        status: result.status,
-        issue_count: result.issues.length,
-        duration_ms: Math.round(performance.now() - started),
-      });
-      return c.json(result);
-    } catch (err) {
-      core.track("audit_run_completed", {
-        category: body.category,
-        status: "failed",
-        issue_count: 0,
-        duration_ms: Math.round(performance.now() - started),
-      });
-      throw err;
-    }
   });
 
   app.delete("/api/audits", async (c) => {

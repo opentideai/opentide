@@ -1,6 +1,7 @@
 // @layer core — finding and starting a project's `opentide serve` process. The
 // MCP bridge uses it to attach a stdio client; task forks use it to start the
-// fork's serve. The process is detached and outlives whoever started it.
+// fork's serve. The process is detached and outlives whoever started it, until
+// it has had no client for SERVE_IDLE_EXIT_MS.
 //
 // The lock record says who holds the project; the OS lock says whether they're
 // still alive. A serve killed with -9 leaves a record pointing at a dead port,
@@ -19,6 +20,7 @@ import {
   MCP_BRIDGE_POLL_MS,
   MCP_BRIDGE_STARTUP_TIMEOUT_MS,
   MCP_HTTP_PATH,
+  SERVE_EXIT_WHEN_IDLE_FLAG,
   SERVE_LOG_FILE,
 } from "./config.ts";
 import {
@@ -97,7 +99,8 @@ export function opentideCwd(
   return runtime.kind === "clone" ? REPO_ROOT : null;
 }
 
-// A serve process started here. It is detached and outlives its starter.
+// A serve process started here. It is detached, outlives its starter, and exits
+// on its own once idle.
 export interface SpawnedServe {
   pid: number;
   // Null where output can't be redirected (Windows); it is discarded there.
@@ -127,6 +130,17 @@ function freePort(): number {
   return port;
 }
 
+// Nobody stops a serve started here, so it stops itself once idle.
+export function spawnedServeArgs(projectDir: string, port: number): string[] {
+  return [
+    "--project",
+    projectDir,
+    "--port",
+    String(port),
+    `--${SERVE_EXIT_WHEN_IDLE_FLAG}`,
+  ];
+}
+
 // Start `opentide serve` for the project, detached, on a free port. On Unix a
 // shell redirects its output to .opentide/serve.log and then execs deno, so the
 // pid we hold is the pid serve writes into the lock record.
@@ -137,13 +151,7 @@ export function spawnServe(projectDir: string): SpawnedServe {
   const program = invocation.command === "deno"
     ? Deno.execPath()
     : invocation.command;
-  const argv = [
-    ...args,
-    "--project",
-    projectDir,
-    "--port",
-    String(freePort()),
-  ];
+  const argv = [...args, ...spawnedServeArgs(projectDir, freePort())];
   const common = {
     cwd: opentideCwd() ?? projectDir,
     stdin: "null",

@@ -4,7 +4,7 @@
 // the Kernel's composition.verificationTools so core's tools/dispatch.ts never
 // depends upward on the verification layer (§3.2).
 import type { VerificationToolHandlers } from "../core/tool-capabilities.ts";
-import { executeAudit } from "./audit-runner.ts";
+import { auditCategories, auditConfig } from "./audit-runner.ts";
 import { auditPackages } from "./audit-packages.ts";
 import {
   formatChangesetContext,
@@ -17,7 +17,8 @@ import {
 import { resolveChangeClass, verifyChangeClass } from "./change-class.ts";
 
 export const defaultVerificationToolHandlers: VerificationToolHandlers = {
-  executeAudit,
+  auditConfig,
+  auditCategories,
   auditPackages,
   formatChangesetContext,
   stripChangeSnapshots,

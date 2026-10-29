@@ -801,3 +801,21 @@ function languageFromLocations(
   }
   return "unknown";
 }
+
+// Every entity id in a graph, so a classification only links to what exists.
+export function codebaseGraphEntityIds(graph: CodebaseGraph): string[] {
+  return [
+    ...graph.files,
+    ...graph.modules,
+    ...graph.symbols,
+    ...graph.routes,
+    ...graph.handlers,
+    ...graph.middleware,
+    ...graph.functions,
+    ...graph.schemas,
+    ...graph.components,
+    ...graph.tests,
+    ...graph.commands,
+    ...graph.facts,
+  ].map((entity) => entity.id);
+}

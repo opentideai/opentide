@@ -114,6 +114,15 @@ const productionTestSchema = {
   },
 } as const;
 
+// Leaves a created or amended changeset in planning until the user approves
+// it: in the IDE, or through an MCP client's approve_changeset. Over MCP it is
+// otherwise approved and started at once.
+const awaitApproval = {
+  type: "boolean",
+  description:
+    "Leave the changeset in 'planning' until the user approves it. Without it, an MCP client's changeset is approved and started at once.",
+};
+
 export const CUSTOM_TOOLS: CustomToolDef[] = [
   // --- Inspection ---
   {
@@ -267,7 +276,7 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     type: "custom",
     name: "project_status",
     description:
-      "Orient before working: one read-only call that reports whether this project is safe to change. Returns `verdict` (ok / attention / stop) with one line per problem, the project consistency check (what doctor_project would report), entity counts in memory against .opentide/state on disk (a difference is unflushed work, or state that did not load), unreachable code, the active changeset and its step progress, and the tool surface version. Does not run tests — call run_tests next if the verdict is ok. Call this first in a session, and again whenever a readiness or consistency error is unclear.",
+      "Orient before working: one read-only call that reports whether this project is safe to change. Returns `verdict` (ok / attention / stop) with one line per problem, the project consistency check (what doctor_project would report), entity counts in memory against .opentide/state on disk (a difference is unflushed work, or state that did not load), unreachable code, the active changeset and its step progress, the project's rules and enabled skills (follow both), and the tool surface version. Does not run tests — call run_tests next if the verdict is ok. Call this first in a session, and again whenever a readiness or consistency error is unclear.",
     input_schema: { type: "object", properties: {}, required: [] },
   },
   {
@@ -309,11 +318,14 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     type: "custom",
     name: "git_commit",
     description:
-      "Flush current Tide state, stage all nonignored project files with git add --all, and commit them. If message is omitted or empty, generate a commit message from the staged changes. Do not call this unless the user explicitly asked to commit or confirmed a proposed commit.",
+      "Flush current Tide state, stage all nonignored project files with git add --all, and commit them. If message is omitted or empty, the subject is built from the staged file list; write one yourself for anything better. With changeset_id, commit only OpenTide's own files and the files that changeset wrote, as landing does; the message is then required. Do not call this unless the user explicitly asked to commit or confirmed a proposed commit.",
     input_schema: {
       type: "object",
       properties: {
         message: str("Optional commit message to use for the Git commit"),
+        changeset_id: str(
+          "Optional: commit only OpenTide's files and this changeset's files.",
+        ),
       },
       required: [],
     },
@@ -349,7 +361,7 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
           type: "string",
           enum: ["off", "assist"],
           description:
-            "Optional import classification mode. Omit or use 'off' for deterministic indexing only. Use 'assist' to run model-assisted semantic classification after deterministic indexing when possible.",
+            "Optional import classification mode. Omit or use 'off' for deterministic indexing only. Use 'assist' to also prepare a classification: the result says review_owed, and request_review with kind 'imports' hands you the classifier's input to run on your own model.",
         },
       },
       required: [],
@@ -1334,12 +1346,45 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     type: "custom",
     name: "list_tests",
     description:
-      "Returns all registered tests. Pass `name` to return a single test's source instead.",
+      "Returns all registered tests with their verification metadata. Pass `name` to return a single test's source instead, or `claim_id` to list only the tests that verify that claim.",
     input_schema: {
       type: "object",
       properties: {
         name: str(
           "Optional: return this one test's source instead of the list.",
+        ),
+        claim_id: str(
+          "Optional: list only the tests whose verification metadata names this claim.",
+        ),
+      },
+      required: [],
+    },
+  },
+  {
+    type: "custom",
+    name: "get_code_context",
+    description:
+      "Returns project source in one block, for reviewing or refuting a change. " +
+      "Pass `scopes` for specific entities, `changeset_id` for what a changeset " +
+      "touched, or `changeset_id` with `claim_id` for the code behind one " +
+      "acceptance criterion: its formal-spec targets and tests first, then the " +
+      "changed entities. With nothing, returns the whole project. Capped in size.",
+    input_schema: {
+      type: "object",
+      properties: {
+        scopes: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            'Optional: "category:key" entities, e.g. "handler:get_user", ' +
+            '"function:slugify", "template:home", "test:users", ' +
+            '"route:GET /users", "config:theme", "asset:logo.svg".',
+        },
+        changeset_id: str(
+          "Optional: return the entities this changeset changed.",
+        ),
+        claim_id: str(
+          "Optional, with changeset_id: return the code behind this claim.",
         ),
       },
       required: [],
@@ -1453,45 +1498,55 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
   // --- Audits ---
   {
     type: "custom",
-    name: "run_audit",
+    name: "request_review",
     description:
-      "Run an AI-powered code audit. Built-in categories: security, performance, seo, accessibility, code-quality. Custom audit categories can also be created and run.",
+      "Get a review packet to run with your own model: kind 'refute' tries to disprove a changeset's acceptance criteria (default: every 'must' claim without a fresh verdict); 'criteria' asks what the user's request required, without seeing the plan's criteria; 'audit' audits the project in one category (security, performance, seo, accessibility, code-quality, or a custom one); 'imports' classifies the codebase the last index_codebase with classification 'assist' indexed. The packet carries the instructions, the code to review and the answer's shape. Run it in a fresh context, a subagent or a new conversation, then call submit_review. A refute packet with no claims means nothing is owed.",
     input_schema: {
       type: "object",
       properties: {
-        category: str("Audit category name (built-in or custom)"),
-      },
-      required: ["category"],
-    },
-  },
-  {
-    type: "custom",
-    name: "refute_claims",
-    description:
-      "Run an adversarial refutation pass on a changeset's acceptance criteria: for each targeted claim an independent AI reviewer tries to DISPROVE it by finding a concrete counterexample. Mints an 'adversarial' attestation per claim (passed = survived, failed = refuted) and returns per-claim verdicts with counterexamples. Defaults to all 'must' criteria. A fresh refuted claim blocks completion until reviewed, fixed, amended, or dismissed by a fresh passing refutation. Include the returned adversarial evidence (with its attestationId) in record_verification_run.",
-    input_schema: {
-      type: "object",
-      properties: {
+        kind: {
+          type: "string",
+          enum: ["refute", "criteria", "audit", "imports"],
+          description: "What to review.",
+        },
         changeset_id: str(
-          "Changeset to review (defaults to the active changeset)",
+          "Changeset to review, for refute and criteria (defaults to the active changeset)",
         ),
         claim_ids: {
           type: "array",
           description:
-            "Specific acceptance-criterion ids to refute. Omit to review all 'must' criteria.",
+            "refute: the acceptance-criterion ids to review. Omit for every 'must' claim.",
           items: { type: "string" },
-        },
-        attempts: {
-          type: "number",
-          description: "Independent refutation attempts per claim (default 2).",
         },
         force: {
           type: "boolean",
           description:
-            "Re-run even if a fresh verdict already exists for the claim.",
+            "refute: review claims that already have a fresh verdict, too.",
         },
+        category: str("audit: the category to audit"),
       },
-      required: [],
+      required: ["kind"],
+    },
+  },
+  {
+    type: "custom",
+    name: "submit_review",
+    description:
+      "Submit the verdict for a review packet from request_review. Refute: a claim is refuted when an attempt has refuted true, confidence 'high' and a counterexample; each claim gets an 'adversarial' attestation, and a fresh refuted claim blocks completion. Criteria: proposals the plan doesn't cover show up as readiness findings. Audit: stored like any audit, with an 'audit' attestation. Imports: merged into the codebase graph. Fails with STALE_REVIEW if the code changed since the packet was issued, and with INVALID_VERDICT, leaving the packet open, if the verdict doesn't match the packet's response shape.",
+    input_schema: {
+      type: "object",
+      properties: {
+        packet_id: str("The packetId from request_review"),
+        verdict: {
+          type: "object",
+          description:
+            "The answer, in the shape the packet's `response` gives: { results: [...] } for refute, { criteria: [...] } for criteria, { issues: [...] } for audit, { facts, mappings, diagnostics, candidateEntities } for imports.",
+        },
+        reviewer: str(
+          "Who reviewed: the model or agent name. Recorded on the attestation.",
+        ),
+      },
+      required: ["packet_id", "verdict"],
     },
   },
   {
@@ -1691,6 +1746,21 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
   },
   {
     type: "custom",
+    name: "get_changeset",
+    description:
+      "Fetch a changeset as stored: its status, full plan, acceptance criteria, attestations and message anchors. Without changeset_id, returns this session's active changeset (planning, approved or in progress), or null.",
+    input_schema: {
+      type: "object",
+      properties: {
+        changeset_id: str(
+          "Optional: ID of the changeset. Omit for the session's active one.",
+        ),
+      },
+      required: [],
+    },
+  },
+  {
+    type: "custom",
     name: "check_changeset_readiness",
     description:
       "Run deterministic completion checks for a changeset. Returns structured errors and actions when acceptance criteria, planned checks, finished steps, verification evidence, or per-claim results are missing. Use this before complete_changeset; if passed is false, fix the listed errors by running validations and record_verification_run.",
@@ -1776,6 +1846,7 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
           description:
             "`light` for small, low-blast-radius work (a copy or style tweak, a tightened validation, a small handler fix): the kernel writes the criterion and check, skips adversarial review, and may skip the approval round-trip. In exchange it refuses routes, schemas, SQL, secrets, env vars, packages, snapshots and handler/function deletes, and escalates to `standard` past a few entities. Rejected with formal specs, a `must` criterion, or more than two steps. `standard` (the default) for anything structural or risky.",
         },
+        await_approval: awaitApproval,
       },
       required: ["title", "plan"],
     },
@@ -1873,6 +1944,7 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
             'Additional Tier-1 formal specs introduced by the amendment. Each item: { id, claimIds, technique (exhaustive-switch/satisfies-guard/discriminated-union/union-alias/numeric-range/exhaustive-record/branded-type), scope ("handler:<name>" or "function:<name>"), statement, enforcement (hard/soft), discriminant? }. For `discriminated-union`, include `discriminant` when known instead of relying on prose.',
           items: {},
         },
+        await_approval: awaitApproval,
       },
       required: [
         "changeset_id",
@@ -2530,7 +2602,7 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
         session_id: str("Session ID to fetch"),
         project_path: str("Exact project path for cross-project sessions."),
         project_name: str("Project name when path is unknown."),
-        messageLimit: num("Max messages to include (default 50)"),
+        messageLimit: num("Max messages to include (default 50; 0 for all)."),
       },
       required: ["session_id"],
     },
@@ -2600,17 +2672,17 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     type: "custom",
     name: "manage_sessions",
     description:
-      "List, search, rename, archive, or unarchive Genie sessions. Use this when the user asks to manage session history or asks for the current session to be renamed. For archive/unarchive, pass an explicit session_id.",
+      "List, search, rename, end, archive, or unarchive sessions. Past sessions are project history: list or search them when picking up work. Rename and end default to the current session; archive/unarchive need an explicit session_id.",
     input_schema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list", "search", "rename", "archive", "unarchive"],
+          enum: ["list", "search", "rename", "end", "archive", "unarchive"],
           description: "Session operation to perform.",
         },
         session_id: str(
-          "Target session ID. Required for archive/unarchive. Defaults to the current session for rename.",
+          "Target session ID. Required for archive/unarchive. Defaults to the current session for rename and end.",
         ),
         name: str("New session name, required for action=rename."),
         query: str(
@@ -2638,14 +2710,14 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     type: "custom",
     name: "document_query",
     description:
-      "Read the durable document store. action=search finds documents by name/metadata substring; action=read returns a document's metadata + version history; action=list returns documents (optionally filtered by scope/session). Use this to recall plans, specs, decisions, and reference material on demand.",
+      "Read the durable document store. action=search finds documents by name/metadata substring; action=read returns a document's metadata + version history; action=list returns documents (optionally filtered by scope/session); action=pinned returns the ids in a session's working set. Use this to recall plans, specs, decisions, and reference material on demand.",
     input_schema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["search", "read", "list"],
-          description: "search | read | list",
+          enum: ["search", "read", "list", "pinned"],
+          description: "search | read | list | pinned",
         },
         id: str("Document id (required for action=read)."),
         query: str("Search string (required for action=search)."),
@@ -2668,6 +2740,12 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
           description:
             "For action=read, also return the resolved content of the requested (or head) version.",
         },
+        encoding: {
+          type: "string",
+          enum: ["utf8", "base64"],
+          description:
+            "With includeContent: utf8 (default) returns `content`; base64 returns `contentBase64`, for images and PDFs.",
+        },
       },
       required: ["action"],
     },
@@ -2676,14 +2754,14 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     type: "custom",
     name: "document_write",
     description:
-      "Author the durable document store. action=create makes a new document (and its first immutable version); action=update writes a new immutable version and moves the head; action=archive soft-archives a document. create/update are how the agent authors and revises plans and specs (each save is a citable version).",
+      "Author the durable document store. action=create makes a new document (and its first immutable version); action=update writes a new immutable version and moves the head; action=archive soft-archives a document; action=ref records that a message in your session mentioned a document version or had it attached. create/update are how the agent authors and revises plans and specs (each save is a citable version).",
     input_schema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["create", "update", "archive"],
-          description: "create | update | archive",
+          enum: ["create", "update", "archive", "ref"],
+          description: "create | update | archive | ref",
         },
         id: str("Document id (required for action=update/archive)."),
         name: str(
@@ -2705,6 +2783,23 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
         note: str("Optional changelog line for this version (create/update)."),
         description: str(
           "Optional short description stored in metadata (create).",
+        ),
+        content_base64: str(
+          "Binary content as base64, in place of content (create), for images and PDFs.",
+        ),
+        attachment: {
+          type: "boolean",
+          description:
+            "The user attached this to a message (create): it is recorded as the user's document.",
+        },
+        message_id: num("The message that cites the document (ref)."),
+        role: {
+          type: "string",
+          enum: ["mention", "attachment"],
+          description: "How the message cites it (ref).",
+        },
+        versionHash: str(
+          "The version the message cites (ref); omit for the head.",
         ),
       },
       required: ["action"],
@@ -2802,6 +2897,55 @@ const AGENT_TOOL_EXCLUDE = new Set([
 export const AGENT_TOOLS: CustomToolDef[] = CUSTOM_TOOLS.filter((tool) =>
   !AGENT_TOOL_EXCLUDE.has(tool.name)
 );
+
+// Tools a client builds on request_review and submit_review: it runs the
+// review with its own model. The server has no handler for them; an agent loop
+// with a reviewer offers them to its model in place of the packet pair.
+export const CLIENT_REVIEW_TOOLS: CustomToolDef[] = [
+  {
+    type: "custom",
+    name: "run_audit",
+    description:
+      "Run an AI-powered code audit. Built-in categories: security, performance, seo, accessibility, code-quality. Custom audit categories can also be created and run.",
+    input_schema: {
+      type: "object",
+      properties: {
+        category: str("Audit category name (built-in or custom)"),
+      },
+      required: ["category"],
+    },
+  },
+  {
+    type: "custom",
+    name: "refute_claims",
+    description:
+      "Run an adversarial refutation pass on a changeset's acceptance criteria: for each targeted claim an independent AI reviewer tries to DISPROVE it by finding a concrete counterexample. Mints an 'adversarial' attestation per claim (passed = survived, failed = refuted) and returns per-claim verdicts with counterexamples. Defaults to all 'must' criteria. A fresh refuted claim blocks completion until reviewed, fixed, amended, or dismissed by a fresh passing refutation. Include the returned adversarial evidence (with its attestationId) in record_verification_run.",
+    input_schema: {
+      type: "object",
+      properties: {
+        changeset_id: str(
+          "Changeset to review (defaults to the active changeset)",
+        ),
+        claim_ids: {
+          type: "array",
+          description:
+            "Specific acceptance-criterion ids to refute. Omit to review all 'must' criteria.",
+          items: { type: "string" },
+        },
+        attempts: {
+          type: "number",
+          description: "Independent refutation attempts per claim (default 2).",
+        },
+        force: {
+          type: "boolean",
+          description:
+            "Re-run even if a fresh verdict already exists for the claim.",
+        },
+      },
+      required: [],
+    },
+  },
+];
 
 for (const tool of CUSTOM_TOOLS) {
   if (!MODIFICATION_TOOLS.has(tool.name)) continue;

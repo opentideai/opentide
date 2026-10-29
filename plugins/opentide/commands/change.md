@@ -10,9 +10,9 @@ Before the first edit, say in a few lines what you will change and how.
 
 Then work through the changeset loop:
 
-1. create_changeset({title, plan: {summary, steps, acceptanceCriteria, verificationPlan}}). Here it is approved and started automatically. If a call is later refused as outside the plan, amend_changeset_plan, then retry.
-2. Make the change, marking each step with update_changeset_step status "done".
-3. run_tests, then record_verification_run with evidence and claimResults keyed by your own criterion ids.
+1. create_changeset({title, plan: {summary, steps, acceptanceCriteria, verificationPlan}}). It is approved and started at once. If a call is later refused as outside the plan, amend_changeset_plan, then retry.
+2. Make the change; mark each step "done" with update_changeset_step.
+3. run_tests, then record_verification_run with evidence and claimResults keyed by your own criterion ids. A "must" criterion wants a refute review: request_review, run the packet in a subagent, then submit_review.
 4. check_changeset_readiness, then complete_changeset. If it returns stateFlushed: false, tell the user: the work exists only in memory. Work done outside a changeset ends with flush_project_state.
 - Reserved names, refused by the define tools: db, functions, config, packages, env, templates, log, assertNever, HandlerContext, Context. Tests have more; project_status lists them in reservedNames.
 

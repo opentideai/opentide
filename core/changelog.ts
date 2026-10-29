@@ -19,6 +19,7 @@ import { genieChangelogTable, genieMetaTable } from "./db/schema/index.ts";
 import type { DrizzleDb } from "./db/factory.ts";
 import {
   ensureDir,
+  fileStamp,
   readJsonFile,
   readJsonLines,
   writeJsonIfChanged,
@@ -211,6 +212,8 @@ interface ChangelogStore {
     metadata: WorkblockMetadata,
   ): Promise<ChangeRecord | null>;
   get(id: number): Promise<ChangeRecord | null>;
+  // The records among `ids` that exist, in no particular order.
+  getMany(ids: readonly number[]): Promise<ChangeRecord[]>;
   list(opts?: ListOptions): Promise<ChangeRecord[]>;
   search(query: string, limit?: number): Promise<ChangeRecord[]>;
   getCursor(): Promise<number | null>;
@@ -249,6 +252,12 @@ class FileChangelogStore implements ChangelogStore {
   // Cached max record id for the file-backed path, so record() doesn't
   // re-scan every record file on every append. Lazily seeded from disk.
   private fileMaxRecordId: number | null = null;
+  // Each record file parsed once per version: listing turns reads them all,
+  // and a project's history runs to thousands of them.
+  private readonly parsedRecords = new Map<
+    string,
+    { stamp: string; record: FileChangeRecord | null }
+  >();
 
   constructor(historyDir: string) {
     this.historyDir = historyDir;
@@ -297,12 +306,16 @@ class FileChangelogStore implements ChangelogStore {
     const add = (record: FileChangeRecord) => byUid.set(record.uid, record);
 
     if (existsSync(this.recordsDir())) {
+      const seen = new Set<string>();
       for (const file of readdirSync(this.recordsDir())) {
         if (!file.endsWith(".json")) continue;
-        const record = readJsonFile<FileChangeRecord>(
-          join(this.recordsDir(), file),
-        );
+        const path = join(this.recordsDir(), file);
+        seen.add(path);
+        const record = this.readRecordFile(path);
         if (record) add(record);
+      }
+      for (const path of this.parsedRecords.keys()) {
+        if (!seen.has(path)) this.parsedRecords.delete(path);
       }
     }
 
@@ -313,6 +326,16 @@ class FileChangelogStore implements ChangelogStore {
     }
 
     return [...byUid.values()];
+  }
+
+  private readRecordFile(path: string): FileChangeRecord | null {
+    const stamp = fileStamp(path);
+    if (!stamp) return null;
+    const cached = this.parsedRecords.get(path);
+    if (cached?.stamp === stamp) return cached.record;
+    const record = readJsonFile<FileChangeRecord>(path);
+    this.parsedRecords.set(path, { stamp, record });
+    return record;
   }
 
   private writeFileRecords(records: FileChangeRecord[]): void {
@@ -417,6 +440,14 @@ class FileChangelogStore implements ChangelogStore {
     await this.ready;
     const record = this.readFileRecords().find((r) => r.id === id);
     return record ? asChangeRecord(record) : null;
+  }
+
+  async getMany(ids: readonly number[]): Promise<ChangeRecord[]> {
+    await this.ready;
+    const wanted = new Set(ids);
+    return this.readFileRecords()
+      .filter((r) => wanted.has(r.id))
+      .map(asChangeRecord);
   }
 
   async list(opts?: ListOptions): Promise<ChangeRecord[]> {
@@ -788,6 +819,16 @@ class DbChangelogStore implements ChangelogStore {
       .where(eq(genieChangelogTable.id, id))
       .limit(1);
     return rows[0] ? rowToRecord(rows[0]) : null;
+  }
+
+  async getMany(ids: readonly number[]): Promise<ChangeRecord[]> {
+    if (ids.length === 0) return [];
+    await this.ensureReady();
+    const rows = await this.db
+      .select()
+      .from(genieChangelogTable)
+      .where(inArray(genieChangelogTable.id, [...ids]));
+    return rows.map(rowToRecord);
   }
 
   async list(opts?: ListOptions): Promise<ChangeRecord[]> {
@@ -1244,6 +1285,9 @@ export type ChangeListener = (record: ChangeRecord) => void | Promise<void>;
 export class Changelog {
   private store: ChangelogStore;
   private actorContext = new AsyncLocalStorage<string | null>();
+  // The records written inside a collect() call, so a caller can report what
+  // one tool call changed without diffing the log.
+  private collected = new AsyncLocalStorage<ChangeRecord[]>();
   // A2 (Stream A): resolves an entity's stable uid from a change's (category, key).
   // Injected by the Kernel (registries.ts) once the registries exist. Kept as an
   // optional seam so a bare Changelog (tests, tooling) still works with no resolver.
@@ -1293,7 +1337,17 @@ export class Changelog {
     // listener is self-guarding (never throws), so no try/catch is needed here and
     // a failed emit can never break or lose the recorded change.
     if (this.changeListener) await this.changeListener(record);
+    this.collected.getStore()?.push(record);
     return record;
+  }
+
+  // Runs fn and returns the change records it wrote, in order.
+  async collect<T>(
+    fn: () => Promise<T>,
+  ): Promise<{ value: T; records: ChangeRecord[] }> {
+    const records: ChangeRecord[] = [];
+    const value = await this.collected.run(records, fn);
+    return { value, records };
   }
 
   setCurrentActorUserId(userId: string | null): void {
@@ -1313,6 +1367,10 @@ export class Changelog {
 
   get(id: number): Promise<ChangeRecord | null> {
     return this.store.get(id);
+  }
+
+  getMany(ids: readonly number[]): Promise<ChangeRecord[]> {
+    return this.store.getMany(ids);
   }
 
   list(opts?: ListOptions): Promise<ChangeRecord[]> {

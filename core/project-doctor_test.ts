@@ -7,6 +7,8 @@ import { doctorProject } from "./project-doctor.ts";
 import { acquireProjectLock } from "./project-lock.ts";
 import { getProjectPaths } from "./project-manager.ts";
 import { TEST_TMP_DIR } from "./test-home_test.ts";
+import { SessionManager } from "./sessions.ts";
+import { PRIVATE_HISTORY_DIR, PRIVATE_SESSION_MARKERS_DIR } from "./config.ts";
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
@@ -541,5 +543,51 @@ Deno.test("doctorProject emits no restore warning when there are no schema files
 
     assertEquals(report.ok, true);
     assertEquals(dynamicRestoreWarning(report), undefined);
+  });
+});
+
+Deno.test("doctorProject accepts a private session that stayed on another machine", async () => {
+  await withProject(async (projectDir) => {
+    const paths = getProjectPaths(projectDir);
+    const sessions = new SessionManager(paths.historyDir);
+    const session = await sessions.createSession("Mine", {
+      visibility: "private",
+    });
+    const message = await sessions.addMessage({
+      sessionId: session.id,
+      role: "assistant",
+      content: "Plan",
+    });
+    writeJson(join(paths.historyDir, "changesets", "cs1.json"), {
+      id: "cs1",
+      sessionId: session.id,
+      title: "Plan",
+      status: "planning",
+      plan: { summary: "Plan", steps: [] },
+      planMessageIds: [message.id],
+      approvalMessageId: null,
+      workMessageIds: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: null,
+    });
+    const codes = async () =>
+      (await doctorProject(projectDir)).errors.map((issue) => issue.code);
+
+    assertEquals(await codes(), []);
+
+    // A clone: the private directory never left its author's machine.
+    rmSync(join(paths.historyDir, PRIVATE_HISTORY_DIR), {
+      recursive: true,
+      force: true,
+    });
+    assertEquals(await codes(), []);
+
+    // Without the marker, the reference really is dangling.
+    rmSync(join(paths.historyDir, PRIVATE_SESSION_MARKERS_DIR), {
+      recursive: true,
+      force: true,
+    });
+    assert((await codes()).includes("CHANGESET_SESSION_MISSING"));
   });
 });

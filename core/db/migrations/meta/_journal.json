@@ -120,6 +120,13 @@
       "when": 1792487258811,
       "tag": "0016_open_black_knight",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793193137442,
+      "tag": "0017_light_plazm",
+      "breakpoints": true
     }
   ]
 }

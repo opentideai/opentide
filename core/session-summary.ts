@@ -420,16 +420,42 @@ export async function getSessionSummaryStatus(
   return buildSessionSummaryStatus(session, messages);
 }
 
-export async function summarizeSession(
+// What summarizing needs from wherever the history lives: the kernel
+// in-process, or the history tools over MCP.
+export interface SummaryDeps {
+  loadSource(
+    sessionId: string,
+    throughMessageId?: number,
+  ): Promise<SummarySource | null>;
+  recordUsage(input: RecordModelUsageInput): Promise<ModelUsageRecord>;
+  updateSummaryMetadata(
+    sessionId: string,
+    summary: string,
+    metadata: string,
+  ): Promise<void>;
+  log?: KernelLog;
+}
+
+export function summarizeSession(
   kernel: Kernel,
   opts: SummarizeSessionOptions,
 ): Promise<SessionSummaryResult | null> {
+  return summarizeSessionWith({
+    loadSource: (sessionId, through) =>
+      collectSummarySource(kernel, sessionId, through),
+    recordUsage: (input) => kernel.sessions.recordModelUsage(input),
+    updateSummaryMetadata: (sessionId, summary, metadata) =>
+      kernel.sessions.updateSummaryMetadata(sessionId, summary, metadata),
+    log: kernel.log,
+  }, opts);
+}
+
+export async function summarizeSessionWith(
+  deps: SummaryDeps,
+  opts: SummarizeSessionOptions,
+): Promise<SessionSummaryResult | null> {
   const kind = normalizeSummaryKind(opts.kind);
-  const source = await collectSummarySource(
-    kernel,
-    opts.sessionId,
-    opts.throughMessageId,
-  );
+  const source = await deps.loadSource(opts.sessionId, opts.throughMessageId);
   if (!source) return null;
 
   const existingMetadata = parseSessionMetadata(source.session.metadata);
@@ -461,8 +487,8 @@ export async function summarizeSession(
     kind,
     opts.accountingCaller ?? "session_summary",
     opts,
-    (input) => kernel.sessions.recordModelUsage(input),
-    kernel.log,
+    deps.recordUsage,
+    deps.log,
   );
   const summary = modelSummary ?? buildFallbackSummary(source, kind);
   const throughMessageId = latestMessageId;
@@ -479,7 +505,7 @@ export async function summarizeSession(
 
   const shouldStore = opts.store ?? true;
   if (shouldStore) {
-    await kernel.sessions.updateSummaryMetadata(
+    await deps.updateSummaryMetadata(
       opts.sessionId,
       summary,
       JSON.stringify(metadata),

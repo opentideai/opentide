@@ -17,11 +17,7 @@ import type {
   StepExecutionContext,
 } from "../core/chat-intelligence.ts";
 import type { ChatEventHandler } from "../core/chat-contract.ts";
-import type {
-  ChangesetChangelogSource,
-  ChangesetStore,
-  ChangesetUsageSource,
-} from "../core/types.ts";
+import type { ChangesetClient } from "./chat-backend.ts";
 import {
   type Changeset,
   type ChangesetReadiness,
@@ -57,15 +53,15 @@ export type GateKind =
 
 // Everything the step loop needs, injected so runPlan never reaches into the
 // ChatOrchestrator (and never imports the closed brain). `runTurn` is bound from the
-// loop; `changesets`/`sessions`/`changelog` are the kernel stores (the latter two only
-// so the completion tail can aggregate usage exactly like the single-turn path);
+// loop; `changesets` is the backend's changeset client;
 // `brain` supplies the per-step prompt; `isCancelled`/`startFreshStepSession` are the
 // loop's cancellation flag and fresh-provider-session primitive.
 export interface StepLoopDeps {
   runTurn(opts: RunTurnOptions): Promise<TurnResult>;
-  changesets: ChangesetStore;
-  sessions: ChangesetUsageSource;
-  changelog: ChangesetChangelogSource;
+  changesets: Pick<
+    ChangesetClient,
+    "get" | "updateStep" | "complete" | "aggregate"
+  >;
   brain: ChatIntelligence;
   onEvent?: ChatEventHandler;
   isCancelled(): boolean;
@@ -88,6 +84,10 @@ export interface StepLoopDeps {
   checkReadiness?(
     changeset: Changeset,
   ): ChangesetReadiness | Promise<ChangesetReadiness>;
+  // The reviews the completion gate reads (refutation, independent criteria),
+  // run once every step is settled and before readiness is checked. Best
+  // effort: one that can't run leaves its readiness finding in place.
+  beforeCompletion?(changeset: Changeset): Promise<void>;
 }
 
 // The injected gate executors, one thunk per gate. Shaped to extend: adding a gate
@@ -489,8 +489,6 @@ export async function runPlan(
 async function completeIfReady(id: string, deps: StepLoopDeps): Promise<void> {
   const {
     changesets,
-    sessions,
-    changelog,
     onEvent,
     runTurn,
     brain,
@@ -505,6 +503,10 @@ async function completeIfReady(id: string, deps: StepLoopDeps): Promise<void> {
     );
     if (!allSettled) return;
 
+    if (deps.beforeCompletion) {
+      await deps.beforeCompletion(cs);
+      cs = await changesets.get(id) ?? cs;
+    }
     let readiness = await finalReadiness(cs, deps);
     if (!readiness.passed && !deps.checkReadiness) return;
     for (
@@ -546,11 +548,7 @@ async function completeIfReady(id: string, deps: StepLoopDeps): Promise<void> {
     }
 
     const completed = await changesets.complete(cs.id);
-    const aggregated = await changesets.aggregate(
-      completed.id,
-      sessions,
-      changelog,
-    );
+    const aggregated = await changesets.aggregate(completed.id);
     onEvent?.({ type: "changeset_completed", changeset: aggregated });
   } catch {
     // Completion is best-effort; the changeset remains in_progress and resumable.

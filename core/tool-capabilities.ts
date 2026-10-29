@@ -1,10 +1,8 @@
 // Tool-capability contracts (OpenTide §3.3). `tools/dispatch.ts` is core (L1) but
-// a handful of tool handlers need behavior owned by higher layers — deterministic
-// audits + changeset governance (verification, L2) and adversarial refutation
-// (agent, L3). Rather than import upward, dispatch reads the handlers off the
+// a handful of tool handlers need behavior owned by a higher layer: audits and
+// changeset governance (verification, L2). Rather than import upward, dispatch reads the handlers off the
 // Kernel's composition (composition.ts) via the getters below; the composition
-// root supplies the concrete implementations (cli/assembly.ts for the open
-// stack; tide/assembly.ts adds the agent's).
+// root supplies the concrete implementations (cli/assembly.ts).
 //
 // This mirrors the store-factory seam (composition.ts): core declares the
 // contract and the getter, the composition carries the implementation, and no
@@ -13,35 +11,23 @@ import type { Kernel } from "./registries.ts";
 import type { CompositionContext } from "./composition.ts";
 import type { ChangeRecord } from "./changelog.ts";
 import type {
-  ImportClassifierRequest,
-  ImportClassifierResult,
-} from "./codebase/index.ts";
-import type {
-  AuditCategory,
-  AuditResult,
+  AgentAuditConfig,
   ChangeClass,
   Changeset,
   ChangesetPlan,
   ChangesetReadiness,
-  ClaimRefutationResult,
-  IndependentCriteriaResult,
-  ModelUsageRecord,
   PackageInput,
   PackageSecurityResult,
   ProportionalVerification,
   ReadinessEnforcement,
-  RecordModelUsageInput,
-  VerificationClaim,
   VerificationTier,
 } from "./types.ts";
 
 // The verification-owned tool handlers (audits + changeset governance).
 export interface VerificationToolHandlers {
-  executeAudit(
-    category: AuditCategory,
-    kernel: Kernel,
-    options?: Record<string, unknown>,
-  ): Promise<AuditResult>;
+  // A category's audit configuration, built-in or custom, for review packets.
+  auditConfig(category: string, kernel: Kernel): AgentAuditConfig | undefined;
+  auditCategories(kernel: Kernel): string[];
   auditPackages(packages: PackageInput[]): Promise<PackageSecurityResult>;
   formatChangesetContext(changeset: Changeset, changes: ChangeRecord[]): string;
   stripChangeSnapshots(change: ChangeRecord): ChangeRecord;
@@ -67,79 +53,16 @@ export interface VerificationToolHandlers {
   ): ChangeClass;
 }
 
-// The agent-owned tool handlers. `opts` is narrowed to the fields dispatch
-// actually passes so this contract stays free of the agent's model-injection
-// vocabulary (RunRefutationOpts / RefuteModelCall, classifier call seams).
-export interface AgentToolHandlers {
-  // `changedScopes` are "category:key" scopes for the entities the changeset
-  // actually touched (derived by the caller from the changelog). Optional so a
-  // caller without changelog access still gets the formal-spec/test narrowing;
-  // supplying it keeps the whole-project fallback out of the common path.
-  buildClaimContext(
-    kernel: Kernel,
-    changeset: Changeset,
-    claimId: string,
-    changedScopes?: readonly string[],
-  ): string;
-  runClaimRefutation(
-    kernel: Kernel,
-    claim: VerificationClaim,
-    contextCode: string,
-    opts: {
-      attempts?: number;
-      sessionId?: string | null;
-      changesetId?: string | null;
-    },
-  ): Promise<ClaimRefutationResult>;
-  // The independent criteria author (agent/criteria-agent.ts). Deliberately takes
-  // `request` and `contextCode` rather than reaching into the changeset for them:
-  // what the reviewer is allowed to see is the caller's decision, and keeping it
-  // in the signature makes "it never sees the agent's claims" checkable here.
-  runIndependentCriteria(
-    kernel: Kernel,
-    changeset: Changeset,
-    request: string,
-    contextCode: string,
-    opts: {
-      sessionId?: string | null;
-      changesetId?: string | null;
-    },
-  ): Promise<IndependentCriteriaResult>;
-  // The source of the entities a changeset actually touched, for the criteria
-  // reviewer's context. Shared with the refuter's changed-scope rung, so the two
-  // gate calls present byte-identical code and share a cached prefix.
-  buildChangedScopeContext(
-    kernel: Kernel,
-    scopes: readonly string[],
-  ): string;
-  runImportClassifier(
-    request: ImportClassifierRequest,
-    opts?: {
-      sessionId?: string | null;
-      turnId?: string | null;
-      changesetId?: string | null;
-      recordUsage?: (
-        input: RecordModelUsageInput,
-      ) => Promise<ModelUsageRecord>;
-    },
-  ): Promise<ImportClassifierResult>;
-}
-
 const NO_HANDLERS =
   "No tool handlers in the Kernel's composition — assemble them via the " +
   "composition root (cli/assembly.ts; testComposition() in tests) before " +
-  "dispatching. Agent handlers exist only in the Tide assembly.";
+  "dispatching.";
 
 export function verificationTools(
   composition: CompositionContext,
 ): VerificationToolHandlers {
   if (!composition.verificationTools) throw new Error(NO_HANDLERS);
   return composition.verificationTools;
-}
-
-export function agentTools(composition: CompositionContext): AgentToolHandlers {
-  if (!composition.agentTools) throw new Error(NO_HANDLERS);
-  return composition.agentTools;
 }
 
 // Non-throwing introspection: whether a capability class is assembled. Used by
@@ -151,27 +74,10 @@ export function hasVerificationTools(composition: CompositionContext): boolean {
   return composition.verificationTools !== null;
 }
 
-export function hasAgentTools(composition: CompositionContext): boolean {
-  return composition.agentTools !== null;
-}
-
-// Whether a may-bill verb can actually spend the user's model API key under
-// this assembly. run_audit's model audits need the audit provider; refutation,
-// the gate's auto-refute and index_codebase's "assist" classifier need the agent.
-// In an open (verification-only) assembly none of them reaches a model, so
-// neither the listing nor the guidance may claim they bill.
-export function canBillUnder(
-  composition: CompositionContext,
-  name: string,
-): boolean {
-  if (name === "run_audit") return composition.auditProvider !== null;
-  return hasAgentTools(composition);
-}
-
-// Which upper-layer capability class a tool verb requires. `verification` = the
+// Which upper-layer capability class a tool verb requires: `verification` = the
 // verb's dispatch path calls verificationTools() (audits + changeset
-// governance); `agent` = it calls agentTools() (adversarial refutation).
-export type ToolCapability = "verification" | "agent";
+// governance). The server calls no agent, so that is the only class.
+export type ToolCapability = "verification";
 
 // Authoritative, per-verb capability requirement — the single source of truth
 // for which handler class a tool verb needs, co-located with the getters it
@@ -179,12 +85,7 @@ export type ToolCapability = "verification" | "agent";
 // getter and therefore throws NO_HANDLERS when that layer is absent; the
 // outbound MCP projection (mcp-projection.ts) reads this to hide such verbs from
 // an assembly that cannot run them, so the advertised list can never drift from
-// what the running assembly can dispatch. A verb's requirement is its
-// unconditional, hard dependency: `complete_changeset` always calls
-// verificationTools() (the readiness gate) and only *conditionally* reaches
-// agentTools() (the settings-gated auto-refute), so it is declared `verification`
-// — the open assembly carries verification alone and the gate simply skips the
-// agent step, so that conditional reach never changes the gating outcome.
+// what the running assembly can dispatch.
 //
 // tools/dispatch.ts is the ground truth; a drift guard (mcp-projection_test.ts)
 // derives the getter call-sites from that source and asserts this map matches
@@ -192,8 +93,7 @@ export type ToolCapability = "verification" | "agent";
 export const TOOL_CAPABILITY_REQUIREMENTS: Readonly<
   Record<string, ToolCapability>
 > = {
-  refute_claims: "agent",
-  run_audit: "verification",
+  request_review: "verification",
   check_package_security: "verification",
   get_changeset_context: "verification",
   check_changeset_readiness: "verification",
@@ -207,15 +107,12 @@ export const TOOL_CAPABILITY_REQUIREMENTS: Readonly<
 // Whether the capability a verb requires is assembled in this build. A verb with
 // no declared requirement is always available (read verbs, and plain mutation
 // verbs whose only gate is the changeset store + the dispatch CHANGESET_REQUIRED
-// backstop). Non-throwing: mirrors hasVerificationTools()/hasAgentTools() so the
-// projection advertises exactly the callable surface.
+// backstop). Non-throwing, like hasVerificationTools(), so the projection
+// advertises exactly the callable surface.
 export function isToolCapabilityAvailable(
   composition: CompositionContext,
   name: string,
 ): boolean {
-  const requirement = TOOL_CAPABILITY_REQUIREMENTS[name];
-  if (!requirement) return true;
-  return requirement === "verification"
-    ? hasVerificationTools(composition)
-    : hasAgentTools(composition);
+  return !TOOL_CAPABILITY_REQUIREMENTS[name] ||
+    hasVerificationTools(composition);
 }

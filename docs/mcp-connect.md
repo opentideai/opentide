@@ -33,10 +33,22 @@ holder is alive. A record left by a `kill -9` is ignored.
 | `opentide mcp --standalone` or `--http` | Refuses with `PROJECT_ALREADY_OPEN`. Stop that and use serve.                                                                                |
 | Anything else (e.g. `opentide lsp`)     | Gives up after 90 s with `SERVE_NOT_READY`.                                                                                                  |
 
-- **A serve the bridge started keeps running** after every client exits. Stop it
-  with `kill <pid>`; the pid is in the bridge's stderr and in `kernel.lock`.
-- **If serve dies or switches project mid-session,** the bridge exits with
-  code 1. Restart the client and it reattaches, or starts a new serve.
+- **A serve the bridge started exits on its own** 10 minutes after its last
+  client disconnects, so it doesn't hold the project lock for days. To stop it
+  sooner, `kill <pid>`; the pid is in the bridge's stderr and in `kernel.lock`.
+  A serve you start by hand runs until you stop it.
+- **If serve goes away mid-session** (it idled out, was stopped, or Tide took
+  the project over), the bridge finds the project's serve again, starting one if
+  nothing holds the project, and replays the client's `initialize` there. The
+  client stays connected. A call in flight when serve went away fails with
+  JSON-RPC error `-32000`; retry it. After three failed tries the bridge exits
+  with code 1.
+- **Tide can take a project over from a serve the bridge started.** Opening the
+  project in Tide offers **Open here**, which asks that serve to close the
+  project and exit, then opens it in Tide. Your client's bridge moves to Tide's
+  kernel by itself. Takeover works on any `opentide serve --project`, including
+  one you started by hand. It's refused while a changeset is in progress, and a
+  launcher-mode kernel (one with its own IDE) can't be taken over.
 - **`--standalone`** is an in-process stdio server. It takes the project for
   itself; use it where nothing else should touch the project, like CI.
 
@@ -426,13 +438,14 @@ short rulebook and the gate. The repair strategy is yours.
 
 ### What the server tells the agent
 
-| Channel               | What it carries                                                                                                                                                                                                                       | Reaches the model                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Server `instructions` | Ownership rules, the changeset loop, what to do when storage breaks. Then the project's own rules (`set_system_prompt`), if they fit. Source: `core/agent-guide.ts`.                                                                  | On connect, in the system prompt. Nobody has to ask.                  |
-| `project_status`      | Verdict (`ok` / `attention` / `stop`) and one line per problem: consistency errors, memory against `.opentide/state`, unreachable code, the active changeset, the surface version, and the project's rules in full (`projectRules`).  | When the agent calls it. The instructions tell it to, first.          |
-| `INVALID_ARGUMENTS`   | A refusal naming the argument the agent meant (`query` → `sql`, `code` → `source`, `status: "completed"` → `done`). camelCase/snake_case spellings of a declared key are accepted and renamed. Source: `core/tools/validate-args.ts`. | On the wrong call.                                                    |
-| Tool descriptions     | `create_changeset` and `amend_changeset_plan` say they auto-approve.                                                                                                                                                                  | Always. Clients don't show the model a tool's `_meta` or annotations. |
-| Prompts               | `start`, `change <goal>`, `land [changeset_id]`, `recover`. In Claude Code: `/opentide:start`, `/opentide:change add a dark mode toggle`. Source: `mcp/mcp-prompts.ts`.                                                               | Only when a human types one.                                          |
+| Channel               | What it carries                                                                                                                                                                                                                                                     | Reaches the model                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Server `instructions` | Ownership rules, the changeset loop, what to do when storage breaks. Then the project's own rules (`set_system_prompt`), if they fit. Source: `core/agent-guide.ts`.                                                                                                | On connect, in the system prompt. Nobody has to ask.                  |
+| `project_status`      | Verdict (`ok` / `attention` / `stop`) and one line per problem: consistency errors, memory against `.opentide/state`, unreachable code, the active changeset, the surface version, the project's rules in full (`projectRules`), and its enabled skills (`skills`). | When the agent calls it. The instructions tell it to, first.          |
+| `INVALID_ARGUMENTS`   | A refusal naming the argument the agent meant (`query` → `sql`, `code` → `source`, `status: "completed"` → `done`). camelCase/snake_case spellings of a declared key are accepted and renamed. Source: `core/tools/validate-args.ts`.                               | On the wrong call.                                                    |
+| A refusal             | `Error [CODE]: message`, then `Suggestion: …` on a line of its own. When the refusal found something, such as `complete_changeset`'s readiness report, a second text block carries it as JSON.                                                                      | On the refused call.                                                  |
+| Tool descriptions     | `create_changeset` and `amend_changeset_plan` say they auto-approve.                                                                                                                                                                                                | Always. Clients don't show the model a tool's `_meta` or annotations. |
+| Prompts               | `start`, `change <goal>`, `land [changeset_id]`, `recover`. In Claude Code: `/opentide:start`, `/opentide:change add a dark mode toggle`. Source: `mcp/mcp-prompts.ts`.                                                                                             | Only when a human types one.                                          |
 
 Two limits. **Claude Code cuts a server's instructions at 2,048 characters**,
 silently. `CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH` raises the cap. The general
@@ -444,19 +457,15 @@ on the control API still dispatches unchecked.
 ### Where the tokens go
 
 Turn-by-turn reasoning bills to your client — its subscription or its key — not
-to OpenTide. None of the MCP verbs below calls a model:
+to OpenTide. No MCP verb calls a model; the ones that used to hand the work
+back:
 
-| Verb                                             | In OpenTide                                                                                                                              |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `refute_claims`                                  | Not on the surface.                                                                                                                      |
-| `run_audit`                                      | Every category returns `status: "error"`, "Audit provider not configured". The audits are model-backed and no audit provider ships here. |
-| `index_codebase` with `classification: "assist"` | Classification comes back `skipped_unconfigured`; the index itself is built.                                                             |
-| `complete_changeset`                             | The gate's adversarial refutation step is skipped; the deterministic gate runs.                                                          |
-
-The one exception: `git_commit` with no `message` asks the utility model for a
-subject line if you've configured a utility model and its provider key in
-`~/.config/opentide/config.json`. Without both it uses a deterministic subject.
-Pass `message` and it never calls a model.
+| Verb                                             | In OpenTide                                                                                                  |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `request_review`, `submit_review`                | The server builds the packet and checks the verdict. Your client runs the review on its own model.           |
+| `complete_changeset`                             | Reads the verdicts you submitted. It never refutes or reviews on its own.                                    |
+| `index_codebase` with `classification: "assist"` | Builds the index and returns classification `review_owed`. Classify with `request_review {kind: "imports"}`. |
+| `git_commit` with no `message`                   | Builds the subject from the staged file list. Write the message yourself for a better one.                   |
 
 For verification, use the deterministic checks: `qc`, `run_tests`,
 `check_export_types`, `test_coverage`.
@@ -467,6 +476,30 @@ Intent-approval is auto-satisfied over MCP, for amendments too: an
 `amend_changeset_plan` that sends the changeset back to `planning` is
 re-approved and restarted in the same call. The **completion gate is not**
 auto-satisfied, and these are the failure modes worth knowing.
+
+### Letting the user approve the plan
+
+Pass `await_approval: true` to `create_changeset` or `amend_changeset_plan` and
+the changeset waits in `planning`, the way the IDE chat's plans do. Nothing can
+change the project until it starts. Two things start it:
+
+- **The user, in the IDE:** the plan's **Approve** button.
+- **You, once the user says yes:**
+
+  ```
+  approve_changeset { changeset_id: "cs_…" }
+  ```
+
+A light-lane plan needs no person. Start it with `light_lane: true`; that's
+refused unless the class is `light` and not escalated, and the changeset is
+stamped `autoApproved`, never recorded as a human approval.
+
+Serve doesn't check who approved. Approval is between you and your user.
+
+`get_changeset` returns a changeset as stored: the full plan, attestations and
+message anchors. Without `changeset_id` it returns the session's active one, or
+`null`. It's bigger than `get_changeset_context`; reach for it when you need the
+record itself.
 
 ### One writer per project
 
@@ -516,10 +549,156 @@ time (Claude Code always sends `claude-code`), and two sessions would otherwise
 read the same. Changesets and changelog records store that id, and that name is
 what a second session sees in `CHANGESET_ACTIVE`.
 
+To pick the session yourself, call `open_session` first:
+
+```
+open_session { }                                   → a new project session
+open_session { name: "Billing", visibility: "private",
+               owner: { id: "u_1", display_name: "Ada" } }
+open_session { session_id: "session_…" }           → resume it; reopens if ended
+```
+
+Every later call on the connection, history writes and changes alike, belongs to
+the session it returns. Call it again to switch. The session you leave stays
+open. Without a `name`, an empty session of the same owner is reused rather than
+starting another. Calling it first means the server never starts a session of
+its own.
+
 The session is a real record under `.opentide/history/sessions/`. The
 consistency check (`core/project-doctor.ts`) counts a reference to a missing
 session as an **error** (`CHANGESET_SESSION_MISSING`), and the readiness gate
 refuses to look past any consistency error, so don't delete session files.
+
+The record starts empty. These verbs fill it, and all of them act on the calling
+session only:
+
+| Verb                      | What it writes                                                                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `append_session_messages` | Messages, up to 50 a call. `change_ids` links a message to change records; `plan_for` and `approves` anchor it to a changeset. `tool_calls` and `author_user_id` are kept with the message.                 |
+| `link_session_message`    | Links a message already appended: `changes` (each `{id, rationale?, implementation?}`) to change records, `plan_for`, `approves` and `work_for` to a changeset. Returns the updated records and changesets. |
+| `set_session_summary`     | The session's summary, which replaces the last one, and/or a `metadata` object merged into the session's metadata. A `null` value removes that key.                                                         |
+| `record_usage`            | One model call's tokens. Calls with the same `turn_id` add up to that turn, and the result returns the total as `turn`. Recording the same `id` again replaces it. Stays on the machine.                    |
+| `manage_sessions`         | `rename` and `end` default to the calling session. `list` and `search` cover every session.                                                                                                                 |
+
+The change ids come from the call that made the change. Any call that writes to
+the changelog gets one more text block at the end of its result:
+
+```json
+{
+  "changes": [{ "id": 412, "scope": "handler:get_user", "action": "update" }],
+  "changesets": [
+    {
+      "id": "cs_…",
+      "status": "in_progress",
+      "steps": { "done": 1, "total": 3 }
+    }
+  ]
+}
+```
+
+`changesets` lists each changeset the changes landed in. A call that changed
+nothing has no such block.
+
+To tie a call's changes to a turn of your own, put the turn in the call's
+`_meta` under `opentide/turn`. The change records it makes carry it:
+
+```json
+{
+  "name": "define_handler",
+  "arguments": { "name": "get_user", "source": "…" },
+  "_meta": {
+    "opentide/turn": {
+      "turn_id": "turn_…",
+      "turn_index": 3,
+      "tool_call_id": "toolu_…",
+      "user_message": "add a user lookup"
+    }
+  }
+}
+```
+
+`turn_id` is required for the rest to count. Without it the call works as
+before.
+
+A link that can't be made (an unknown change id, or `approves` on a changeset
+still in `planning`) doesn't fail the call. The message is stored and the result
+carries a `warnings` list.
+
+Documents a message cites go through `document_write`:
+
+```
+document_write { action: "create", name: "shot.png", kind: "image/png",
+                 content_base64: "iVBOR…", attachment: true }
+document_write { action: "ref", id: "doc_…", message_id: 1730…,
+                 role: "attachment" }   ← or "mention"
+```
+
+`attachment: true` records the document as the user's. A ref takes a message in
+your own session. `document_query` reads bytes back with `encoding: "base64"`,
+and `action: "pinned"` lists the session's working set.
+
+`get_session_context {session_id}` reads a past session's messages and summary:
+the first 50 messages, or all of them with `messageLimit: 0`. It serves this
+project only: `project_path` or `project_name` naming another project fails with
+`OTHER_PROJECT`.
+
+Your session's history is the project's. It's stored in `.opentide/history/` and
+travels with the code through git. Sessions marked private (Tide's chat, by
+default) are stored in `.opentide/history/private/`, which ignores itself, so a
+commit never ships them. Each leaves a tracked marker in
+`.opentide/history/private-sessions/` with its id and owner, so changesets made
+in it still check out on a clone.
+
+### Completing a changeset commits it
+
+**Off unless `opentide.json` turns it on** in this release:
+
+```json
+{ "name": "notes", "commitOnComplete": true }
+```
+
+When it's on and `complete_changeset` passes the gate, it commits the work. The
+result carries `commit`:
+
+| `commit`                                              | Meaning                                                           |
+| ----------------------------------------------------- | ----------------------------------------------------------------- |
+| `{"committed": true, "sha": "…"}`                     | Committed.                                                        |
+| `{"committed": false, "reason": "nothing_to_commit"}` | Nothing of OpenTide's changed.                                    |
+| `{"committed": false, "reason": "off"}`               | `commitOnComplete` isn't `true`.                                  |
+| `{"committed": false, "reason": "no_project"}`        | No project loaded.                                                |
+| `{"committed": false, "reason": "failed", "message"}` | Git refused. The changeset is still complete. `message` says why. |
+
+What goes in:
+
+- `.opentide/state/` and `.opentide/history/`, minus machine-local telemetry and
+  private sessions;
+- `opentide.json`, `assets/` and `fixtures/`;
+- project files the changeset wrote through OpenTide (`write_project_file`,
+  `apply_project_file`, `generate_project_docs`).
+
+Nothing else. Your other modified, staged or untracked files stay as they were:
+the commit is made with `git commit --only`, so what you staged stays staged and
+out of it. A project with no repo gets one, with OpenTide's `.gitignore`. The
+commit message is the changeset title.
+
+Your hooks run. A pre-commit hook that fails, or a repo with no
+`user.name`/`user.email`, gives `reason: "failed"`.
+
+`"commitOnComplete": false` also stops Tide's per-step checkpoint commits, which
+otherwise run whatever the setting.
+
+To make the same commit yourself, mid-changeset, pass the changeset to
+`git_commit`. It commits what landing would, and nothing else in the work tree:
+
+```
+git_commit { changeset_id: "cs_…", message: "step 2: add the route" }
+```
+
+The message is required. `{committed: false}` means nothing had changed, or the
+project turned commits off.
+
+History you append after completing (`append_session_messages`,
+`set_session_summary`) goes into the next commit.
 
 ### Reading what the gate is complaining about
 
@@ -529,10 +708,72 @@ lists every error with its code, path and message. `doctor_project` itself is
 not on the surface (`AGENT_TOOL_EXCLUDE` in `core/tools/definitions.ts`);
 `project_status` covers it.
 
+### Reviewing a change yourself
+
+The server never calls a model to review. It tells you what to review, hands you
+the code, and records your verdict; your model does the reviewing.
+
+1. `request_review {kind}` returns a packet: `packetId`, `instructions`, the
+   code to review and `response`, the shape of the answer.
+2. Run the packet in a fresh context: a subagent, or a new conversation. Not the
+   one that wrote the code.
+3. `submit_review {packet_id, verdict, reviewer}`.
+
+| `kind`     | Also takes                                                                           | The packet carries                                                                                     | The verdict                                                                                     |
+| ---------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `refute`   | `changeset_id`, `claim_ids`, `force`                                                 | `claims`, each with a `contextId` into `contexts`; `reused`, the claims with a verdict on current code | `{results: [{claimId, refuted, confidence, counterexample, reasoning}]}`, one or more per claim |
+| `criteria` | `changeset_id`                                                                       | `request`, the user's words (`requestFromUser: false` if only the title was found), and `context`      | `{criteria: [{text, priority, rationale}]}`                                                     |
+| `audit`    | `category` (built-in, or one from `define_audit`)                                    | `instructions` with the audit's prompt, and `context`, the whole project                               | `{issues: [{severity, rule, message, entity, line, suggestion}]}`                               |
+| `imports`  | nothing: it classifies the last `index_codebase` run with `classification: "assist"` | `request`: the graph summary, package and framework hints, and source excerpts                         | `{facts, mappings, diagnostics, candidateEntities}`                                             |
+
+- **Refute.** A claim is refuted only by an attempt with `refuted: true`,
+  `confidence: "high"` and a `counterexample`. Each claim gets an `adversarial`
+  attestation. A refuted claim blocks `complete_changeset` (`CLAIM_REFUTED`)
+  until a fresh review says otherwise. With no `claim_ids` the packet covers the
+  `must` claims without a fresh verdict; an empty `claims` means nothing is
+  owed.
+- **Criteria.** The reviewer never sees the plan's criteria. The server compares
+  afterwards, and each proposal no criterion covers is an
+  `UNCOVERED_INDEPENDENT_CRITERION` warning.
+- **Audit.** Stored like any audit (`list_audits`), with an `audit` attestation.
+- **Imports.** Merged into the codebase graph (`GET /api/codebase`); no
+  attestation, and no registry writes. Mappings under 0.75 confidence aren't
+  applied. Indexing again makes the packet stale. Without a pending assist-mode
+  index, `request_review` refuses with `NO_INDEX_TO_CLASSIFY`.
+
+What `submit_review` refuses:
+
+| Code                      | When                                                          | The packet                     |
+| ------------------------- | ------------------------------------------------------------- | ------------------------------ |
+| `STALE_REVIEW`            | The code changed after the packet was issued.                 | Request a new one.             |
+| `INVALID_VERDICT`         | The verdict doesn't match `response`, or misses a claim.      | Still open. Fix it and resend. |
+| `REVIEW_PACKET_USED`      | The packet was already answered.                              | Request a new one.             |
+| `REVIEW_PACKET_NOT_FOUND` | Unknown id. Packets live in memory until the server restarts. | Request a new one.             |
+
+Attestations from `submit_review` carry `producer: "client"` and the `reviewer`
+you named, in the changeset and in the verification ledger. A pass from the
+agent that wrote the code is weaker evidence than its refutation, and nothing
+proves it used a fresh context; the marking is there so a reader can tell.
+
+`get_code_context` hands you the same code without a packet:
+
+| Call                                              | Returns                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------------- |
+| `get_code_context {changeset_id, claim_id}`       | The claim's formal-spec targets and tests; failing those, what changed.     |
+| `get_code_context {changeset_id}`                 | Every entity the changeset changed.                                         |
+| `get_code_context {scopes: ["handler:get_user"]}` | Those entities. Also `function:`, `template:`, `test:`, `route:GET /users`. |
+| `get_code_context {}`                             | The whole project.                                                          |
+
+Output is capped at 40,000 characters, and a scoped call at 12 entities.
+`list_tests {claim_id}` names the tests that verify a claim.
+
 ### `must` criteria
 
-`change_class: "light"` skips the adversarial pass outright. In OpenTide a
-`standard` changeset skips it too, because no refutation agent is assembled.
+A `must` criterion with no refute review against the current code raises
+`MUST_CLAIM_UNREVIEWED`, a warning (an error under `strict`). Nothing runs the
+review for you: request one before `complete_changeset`. `change_class:
+"light"`
+can't carry a `must` criterion, so it never needs one.
 
 A criterion with no priority is stored as `should`, and so is one written as a
 bare string (`normalizeAcceptanceCriteria`), so `must` is only ever chosen on
@@ -681,6 +922,8 @@ Two things close that gap:
 - **`complete_changeset` flushes.** It is best-effort: the returned
   `stateFlushed` boolean tells you whether the write happened, and a failure
   logs at `warn`/`system` rather than failing the completion.
+- **`complete_changeset` commits, when `commitOnComplete` is on.** See
+  [Completing a changeset commits it](#completing-a-changeset-commits-it).
 - **`flush_project_state`** is the explicit verb for work outside a changeset,
   or before ending a long session. It writes only the project's state directory
   — no git operations, no database writes — and returns the path plus live
@@ -752,12 +995,12 @@ Every `tools/list` response carries a metadata block under the
 ```jsonc
 // tools/list result
 {
-  "tools": [/* … 110 tools … */],
+  "tools": [/* … 121 tools … */],
   "_meta": {
     "opentide/surface": {
-      "version": "6.4.0", // MCP_SURFACE_VERSION — the contract handle you pin
-      "fingerprint": "d374-7a75615a", // structural hash of names + input schemas
-      "toolCount": 110
+      "version": "7.2.2", // MCP_SURFACE_VERSION — the contract handle you pin
+      "fingerprint": "f8d7-ea949677", // structural hash of names + input schemas
+      "toolCount": 121
     }
   }
 }

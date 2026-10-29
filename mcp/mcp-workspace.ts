@@ -688,7 +688,7 @@ export async function runWorkspaceBridge(
     folder: dir,
     eager,
     surface: projectedMcpTools(composition),
-    guide: generalGuide(composition),
+    guide: generalGuide(),
     locate: locateAndReport,
     create: createApp,
     memory: fileWorkspaceMemory(),

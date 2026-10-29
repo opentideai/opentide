@@ -156,6 +156,14 @@ async function loadProjectLocked(
     composition: opts.composition,
   });
   kernel.projectDir = entry.path;
+  // Private sessions written before they had their own directory move there
+  // now, under the lock, before anything can commit the history.
+  const relocated = await kernel.sessions.relocatePrivateSessions();
+  if (relocated > 0) {
+    console.log(
+      `  Moved ${relocated} private session(s) out of shared history`,
+    );
+  }
   // Surface unknown-model pricing fallbacks (e.g. a new Opus tier not yet in the
   // pricing table) through structured logging instead of silently mispricing.
   setPricingDriftWarnHandler((message, metadata) =>
@@ -205,6 +213,7 @@ async function loadProjectLocked(
   const rebuild = () => {
     appServer.rebuild();
     kernel.appPort = appServer.port;
+    kernel.appRevision++;
   };
 
   const { errors } = await loadKernelState(kernel, paths.stateDir, rebuild);

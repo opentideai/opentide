@@ -33,7 +33,11 @@ import {
   DEFAULT_REFRESH_TARGETS,
   refreshLocks,
 } from "../verification/production-lock-refresh.ts";
-import { CONTROL_SERVER_PORT, OPENTIDE_VERSION } from "../core/config.ts";
+import {
+  CONTROL_SERVER_PORT,
+  OPENTIDE_VERSION,
+  SERVE_IDLE_EXIT_MS,
+} from "../core/config.ts";
 import { cliUsage, parseCliCommand, scaffoldCommand } from "./cli-commands.ts";
 import { initCompiler, stopCompiler } from "../core/compiler.ts";
 import {
@@ -442,7 +446,8 @@ async function runTaskCommand(rest: string[]): Promise<void> {
   if (main.data.started) {
     const { pid, logPath } = main.data.started;
     console.error(
-      `Started opentide serve (pid ${pid}) for this project; it keeps running.` +
+      `Started opentide serve (pid ${pid}) for this project; it stops itself ` +
+        `after ${SERVE_IDLE_EXIT_MS / 60_000} minutes with no client.` +
         (logPath ? ` Log: ${logPath}` : ""),
     );
   }

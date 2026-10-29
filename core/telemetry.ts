@@ -136,9 +136,17 @@ interface IngestResponse {
 }
 
 interface TelemetryManagerOptions {
-  getContext: () => ProjectContext | null;
+  getContext?: () => ProjectContext | null;
+  // The project's directory, for a process that holds no ProjectContext (the
+  // agent). Falls back to getContext's.
+  getProjectPath?: () => string | null;
   getCurrentSessionId?: () => string | null;
+  // The queue's file name. Two processes on one project keep separate queues,
+  // since a queue is rewritten whole.
+  queueFile?: string;
 }
+
+const DEFAULT_QUEUE_FILE = "telemetry.jsonl";
 
 const MAX_STRING_LENGTH = 256;
 const SECRET_KEY_RE = /token|key|secret|password|authorization|cookie/i;
@@ -260,6 +268,21 @@ export class TelemetryManager {
       include_diagnostics: report.include_diagnostics,
     });
     return report;
+  }
+
+  // Syncs in the background when an endpoint is set and some category may
+  // leave the machine. Feedback consent is independent of the passive-telemetry
+  // switch, so feedback-only consent still flushes; sync() filters per record.
+  // Returns the sync, or null when there was nothing to do.
+  syncIfAllowed(): Promise<TelemetryStatus> | null {
+    const settings = this.getSettings();
+    if (!settings.endpoint.trim()) return null;
+    if (
+      !egressAllowed(settings, "event") && !egressAllowed(settings, "feedback")
+    ) {
+      return null;
+    }
+    return this.sync();
   }
 
   async sync(): Promise<TelemetryStatus> {
@@ -391,12 +414,16 @@ export class TelemetryManager {
     renameSync(tmp, file);
   }
 
+  private projectPath(): string | null {
+    return this.opts.getProjectPath?.() ??
+      this.opts.getContext?.()?.entry.path ?? null;
+  }
+
   private queuePath(): string {
-    const ctx = this.opts.getContext();
-    if (ctx?.entry.path) {
-      return join(getProjectPaths(ctx.entry.path).cacheDir, "telemetry.jsonl");
-    }
-    return join(getUserConfigDir(), "telemetry.jsonl");
+    const file = this.opts.queueFile ?? DEFAULT_QUEUE_FILE;
+    const projectDir = this.projectPath();
+    if (projectDir) return join(getProjectPaths(projectDir).cacheDir, file);
+    return join(getUserConfigDir(), file);
   }
 
   private applySyncResponse(
@@ -449,8 +476,7 @@ export class TelemetryManager {
   }
 
   private releaseFields(settings: Required<TelemetrySettings>) {
-    const ctx = this.opts.getContext();
-    const projectDir = ctx?.entry.path;
+    const projectDir = this.projectPath() ?? undefined;
     return {
       app_version: readVersion(projectDir),
       release_channel: settings.releaseChannel,
@@ -458,17 +484,15 @@ export class TelemetryManager {
   }
 
   private projectFields(): { project_local_id?: string } {
-    const ctx = this.opts.getContext();
-    return ctx?.entry.path
-      ? { project_local_id: projectLocalId(ctx.entry.path) }
-      : {};
+    const projectDir = this.projectPath();
+    return projectDir ? { project_local_id: projectLocalId(projectDir) } : {};
   }
 
   private async buildDiagnostics(
     currentPanel: string,
     currentRoute: string,
   ): Promise<FeedbackDiagnostics> {
-    const ctx = this.opts.getContext();
+    const ctx = this.opts.getContext?.() ?? null;
     const settings = this.getSettings();
     const release = this.releaseFields(settings);
     const recentErrors = ctx?.kernel.log.recent(100)

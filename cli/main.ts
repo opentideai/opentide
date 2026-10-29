@@ -13,8 +13,11 @@ import {
 } from "../core/project-loader.ts";
 import {
   CONTROL_SERVER_PORT,
+  SERVE_IDLE_EXIT_MS,
+  SERVE_IDLE_POLL_MS,
   SERVER_SHUTDOWN_GRACE_MS,
 } from "../core/config.ts";
+import { createActivityMonitor, watchIdle } from "../core/idle-exit.ts";
 import {
   type ChildReadyLine,
   formatReadyLine,
@@ -44,7 +47,7 @@ export async function serveHeadless(
   // The headless `opentide serve` subcommand rejects no-project upstream in the
   // dispatcher (cli.ts) — expressing "one project per invocation" at the CLI
   // boundary without baking the single-project assumption deeper (D2).
-  const { projectPath, port, appPort, uiDist } = getServeArgs(
+  const { projectPath, port, appPort, uiDist, exitWhenIdle } = getServeArgs(
     CONTROL_SERVER_PORT,
     argv,
   );
@@ -65,11 +68,24 @@ export async function serveHeadless(
     console.log("  No project specified — starting in launcher mode");
   }
 
-  const { server: controlServer, chat, setProject } = await startControlServer(
+  const activity = exitWhenIdle ? createActivityMonitor() : undefined;
+  // Declared ahead of the server so a single-project serve can hand its project
+  // over and exit (core/project-handover.ts); assigned below.
+  let shutdown: () => Promise<void> = () => Promise.resolve();
+  const { server: controlServer, setProject } = await startControlServer(
     projectCtx,
     port,
     {
       composition,
+      activity,
+      ...(projectCtx
+        ? {
+          onRelease: () => {
+            console.log("\n  Project handed over to another process.");
+            void shutdown();
+          },
+        }
+        : {}),
       projectAppPort: appPort,
       // Serve a prebuilt IDE bundle when the orchestrator (or desktop) passes
       // one, so a child is a self-contained stack (Feature B, decision #4).
@@ -109,7 +125,7 @@ export async function serveHeadless(
   }
 
   let shutdownPromise: Promise<void> | null = null;
-  const shutdown = async () => {
+  shutdown = async () => {
     if (shutdownPromise) return await shutdownPromise;
     shutdownPromise = shutdownOnce();
     return await shutdownPromise;
@@ -117,7 +133,6 @@ export async function serveHeadless(
 
   const shutdownOnce = async () => {
     console.log("\nShutting down...");
-    if (chat) await chat.close();
     await setProject.close();
     if (!(await shutdownHttpServer(controlServer))) {
       console.log(
@@ -135,6 +150,19 @@ export async function serveHeadless(
   // closed terminal window must not cost the project.
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const) {
     Deno.addSignalListener(signal, shutdown);
+  }
+
+  if (activity) {
+    watchIdle(activity, {
+      idleMs: SERVE_IDLE_EXIT_MS,
+      pollMs: SERVE_IDLE_POLL_MS,
+      onIdle: () => {
+        console.log(
+          `\n  No client for ${SERVE_IDLE_EXIT_MS / 60_000} minutes; exiting.`,
+        );
+        void shutdown();
+      },
+    });
   }
 
   let crashShutdownInProgress = false;

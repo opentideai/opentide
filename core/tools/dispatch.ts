@@ -55,7 +55,7 @@ import type {
   VerificationTier,
 } from "../types.ts";
 // The verification/agent-owned tool handlers (audits, changeset governance,
-// adversarial refutation) are called through the composition-registered
+// import classification) are called through the composition-registered
 // capability registry instead of imported upward (§3.3, tool-capabilities.ts).
 import { changeScope, isTierExempt, mutationToolTier } from "./change-tiers.ts";
 import {
@@ -67,11 +67,7 @@ import {
   normalizeTextEdit,
   type TextEdit,
 } from "./text-edits.ts";
-import {
-  agentTools,
-  hasAgentTools,
-  verificationTools,
-} from "../tool-capabilities.ts";
+import { verificationTools } from "../tool-capabilities.ts";
 import {
   currentFingerprints,
   fingerprintProject,
@@ -83,10 +79,7 @@ import { createTimestampedId } from "../ids.ts";
 import {
   formatKernelTimeoutMs,
   getKernelSettings,
-  getProviderKey,
-  getVerificationModelForRequest,
   MCP_SURFACE_VERSION,
-  providerFor,
   TOOL_ERROR_STALE_WRITE,
 } from "../config.ts";
 import { projectGuide } from "../agent-guide.ts";
@@ -102,7 +95,12 @@ import {
   resetDataTables,
 } from "../data-fixtures.ts";
 import { kernelInspectAPI } from "../dev-views.ts";
-import { errorMessage, escapeRegex } from "../util.ts";
+import {
+  decodeBase64,
+  encodeBase64,
+  errorMessage,
+  escapeRegex,
+} from "../util.ts";
 import { validateSchemaConventions } from "../db.ts";
 import {
   checkDependants,
@@ -173,6 +171,7 @@ import {
   readProjectMode,
 } from "../project-manager.ts";
 import type {
+  DocumentMetadata,
   DocumentRecord,
   DocumentRef,
   DocumentScope,
@@ -180,6 +179,7 @@ import type {
   ListDocumentsFilter,
 } from "../documents.ts";
 import {
+  ATTACHMENT_DOCUMENT_SOURCE,
   EVIDENCE_DOCUMENT_KIND,
   EVIDENCE_DOCUMENT_SOURCE,
   RUN_EVIDENCE_DOCUMENT_KIND,
@@ -189,12 +189,8 @@ import {
   asSourceFileSnapshot,
   buildImportClassifierRequest,
   canRestoreSourceSnapshot,
-  type CodebaseGraph,
   type CodebaseGraphSummary,
-  type ImportClassifierResult,
-  importClassifierResultToSemanticContribution,
   indexSourceBackedCodebase,
-  mergeCodebaseContributions,
   summarizeCodebaseGraph,
   writeSourceSnapshot,
 } from "../codebase/index.ts";
@@ -219,6 +215,10 @@ import {
 } from "../git.ts";
 import { resolveGitCommitMessage } from "../git-message.ts";
 import {
+  commitLandedChangeset,
+  commitManagedPaths,
+} from "../landing-commit.ts";
+import {
   type AssetSnapshot,
   assetSnapshot,
   assetSnapshotBytes,
@@ -233,6 +233,17 @@ import {
 import { reservedNameError, reservedNamesReport } from "../reserved-names.ts";
 import { discardTaskFork, listTasks, startTask } from "../tasks/fork.ts";
 import { mergeTask } from "../tasks/task-merge.ts";
+import {
+  captureChangesetPlanDocument,
+  captureScreenshotEvidenceDocument,
+} from "../document-capture.ts";
+import {
+  buildChangedScopeContext,
+  buildClaimContext,
+  buildProjectContext,
+  changedScopesOf,
+} from "../code-context.ts";
+import { requestReview, type ReviewKind, submitReview } from "../reviews.ts";
 
 export interface ToolResult {
   ok: boolean;
@@ -691,6 +702,8 @@ async function mintAttestation(
     scope: string;
     summary: string;
     checkId?: string;
+    producer?: "client";
+    reviewer?: string;
   },
   explicitChangesetId?: string,
 ): Promise<string | null> {
@@ -1899,9 +1912,9 @@ export function isMutationTool(name: string): boolean {
 // Crucially, read-only status is an explicit hand-vetted allowlist, NOT the
 // complement of MODIFICATION_TOOLS. Several verbs write state without being
 // changelog mutations: the whole changeset-governance family, and the
-// attestation-minting verifiers (run_audit, run_tests, check_export_types,
-// test_coverage, verify_formal_specs, refute_claims) all record proof onto the
-// active changeset. `readOnlyHint = !isMutationTool` would wrongly mark every one
+// attestation-minting verifiers (submit_review, run_tests, check_export_types,
+// test_coverage, verify_formal_specs) all record proof onto the active
+// changeset. `readOnlyHint = !isMutationTool` would wrongly mark every one
 // of those as safe-to-auto-run, so read-only is asserted only for verbs verified
 // to purely inspect.
 
@@ -1953,9 +1966,12 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "list_audits",
   "search_changes",
   "list_turns",
+  "get_session_context",
+  "list_current_project_pins",
   "get_change",
   "list_changesets",
   "get_changeset_context",
+  "get_changeset",
   "check_changeset_readiness",
   "list_modules",
   "get_module",
@@ -2046,31 +2062,6 @@ export function isIdempotentTool(name: string): boolean {
 export function isOpenWorldTool(name: string): boolean {
   return OPEN_WORLD_TOOLS.has(name);
 }
-
-// Calls that spend the user's model API key (an LLM run behind the tool). A
-// predicate, not a set, because index_codebase only bills in its "assist"
-// classification mode. Not covered: complete_changeset, which bills only when a
-// criterion is `must` and auto-refute is on — that is warned about where the
-// criterion is written (mustCriteriaWarning).
-const BILLED_TOOLS: ReadonlySet<string> = new Set([
-  "refute_claims",
-  "run_audit",
-]);
-
-export function isBilledToolCall(
-  name: string,
-  args: Record<string, unknown> = {},
-): boolean {
-  if (BILLED_TOOLS.has(name)) return true;
-  return name === "index_codebase" && args.classification === "assist";
-}
-
-// Verbs that may bill depending on their arguments, for surfaces that mark a
-// verb before it is called (the MCP listing).
-export const MAY_BILL_TOOLS: ReadonlySet<string> = new Set([
-  ...BILLED_TOOLS,
-  "index_codebase",
-]);
 
 const CHANGESET_TOOLS = new Set([
   "create_changeset",
@@ -2192,6 +2183,7 @@ function compactSession(session: {
   focus: string | null;
   archived: boolean;
   visibility?: string;
+  ownerUserId?: string | null;
   lastMessageAt?: string | null;
 }) {
   return {
@@ -2202,6 +2194,7 @@ function compactSession(session: {
     endedAt: session.endedAt,
     archived: session.archived,
     visibility: session.visibility ?? "private",
+    ownerUserId: session.ownerUserId ?? null,
     summary: session.summary,
     focus: session.focus,
   };
@@ -2231,254 +2224,6 @@ function sessionMatchesText(
     session.focus,
     session.metadata,
   ].some((value) => value?.toLowerCase().includes(q));
-}
-
-// Runs adversarial refutation over a changeset's claims, minting one
-// `adversarial` attestation per reviewed claim. Shared by the `refute_claims`
-// tool and the completion gate. A claim with a fresh verdict (attestation
-// fingerprinted to current code, unless `force`) is reused, not re-run — so the
-// model is only called for un-reviewed claims, and only when a key is present.
-async function refuteChangesetClaims(
-  kernel: Kernel,
-  changeset: Changeset,
-  ctx: ChangeContext | null,
-  opts: {
-    claimIds?: string[];
-    mustOnly?: boolean;
-    force?: boolean;
-    attempts?: number;
-    sessionId?: string | null;
-  },
-): Promise<{
-  results: Array<Record<string, unknown>>;
-  ranModel: boolean;
-  needsModel: boolean;
-  needsKey: boolean;
-}> {
-  const allClaims = changeset.plan.acceptanceCriteria ?? [];
-  const rawTargets = opts.claimIds && opts.claimIds.length > 0
-    ? allClaims.filter((c) => opts.claimIds!.includes(c.id))
-    : opts.mustOnly
-    ? allClaims.filter((c) => c.priority === "must")
-    : allClaims;
-  const targets = [
-    ...new Map(rawTargets.map((claim) => [claim.id, claim])).values(),
-  ];
-
-  const projectFp = fingerprintProject(kernel);
-  const existing = changeset.plan.attestations ?? [];
-  const freshVerdict = (claimId: string) => {
-    if (opts.force) return null;
-    const latest = existing
-      .filter((a) => a.kind === "adversarial" && a.checkId === claimId)
-      .at(-1);
-    return latest && latest.fingerprint === projectFp ? latest : null;
-  };
-  const verificationModel = getVerificationModelForRequest();
-  const hasKey = verificationModel
-    ? !!getProviderKey(providerFor(verificationModel))
-    : false;
-
-  // The entities this changeset actually touched, as "category:key" scopes, read
-  // ONCE for the whole loop rather than per claim. This is what keeps a refutation
-  // prompt scoped to the change instead of the whole app (buildClaimContext's last
-  // resort). Lazily resolved: a run whose claims all have fresh verdicts, or that
-  // has no key, never queries the changelog.
-  let changedScopes: string[] | null = null;
-  const scopesForContext = async (): Promise<string[]> => {
-    if (changedScopes === null) {
-      const records = await kernel.changelog.listByChangeset(changeset.id);
-      changedScopes = [
-        ...new Set(records.map((r) => `${r.category}:${r.key}`)),
-      ];
-    }
-    return changedScopes;
-  };
-
-  const results: Array<Record<string, unknown>> = [];
-  let ranModel = false;
-  let needsModel = false;
-  let needsKey = false;
-  for (const claim of targets) {
-    const cached = freshVerdict(claim.id);
-    if (cached) {
-      results.push({
-        claimId: claim.id,
-        claimText: claim.text,
-        refuted: cached.status === "failed",
-        skipped: true,
-        summary: `Reused fresh verdict: ${cached.summary}`,
-      });
-      continue;
-    }
-    if (!verificationModel) {
-      needsModel = true;
-      continue;
-    }
-    if (!hasKey) {
-      needsKey = true;
-      continue;
-    }
-    ranModel = true;
-    const at = agentTools(kernel.composition);
-    const contextCode = at.buildClaimContext(
-      kernel,
-      changeset,
-      claim.id,
-      await scopesForContext(),
-    );
-    const refutation = await at.runClaimRefutation(
-      kernel,
-      claim,
-      contextCode,
-      {
-        ...(opts.attempts !== undefined ? { attempts: opts.attempts } : {}),
-        sessionId: ctx?.sessionId ?? null,
-        changesetId: changeset.id,
-      },
-    );
-    const attestationId = await mintAttestation(kernel, ctx, {
-      kind: "adversarial",
-      status: refutation.refuted ? "failed" : "passed",
-      fingerprint: projectFp,
-      scope: PROJECT_SCOPE,
-      checkId: claim.id,
-      summary: refutation.summary,
-    }, changeset.id);
-    results.push({
-      claimId: claim.id,
-      claimText: claim.text,
-      refuted: refutation.refuted,
-      ...(refutation.counterexample
-        ? { counterexample: refutation.counterexample }
-        : {}),
-      ...(attestationId ? { attestationId } : {}),
-      summary: refutation.summary,
-    });
-  }
-  return { results, ranModel, needsModel, needsKey };
-}
-
-// The user's own words for what they asked for — the one input to the independent
-// criteria reviewer that the implementing agent did not write.
-//
-// Anchoring the reviewer on the agent's summary would defeat the point: it would be
-// asked to derive criteria from a framing already shaped by whoever chose the
-// criteria we are trying to check. So the chat message that preceded the plan is
-// strongly preferred, and the agent-authored title/description is a labelled last
-// resort — labelled because a caller reading the attestation deserves to know the
-// review ran on a restatement rather than on the request.
-async function resolveChangesetRequest(
-  kernel: Kernel,
-  changeset: Changeset,
-): Promise<{ text: string; fromUser: boolean }> {
-  const fallback = {
-    text: [changeset.title, changeset.description].filter(Boolean).join("\n\n"),
-    fromUser: false,
-  };
-  const sessionId = changeset.sessionId;
-  if (!sessionId) return fallback;
-  // The plan messages are the agent's; the request is the last user turn before
-  // the earliest of them. Without a plan message there is no anchor, so the last
-  // user message in the session is the best available guess.
-  const planAnchor = changeset.planMessageIds.length > 0
-    ? Math.min(...changeset.planMessageIds)
-    : Number.POSITIVE_INFINITY;
-  try {
-    const messages = await kernel.sessions.getMessages(sessionId);
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i]!;
-      if (message.role !== "user" || message.kind !== "chat") continue;
-      if (message.id >= planAnchor) continue;
-      const text = message.content.trim();
-      if (text) return { text, fromUser: true };
-    }
-  } catch (err) {
-    kernel.log.log(
-      "debug",
-      "system",
-      `Could not resolve the request text for changeset "${changeset.id}": ${
-        errorMessage(err)
-      }`,
-    );
-  }
-  return fallback;
-}
-
-// Ask an independently-prompted reviewer what this change had to do, and record
-// every proposal the plan does not already cover.
-//
-// Unlike the refuter this runs ONCE per changeset, not once per claim per attempt:
-// the reviewer reads the whole diff and proposes for the whole change, and the
-// per-claim fan-out is precisely what made the refute pass the most expensive thing
-// at this gate (docs/agent-cost-reduction.md §2.7).
-//
-// Best-effort by construction. The proposals are advisory — they tell a human where
-// to look — so a failed review must never be the reason a verified changeset cannot
-// complete. Nothing is recorded unless the model returned something usable.
-async function reviewIndependentCriteria(
-  kernel: Kernel,
-  changeset: Changeset,
-  context: ChangeContext | null,
-): Promise<void> {
-  try {
-    const handlers = agentTools(kernel.composition);
-    const records = await kernel.changelog.listByChangeset(changeset.id);
-    const scopes = [...new Set(records.map((r) => `${r.category}:${r.key}`))];
-    // The same changed-scope context the refuter builds, so the two gate calls
-    // present byte-identical code and share a cached prefix.
-    const contextCode = handlers.buildChangedScopeContext(kernel, scopes);
-    const request = await resolveChangesetRequest(kernel, changeset);
-
-    const result = await handlers.runIndependentCriteria(
-      kernel,
-      changeset,
-      request.text,
-      contextCode,
-      {
-        sessionId: context?.sessionId ?? changeset.sessionId,
-        changesetId: changeset.id,
-      },
-    );
-    // A response the parser could not use is NOT "no gaps found" — recording it as
-    // such would clear the readiness finding on the strength of a broken reply.
-    if (!result.usable) {
-      kernel.log.log(
-        "debug",
-        "system",
-        `Independent criteria review for "${changeset.id}" returned no usable response; nothing recorded.`,
-      );
-      return;
-    }
-    await kernel.changesets.recordIndependentCriteria(
-      changeset.id,
-      result.proposals,
-    );
-    await mintAttestation(
-      kernel,
-      context,
-      {
-        kind: "criteria",
-        // Never "failed": an uncovered proposal is a gap for a human to judge,
-        // not a verdict that the work is wrong.
-        status: result.uncovered.length === 0 ? "passed" : "partial",
-        fingerprint: fingerprintProject(kernel),
-        scope: PROJECT_SCOPE,
-        summary: request.fromUser
-          ? result.summary
-          : `${result.summary} (Reviewed against the changeset summary — the original request text was unavailable.)`,
-      },
-      changeset.id,
-    );
-  } catch (err) {
-    kernel.log.log(
-      "warn",
-      "system",
-      `Independent criteria review failed for changeset "${changeset.id}": ${
-        errorMessage(err)
-      }`,
-    );
-  }
 }
 
 // Re-adjudicate a changeset's declared change class against what it actually changed
@@ -2556,6 +2301,120 @@ async function recordChangeManifest(
       evidenceIds: [evidenceId],
     })),
     residualRisks: [],
+  });
+}
+
+// git_commit scoped to a changeset: OpenTide's own paths and the files the
+// changeset wrote, as landing commits them, and nothing else in the work tree.
+// Nothing to commit, or commits turned off for the project, is not an error.
+async function commitChangesetPaths(
+  kernel: Kernel,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const message = input.message;
+  if (typeof message !== "string" || !message.trim()) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "git_commit with a changeset_id needs a message.",
+      },
+    };
+  }
+  try {
+    const projectDir = requireProjectDir(kernel);
+    flushKernelProjectState(kernel);
+    const sha = await commitManagedPaths(
+      kernel,
+      projectDir,
+      message,
+      input.changeset_id as string,
+    );
+    return {
+      ok: true,
+      data: sha ? { committed: true, sha } : { committed: false },
+    };
+  } catch (err) {
+    return gitToolError(err);
+  }
+}
+
+// A document_write create's content: text, or bytes sent as base64.
+function documentContent(
+  input: Record<string, unknown>,
+): Result<string | Uint8Array> {
+  if (typeof input.content_base64 !== "string") {
+    return { ok: true, data: (input.content as string) ?? "" };
+  }
+  try {
+    return { ok: true, data: decodeBase64(input.content_base64) };
+  } catch {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "content_base64 isn't valid base64.",
+      },
+    };
+  }
+}
+
+// A user's attachment is the user's document, tagged so it isn't mistaken for
+// an agent-authored one.
+function documentMetadata(
+  input: Record<string, unknown>,
+): DocumentMetadata | undefined {
+  const description = input.description as string | undefined;
+  const metadata: DocumentMetadata = {
+    ...(description ? { description } : {}),
+    ...(input.attachment === true
+      ? { source: ATTACHMENT_DOCUMENT_SOURCE }
+      : {}),
+  };
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+const MESSAGE_REF_ROLES = ["mention", "attachment"] as const;
+
+// A message in the caller's session cites a document version: one it mentioned
+// or one attached to it. Other refs (plans, evidence, the working set) are the
+// kernel's to write.
+async function recordMessageDocumentRef(
+  kernel: Kernel,
+  input: Record<string, unknown>,
+  ctx?: ChangeContext,
+): Promise<Result<DocumentRef>> {
+  const invalid = (message: string): Result<DocumentRef> => ({
+    ok: false,
+    error: { code: "INVALID_INPUT", message },
+  });
+  const id = input.id as string | undefined;
+  const messageId = input.message_id;
+  const role = input.role as typeof MESSAGE_REF_ROLES[number];
+  if (!id) return invalid("document_write action=ref requires an id.");
+  if (!Number.isInteger(messageId)) {
+    return invalid("document_write action=ref requires a message_id.");
+  }
+  if (!MESSAGE_REF_ROLES.includes(role)) {
+    return invalid("role must be mention or attachment.");
+  }
+  const message = await kernel.sessions.getMessage(messageId as number);
+  if (!message || message.sessionId !== ctx?.sessionId) {
+    return {
+      ok: false,
+      error: {
+        code: "MESSAGE_NOT_FOUND",
+        message: `Message ${messageId} isn't in this session.`,
+      },
+    };
+  }
+  return await kernel.documents.recordRef({
+    documentId: id,
+    refType: "message",
+    refId: String(message.id),
+    role,
+    versionHash: (input.versionHash as string | undefined) ?? null,
+    sessionId: message.sessionId,
   });
 }
 
@@ -2740,6 +2599,13 @@ async function projectStatus(
     // are cut at a client-side length cap (2,048 characters in Claude Code), so
     // this is the one place they always arrive whole.
     projectRules: projectGuide(kernel) || null,
+    // The project's enabled skills: instructions the user wrote for any agent
+    // working here, as the IDE's agent gets them in its prompt.
+    skills: (await kernel.skills.listEnabled()).map((s) => ({
+      name: s.name,
+      description: s.description,
+      prompt: s.prompt,
+    })),
     // What define_handler / define_function / define_test refuse. Listed here
     // because the server instructions only have room for the handler list.
     reservedNames: reservedNamesReport(),
@@ -2747,7 +2613,129 @@ async function projectStatus(
   };
 }
 
+// get_code_context: the same code the closed refuter and criteria reviewer
+// read, so an MCP client reviewing a change sees what the gate saw.
+async function getCodeContext(
+  kernel: Kernel,
+  input: Record<string, unknown>,
+): Promise<ToolResult> {
+  const scopes = input.scopes;
+  const changesetId = input.changeset_id as string | undefined;
+  const claimId = input.claim_id as string | undefined;
+  if (scopes !== undefined) {
+    if (!Array.isArray(scopes) || !scopes.every((x) => typeof x === "string")) {
+      return {
+        ok: false,
+        error: { code: "INVALID_INPUT", message: "scopes must be strings." },
+      };
+    }
+    return {
+      ok: true,
+      data: { context: buildChangedScopeContext(kernel, scopes) },
+    };
+  }
+  if (claimId && !changesetId) {
+    return {
+      ok: false,
+      error: {
+        code: "INVALID_INPUT",
+        message: "claim_id needs changeset_id.",
+      },
+    };
+  }
+  if (!changesetId) {
+    return { ok: true, data: { context: buildProjectContext(kernel) } };
+  }
+  const changeset = await kernel.changesets.get(changesetId);
+  if (!changeset) {
+    return {
+      ok: false,
+      error: {
+        code: "CHANGESET_NOT_FOUND",
+        message: `Changeset "${changesetId}" not found.`,
+      },
+    };
+  }
+  const changed = await changedScopesOf(kernel, changesetId);
+  const context = claimId
+    ? buildClaimContext(kernel, changeset, claimId, changed)
+    : buildChangedScopeContext(kernel, changed);
+  return { ok: true, data: { context } };
+}
+
 export async function dispatchTool(
+  name: string,
+  input: Record<string, unknown>,
+  kernel: Kernel,
+  rebuild: () => void,
+  context?: ChangeContext,
+): Promise<ToolResult> {
+  const result = await dispatchToolCall(name, input, kernel, rebuild, context);
+  if (result.ok) await captureResultDocuments(kernel, name, result, context);
+  return result;
+}
+
+// The tools whose result carries a changeset whose plan was just written.
+const PLAN_WRITING_TOOLS: ReadonlySet<string> = new Set([
+  "create_changeset",
+  "update_changeset_plan",
+  "amend_changeset_plan",
+]);
+
+// Keeps a durable document of what a call produced: a changeset's plan, and any
+// screenshots. Best-effort: the call already succeeded, so a failed capture is
+// logged and the result goes back unchanged.
+export async function captureResultDocuments(
+  kernel: Kernel,
+  name: string,
+  result: ToolResult,
+  context?: ChangeContext,
+): Promise<void> {
+  const captures: Array<[string, () => Promise<Result<unknown>>]> = [];
+  const changeset = result._changeset as Changeset | undefined;
+  if (PLAN_WRITING_TOOLS.has(name) && changeset?.id) {
+    captures.push([
+      `changeset "${changeset.id}" plan`,
+      () => captureChangesetPlanDocument(kernel.documents, changeset),
+    ]);
+  }
+  const images = result._images ?? [];
+  const shotId = context?.toolCallId ?? createTimestampedId("shot");
+  images.forEach((image, index) => {
+    captures.push([
+      `screenshot ${index} from ${name}`,
+      () =>
+        captureScreenshotEvidenceDocument(
+          kernel.documents,
+          shotId,
+          index,
+          image.png,
+          context?.sessionId,
+        ),
+    ]);
+  });
+  for (const [what, capture] of captures) {
+    try {
+      const captured = await capture();
+      if (!captured.ok) {
+        kernel.log.log(
+          "debug",
+          "system",
+          `${what} not captured as a document: ` +
+            `${captured.error.code} (${captured.error.message})`,
+        );
+      }
+    } catch (err) {
+      kernel.log.log(
+        "warn",
+        "system",
+        `Capturing ${what} failed: ${errorMessage(err)}`,
+      );
+    }
+  }
+}
+
+async function dispatchToolCall(
   name: string,
   input: Record<string, unknown>,
   kernel: Kernel,
@@ -2965,7 +2953,7 @@ export async function dispatchTool(
       // remove_entity delegates. That is what keeps QC, changelog recording, the
       // auto-snapshot and the changeset/change-class gate working here with zero
       // duplication — this verb saves output tokens, it does not bypass governance.
-      return await dispatchTool(
+      return await dispatchToolCall(
         entityType === "template" ? "define_template" : "upload_text_asset",
         {
           name: entityName,
@@ -2999,7 +2987,7 @@ export async function dispatchTool(
       // Delegate to the per-entity removal verb, carrying the rationale fields
       // through. The delegate re-enters the gate under its own name; the active
       // changeset is already resolved on `context`, so it passes cleanly.
-      return await dispatchTool(
+      return await dispatchToolCall(
         spec.tool,
         {
           ...spec.toInput(key),
@@ -3026,7 +3014,7 @@ export async function dispatchTool(
           },
         };
       }
-      return await dispatchTool(tool, input, kernel, rebuild, context);
+      return await dispatchToolCall(tool, input, kernel, rebuild, context);
     }
 
     case "list_handlers": {
@@ -3275,18 +3263,16 @@ export async function dispatchTool(
     }
 
     case "git_commit": {
+      if (typeof input.changeset_id === "string") {
+        return await commitChangesetPaths(kernel, input);
+      }
       try {
         const projectDir = requireProjectDir(kernel);
-        const resolvedMessage = await resolveGitCommitMessage(
+        // A caller that wants a better subject writes the message itself.
+        const resolvedMessage = resolveGitCommitMessage(
           projectDir,
           input.message as string | undefined,
           () => flushKernelProjectState(kernel),
-          {
-            sessionId: ctx?.sessionId ?? null,
-            changesetId: ctx?.changesetId ?? null,
-            recordUsage: (usageInput) =>
-              kernel.sessions.recordModelUsage(usageInput),
-          },
         );
         return {
           ok: true,
@@ -3396,73 +3382,26 @@ export async function dispatchTool(
           });
         // Cache the full graph so GET /api/codebase can serve it without re-indexing.
         kernel.codebaseGraph = graph;
-        let indexedGraph = graph;
-        let classification: {
-          status:
-            | "not_requested"
-            | "completed"
-            | "skipped_unconfigured"
-            | "failed";
-          reason?: string;
-          model?: string;
-        } = { status: "not_requested" };
-        if (classificationMode === "assist") {
-          const importClassifier = kernel.composition.agentTools
-            ?.runImportClassifier;
-          if (!importClassifier) {
-            classification = {
-              status: "skipped_unconfigured",
-              reason:
-                "Model-assisted import classification is unavailable in this runtime.",
-            };
-          } else {
-            const classifierRequest = buildImportClassifierRequest({
+        // Classification runs on the client's model: assist mode leaves the
+        // classifier's input for request_review kind "imports".
+        kernel.codebaseClassification = classificationMode === "assist"
+          ? {
+            graph,
+            request: buildImportClassifierRequest({
               graph,
               discovery,
               sourceIndex,
-            });
-            let classifierResult: ImportClassifierResult;
-            try {
-              classifierResult = await importClassifier(classifierRequest, {
-                sessionId: ctx?.sessionId ?? null,
-                turnId: ctx?.turnId ?? null,
-                changesetId: ctx?.changesetId ?? null,
-                recordUsage: (usageInput) =>
-                  kernel.sessions.recordModelUsage(usageInput),
-              });
-            } catch (err) {
-              classifierResult = {
-                status: "failed",
-                reason: errorMessage(err),
-                diagnostics: [{
-                  severity: "warning",
-                  message: `Model-assisted import classification failed: ${
-                    errorMessage(err)
-                  }`,
-                }],
-              };
-            }
-            classification = {
-              status: classifierResult.status,
-              ...("reason" in classifierResult
-                ? { reason: classifierResult.reason }
-                : {}),
-              ...("model" in classifierResult && classifierResult.model
-                ? { model: classifierResult.model }
-                : {}),
-            };
-            if (classifierResult.status === "completed") {
-              indexedGraph = mergeCodebaseContributions(graph, [
-                importClassifierResultToSemanticContribution(
-                  classifierResult,
-                  { existingEntityIds: codebaseGraphEntityIds(graph) },
-                ),
-              ]);
-              kernel.codebaseGraph = indexedGraph;
-            }
+            }),
           }
-        }
-        const summary = summarizeCodebaseGraph(indexedGraph, discovery);
+          : null;
+        const classification = classificationMode === "assist"
+          ? {
+            status: "review_owed" as const,
+            reason:
+              'Classify with request_review kind "imports", then submit_review.',
+          }
+          : { status: "not_requested" as const };
+        const summary = summarizeCodebaseGraph(graph, discovery);
         return {
           ok: true,
           data: {
@@ -5325,6 +5264,8 @@ export async function dispatchTool(
       };
     }
 
+    case "get_code_context":
+      return await getCodeContext(kernel, input);
     case "list_tests": {
       const one = input.name as string | undefined;
       if (one) {
@@ -5347,11 +5288,19 @@ export async function dispatchTool(
           },
         };
       }
+      const claimId = input.claim_id as string | undefined;
+      const tests = claimId
+        ? kernel.tests.list().filter((t) =>
+          t.verification?.claimIds?.includes(claimId)
+        )
+        : kernel.tests.list();
       return {
         ok: true,
-        data: kernel.tests.list().map((t) => ({
+        data: tests.map((t) => ({
           name: t.name,
           registeredAt: t.registeredAt,
+          ...(t.changesetId ? { changesetId: t.changesetId } : {}),
+          ...(t.verification ? { verification: t.verification } : {}),
         })),
       };
     }
@@ -5510,115 +5459,56 @@ export async function dispatchTool(
 
     // --- Audits ---
 
-    case "run_audit": {
-      const category = input.category as string;
-      const allCategories = [
-        ...BUILTIN_AUDIT_CATEGORIES,
-        ...kernel.customAudits.list().map((a) => a.name),
-      ];
-      if (!allCategories.includes(category)) {
-        return {
-          ok: false,
-          error: {
-            code: "INVALID_CATEGORY",
-            message: `Unknown audit category "${category}". Valid: ${
-              allCategories.join(", ")
-            }`,
-          },
-        };
-      }
-      const result = await verificationTools(kernel.composition).executeAudit(
-        category as AuditCategory,
-        kernel,
-      );
-      // An audit that couldn't run (no provider, model call failed) is no
-      // evidence either way — its empty issue list must not read as a pass.
-      if (result.status === "error") return { ok: true, data: result };
-      const attestationId = await mintAttestation(kernel, ctx, {
-        kind: "audit",
-        status: result.issues.length === 0 ? "passed" : "partial",
-        fingerprint: fingerprintProject(kernel),
-        scope: PROJECT_SCOPE,
-        summary: `${category}: ${result.summary}`,
-      });
-      return withAttestationId(result, attestationId);
-    }
+    // --- Reviews the client runs (core/reviews.ts) ---
 
-    case "refute_claims": {
-      const changesetId = input.changeset_id as string | undefined;
-      const changeset = changesetId
-        ? await kernel.changesets.get(changesetId)
-        : await kernel.changesets.getActive(context?.sessionId);
-      if (!changeset) {
-        return {
-          ok: false,
-          error: {
-            code: changesetId ? "CHANGESET_NOT_FOUND" : "NO_ACTIVE_CHANGESET",
-            message: changesetId
-              ? `Changeset "${changesetId}" not found.`
-              : "No active changeset found.",
-          },
-        };
-      }
-      const requested = stringArray(input.claim_ids);
-      const attempts = typeof input.attempts === "number"
-        ? input.attempts
-        : undefined;
-      const { results, needsModel, needsKey } = await refuteChangesetClaims(
+    case "request_review": {
+      const handlers = verificationTools(kernel.composition);
+      const kind = input.kind as ReviewKind;
+      const result = await requestReview(
         kernel,
-        changeset,
+        {
+          kind,
+          ...(typeof input.changeset_id === "string"
+            ? { changesetId: input.changeset_id }
+            : {}),
+          ...(stringArray(input.claim_ids).length > 0
+            ? { claimIds: stringArray(input.claim_ids) }
+            : {}),
+          force: input.force === true,
+          ...(typeof input.category === "string"
+            ? { category: input.category }
+            : {}),
+        },
         ctx,
         {
-          ...(requested.length > 0
-            ? { claimIds: requested }
-            : { mustOnly: true }),
-          force: input.force === true,
-          ...(attempts !== undefined ? { attempts } : {}),
+          auditConfig: (category) => handlers.auditConfig(category, kernel),
+          auditCategories: () => handlers.auditCategories(kernel),
         },
       );
-      if (needsModel) {
-        return {
-          ok: false,
-          error: {
-            code: "MODEL_UNCONFIGURED",
-            message:
-              "A verification model is required for adversarial refutation.",
-            suggestion: "Configure a verification model in Settings.",
-          },
-        };
-      }
-      if (needsKey) {
-        return {
-          ok: false,
-          error: {
-            code: "API_KEY_REQUIRED",
-            message:
-              "An API key for the selected verification model provider is required for adversarial refutation.",
-            suggestion:
-              "Configure the selected verification model provider key in Settings.",
-          },
-        };
-      }
-      if (results.length === 0) {
-        return {
-          ok: true,
-          data: {
-            summary: requested.length > 0
-              ? "No matching claims to refute."
-              : "No 'must' acceptance criteria to refute.",
-            results: [],
-          },
-        };
-      }
-      const refutedCount = results.filter((r) => r.refuted).length;
-      const updated = await kernel.changesets.get(changeset.id);
+      return result;
+    }
+
+    case "submit_review": {
+      const result = await submitReview(
+        kernel,
+        {
+          packetId: String(input.packet_id ?? ""),
+          verdict: input.verdict,
+          ...(typeof input.reviewer === "string"
+            ? { reviewer: input.reviewer }
+            : {}),
+        },
+        (attestation, changesetId) =>
+          mintAttestation(kernel, ctx, attestation, changesetId),
+      );
+      if (!result.ok) return result;
+      const { data, changesetId } = result.data;
+      const updated = changesetId
+        ? await kernel.changesets.get(changesetId)
+        : null;
       return {
         ok: true,
-        data: {
-          summary:
-            `${results.length} claim(s) reviewed, ${refutedCount} refuted.`,
-          results,
-        },
+        data,
         ...(updated
           ? { _changesetEvent: "changeset_updated", _changeset: updated }
           : {}),
@@ -5806,17 +5696,42 @@ export async function dispatchTool(
           const meta = await kernel.documents.read(id);
           if (!meta.ok) return meta;
           if (input.includeContent) {
-            const content = await kernel.documents.readContent(
+            const read = await kernel.documents.readContentBytes(
               id,
               input.versionHash as string | undefined,
             );
-            if (!content.ok) return content;
+            if (!read.ok) return read;
+            const { version, bytes } = read.data;
             return {
               ok: true,
-              data: { ...meta.data, content: content.data.content },
+              data: {
+                ...meta.data,
+                version,
+                ...(input.encoding === "base64"
+                  ? { contentBase64: encodeBase64(bytes) }
+                  : { content: new TextDecoder().decode(bytes) }),
+              },
             };
           }
           return meta;
+        }
+        case "pinned": {
+          const sessionId = (input.sessionId as string | undefined) ??
+            context?.sessionId;
+          if (!sessionId) {
+            return {
+              ok: false,
+              error: {
+                code: "SESSION_REQUIRED",
+                message:
+                  "document_query action=pinned needs a sessionId or a session.",
+              },
+            };
+          }
+          return {
+            ok: true,
+            data: { ids: await kernel.documents.listPinned(sessionId) },
+          };
         }
         default:
           return {
@@ -5824,7 +5739,7 @@ export async function dispatchTool(
             error: {
               code: "INVALID_ACTION",
               message:
-                `document_query: unsupported action "${action}". Valid: search, read, list.`,
+                `document_query: unsupported action "${action}". Valid: search, read, list, pinned.`,
             },
           };
       }
@@ -5834,17 +5749,18 @@ export async function dispatchTool(
       const action = input.action as string;
       switch (action) {
         case "create": {
-          const description = input.description as string | undefined;
+          const content = documentContent(input);
+          if (!content.ok) return content;
           return await kernel.documents.create({
             name: (input.name as string) ?? "",
             kind: (input.kind as string) ?? "text/markdown",
-            content: (input.content as string) ?? "",
+            content: content.data,
             scope: (input.scope as DocumentScope) ?? "session",
             sessionId: (input.sessionId as string | undefined) ??
               ctx?.sessionId ?? null,
-            createdBy: "agent",
+            createdBy: input.attachment === true ? "user" : "agent",
             note: input.note as string | undefined,
-            metadata: description ? { description } : undefined,
+            metadata: documentMetadata(input),
           });
         }
         case "update": {
@@ -5877,13 +5793,19 @@ export async function dispatchTool(
           }
           return await kernel.documents.archive(id);
         }
+        case "ref":
+          return await recordMessageDocumentRef(
+            kernel,
+            input,
+            ctx ?? undefined,
+          );
         default:
           return {
             ok: false,
             error: {
               code: "INVALID_ACTION",
               message:
-                `document_write: unsupported action "${action}". Valid: create, update, archive.`,
+                `document_write: unsupported action "${action}". Valid: create, update, archive, ref.`,
             },
           };
       }
@@ -5993,6 +5915,23 @@ export async function dispatchTool(
           ),
         },
       };
+    }
+
+    case "get_changeset": {
+      const changesetId = input.changeset_id as string | undefined;
+      const changeset = changesetId
+        ? await kernel.changesets.get(changesetId)
+        : await kernel.changesets.getActive(context?.sessionId);
+      if (changesetId && !changeset) {
+        return {
+          ok: false,
+          error: {
+            code: "CHANGESET_NOT_FOUND",
+            message: `Changeset "${changesetId}" not found.`,
+          },
+        };
+      }
+      return { ok: true, data: { changeset } };
     }
 
     case "check_changeset_readiness": {
@@ -6531,55 +6470,9 @@ export async function dispatchTool(
         if ((existing.plan.formalSpecs ?? []).length > 0) {
           await runFormalSpecVerification(kernel, existing, context);
         }
-        // Auto-verification: the gate guarantees every `must` acceptance
-        // criterion faces adversarial review before completion — the freshness
-        // skip means only claims not already reviewed against current code
-        // incur a model call. A fresh refuted claim is recorded and then blocks
-        // completion through readiness. Only when the agent is assembled
-        // (hasAgentTools) — complete_changeset is a verification-gated verb, so
-        // in a verification-only assembly it still completes, it just skips this
-        // optional agent-backed step.
-        // The light lane skips the adversarial pass outright — 2 model calls per
-        // must-claim is the single most expensive thing at this gate, and the lane's
-        // synthesized criterion is `should`, so the `must` filter below would skip it
-        // anyway. Checking the tier explicitly makes the policy legible instead of
-        // load-bearing on a coincidence.
-        if (
-          !lightLane &&
-          getKernelSettings().autoRefuteAtGate &&
-          (() => {
-            const model = getVerificationModelForRequest();
-            return model ? !!getProviderKey(providerFor(model)) : false;
-          })() &&
-          hasAgentTools(kernel.composition) &&
-          (existing.plan.acceptanceCriteria ?? []).some((c) =>
-            c.priority === "must"
-          )
-        ) {
-          await refuteChangesetClaims(kernel, existing, ctx, {
-            mustOnly: true,
-          });
-        }
-        // Independent criteria review. Same four guards as the auto-refute above,
-        // and the same reason for each: it needs a model, a key, an assembled
-        // brain, and it is pointless in the light lane (whose one criterion the
-        // KERNEL authored, so there is no agent framing to second-guess).
-        //
-        // Runs after the refutation deliberately. The refuter can still block
-        // completion; this only ever reports. Paying for a report on a changeset
-        // that a counterexample is about to reject would be spending money to
-        // annotate work that is going back for another pass anyway.
-        if (
-          !lightLane &&
-          getKernelSettings().independentCriteriaAtGate &&
-          (() => {
-            const model = getVerificationModelForRequest();
-            return model ? !!getProviderKey(providerFor(model)) : false;
-          })() &&
-          hasAgentTools(kernel.composition)
-        ) {
-          await reviewIndependentCriteria(kernel, existing, ctx);
-        }
+        // Refutation and the independent criteria review are the client's
+        // (request_review / submit_review): the gate reads the verdicts it
+        // recorded and never calls a model.
         // The light lane's evidence is minted here rather than demanded of the
         // agent — but only when the lane actually held. An escalated changeset gets
         // no free run: it must satisfy the full gate it turned out to need. And an
@@ -6635,6 +6528,8 @@ export async function dispatchTool(
           kernel.sessions,
           kernel.changelog,
         );
+        // Landing commits it, last, so the commit holds the completed record.
+        const commit = await commitLandedChangeset(kernel, cs);
         // Cost fix (docs/agent-cost-reduction.md §4.3): success is an acknowledgement.
         // The aggregate is the FATTEST changeset payload there is — it folds in the
         // turn's tool calls, reasoning and usage — and the agent has no use for any of
@@ -6650,6 +6545,7 @@ export async function dispatchTool(
             stepCount: cs.plan.steps.length,
             completedAt: cs.completedAt,
             stateFlushed,
+            commit,
           },
           _changesetEvent: "changeset_completed",
           _changeset: cs,
@@ -8551,14 +8447,14 @@ export async function dispatchTool(
       const action = input.action as string | undefined;
       if (
         action !== "list" && action !== "search" && action !== "rename" &&
-        action !== "archive" && action !== "unarchive"
+        action !== "end" && action !== "archive" && action !== "unarchive"
       ) {
         return {
           ok: false,
           error: {
             code: "INVALID_INPUT",
             message:
-              "action must be list, search, rename, archive, or unarchive",
+              "action must be list, search, rename, end, archive, or unarchive",
           },
         };
       }
@@ -8624,15 +8520,16 @@ export async function dispatchTool(
         };
       }
 
+      const defaultsToCurrent = action === "rename" || action === "end";
       const sessionId = (input.session_id as string | undefined) ??
-        (action === "rename" ? ctx?.sessionId : undefined);
+        (defaultsToCurrent ? ctx?.sessionId : undefined);
       if (!sessionId) {
         return {
           ok: false,
           error: {
             code: "NO_SESSION",
-            message: action === "rename"
-              ? "No active session to rename"
+            message: defaultsToCurrent
+              ? `No active session to ${action}`
               : "session_id is required",
           },
         };
@@ -8662,6 +8559,18 @@ export async function dispatchTool(
             name: newName,
             session: compactSession({ ...session, name: newName }),
             message: `Session renamed to "${newName}"`,
+          },
+        };
+      }
+
+      if (action === "end") {
+        await kernel.sessions.endSession(sessionId);
+        return {
+          ok: true,
+          data: {
+            action,
+            sessionId,
+            message: "Session ended",
           },
         };
       }
@@ -8781,23 +8690,6 @@ export async function reindexSourceBackedCodebase(
     );
     return null;
   }
-}
-
-function codebaseGraphEntityIds(graph: CodebaseGraph): string[] {
-  return [
-    ...graph.files,
-    ...graph.modules,
-    ...graph.symbols,
-    ...graph.routes,
-    ...graph.handlers,
-    ...graph.middleware,
-    ...graph.functions,
-    ...graph.schemas,
-    ...graph.components,
-    ...graph.tests,
-    ...graph.commands,
-    ...graph.facts,
-  ].map((entity) => entity.id);
 }
 
 // Bulk data rewrites (fixture import, reset) can't be undone from a snapshot, but

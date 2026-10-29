@@ -81,6 +81,10 @@ export interface ProjectMeta {
   // Present only on a task fork (core/tasks/fork.ts). A fork never enters the
   // project registry.
   fork?: ProjectForkMeta;
+  // True makes complete_changeset commit the work; false also stops Tide's
+  // per-step checkpoints. Absent ⇒ COMMIT_ON_COMPLETE_DEFAULT for landing
+  // commits, checkpoints on. See readProjectCommitOnComplete.
+  commitOnComplete?: boolean;
 }
 
 export interface ProjectForkMeta {
@@ -412,6 +416,24 @@ function isValidProjectMode(value: unknown): value is ProjectMode {
 // JSON, or an unrecognized value all coerce to DEFAULT_PROJECT_MODE — this never
 // throws (a bad value is a preference we ignore, not a load-breaking error), and
 // it keeps existing manifests without a `mode` key working as registry-native.
+// The manifest's `commitOnComplete`, or undefined when it isn't set: a missing
+// or unreadable manifest, or a value that isn't a boolean.
+export function readProjectCommitOnComplete(
+  projectDir: string,
+): boolean | undefined {
+  const manifestPath = getProjectPaths(projectDir).manifest;
+  if (!existsSync(manifestPath)) return undefined;
+  try {
+    const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    const value = typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>).commitOnComplete
+      : undefined;
+    return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function readProjectMode(projectDir: string): ProjectMode {
   const manifestPath = getProjectPaths(projectDir).manifest;
   if (!existsSync(manifestPath)) return DEFAULT_PROJECT_MODE;

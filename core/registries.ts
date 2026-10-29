@@ -14,6 +14,7 @@ import {
 } from "./config.ts";
 import { encodeBase64 } from "./util.ts";
 import type { CodebaseGraph } from "./codebase/types.ts";
+import type { ImportClassifierRequest } from "./codebase/import-classifier.ts";
 import { createTimestampedId } from "./ids.ts";
 import {
   buildEpisode,
@@ -1214,11 +1215,21 @@ export class Kernel {
   readonly composition: CompositionContext;
   projectDir: string | null = null;
   appPort = APP_SERVER_PORT;
+  // Bumped on every app rebuild. The IDE reloads its preview when it changes,
+  // whichever client made the change.
+  appRevision = 0;
   // Latest source-backed codebase index (project-import Slice 1). Populated by
   // the index_codebase tool and served read-only over GET /api/codebase. Purely
   // in-memory: re-index on demand rather than persist — lifecycle (staleness,
   // auto-refresh) is a later slice. Null until a first index runs.
   codebaseGraph: CodebaseGraph | null = null;
+  // The classifier input from the last index_codebase in "assist" mode, and the
+  // graph it describes. request_review kind "imports" builds its packet from it;
+  // a later index replaces the graph, which makes that packet stale.
+  codebaseClassification: {
+    graph: CodebaseGraph;
+    request: ImportClassifierRequest;
+  } | null = null;
   // In-memory subscribers to entity writes (Stage 5 out-of-band refresh). One process
   // typically has one LSP server per Kernel; the Set makes multiple subscribers and
   // idempotent unsubscribe safe. Not persisted — purely a live-notification seam.

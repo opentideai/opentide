@@ -5,6 +5,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { ChatOrchestrator } from "./chat.ts";
+import { inProcessChatBackend } from "./chat-backend.ts";
 import { FakeModelProvider } from "../core/model-provider-fake.ts";
 import type {
   NeutralMessage,
@@ -110,8 +111,7 @@ async function runTracedTurn(opts: {
     const kernel = new Kernel(db);
     if (opts.withProjectDir) kernel.projectDir = dir;
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider(TWO_REQUEST_TURN),

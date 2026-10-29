@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertStringIncludes,
+} from "@std/assert";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Kernel } from "../core/registries.ts";
@@ -228,14 +233,13 @@ Deno.test({
 // projection gates on, so it must never drift from dispatch.ts's actual getter
 // call-sites — else the advertised list would diverge from the callable one.
 // Rather than trust a hand-copied list, derive the truth from the dispatch
-// source: attribute each verificationTools()/agentTools() call (direct, or
-// routed through a getter-calling helper such as refuteChangesetClaims) to its
+// source: attribute each verificationTools() call (direct, or routed through
+// a getter-calling helper) to its
 // enclosing `case "verb":`, then assert the registry matches that in both
 // directions. A future capability-gated verb — direct or helper-routed — cannot
 // silently desync.
 const GETTER_CAPABILITY: ReadonlyArray<[RegExp, ToolCapability]> = [
   [/\bverificationTools\(/, "verification"],
-  [/\bagentTools\(/, "agent"],
 ];
 
 function dispatchGetterCallSites(): Map<string, Set<ToolCapability>> {
@@ -252,8 +256,12 @@ function dispatchGetterCallSites(): Map<string, Set<ToolCapability>> {
     const m = line.match(fnDef);
     if (m?.[1]) fns.push({ name: m[1], line: i });
   });
-  const dispatch = fns.find((f) => f.name === "dispatchTool");
-  assert(dispatch, "dispatchTool must be a top-level function in dispatch.ts");
+  // The switch lives in dispatchToolCall; dispatchTool wraps it.
+  const dispatch = fns.find((f) => f.name === "dispatchToolCall");
+  assert(
+    dispatch,
+    "dispatchToolCall must be a top-level function in dispatch.ts",
+  );
   const dispatchStart = dispatch.line;
 
   const enclosingFn = (i: number): string | null => {
@@ -265,14 +273,14 @@ function dispatchGetterCallSites(): Map<string, Set<ToolCapability>> {
     return name;
   };
 
-  // Helper functions (top-level, not dispatchTool) that call a getter directly:
+  // Helper functions (top-level, not dispatchToolCall) that call a getter directly:
   // a `case` that calls one of these transitively depends on that capability.
   const helperCapability = new Map<string, ToolCapability>();
   lines.forEach((line, i) => {
     for (const [token, cap] of GETTER_CAPABILITY) {
       if (token.test(line)) {
         const fn = enclosingFn(i);
-        if (fn && fn !== "dispatchTool") helperCapability.set(fn, cap);
+        if (fn && fn !== "dispatchToolCall") helperCapability.set(fn, cap);
       }
     }
   });
@@ -280,7 +288,7 @@ function dispatchGetterCallSites(): Map<string, Set<ToolCapability>> {
   // verificationTools() before adding project-doctor consistency checks.
   helperCapability.set("checkProjectAwareReadiness", "verification");
 
-  // Within dispatchTool's switch: the nearest preceding `case "verb":`.
+  // Within dispatchToolCall's switch: the nearest preceding `case "verb":`.
   const enclosingCase = (i: number): string | null => {
     let verb: string | null = null;
     for (let j = dispatchStart; j <= i; j++) {
@@ -348,10 +356,6 @@ Deno.test({
         }`,
       );
     }
-    // The loop above already exercises the transitive (helper-routed) reach: it
-    // asserts refute_claims reaches "agent", which it does ONLY via the
-    // refuteChangesetClaims helper (no direct agentTools() call in its case
-    // body) — proving the guard catches a verb gated purely through a helper.
   },
 });
 
@@ -367,8 +371,6 @@ Deno.test({
     for (
       const verb of [
         "summarize_session",
-        "get_session_context",
-        "manage_sessions",
         "list_projects",
         "get_project_context",
       ]
@@ -381,6 +383,9 @@ Deno.test({
         `${verb} should remain in AGENT_TOOLS`,
       );
     }
+    // Past sessions are project history, served to every client.
+    assert(names.has("get_session_context"), "session reads are served");
+    assert(names.has("manage_sessions"), "session management is served");
     // Project-config and build verbs that ARE meaningful headless stay advertised.
     assert(names.has("set_system_prompt"), "set_system_prompt should remain");
     assert(names.has("generate_project_docs"), "doc verb should remain");
@@ -394,7 +399,7 @@ Deno.test({
   fn: async () => {
     await withKernel(async (kernel) => {
       const result = await dispatchMcpTool(
-        "get_session_context",
+        "summarize_session",
         { session_id: "whatever" },
         kernel,
         noop,
@@ -403,6 +408,40 @@ Deno.test({
       const block = result.content[0];
       assert(block?.type === "text");
       assertStringIncludes(block.text, "not exposed over MCP");
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "get_session_context refuses another project's sessions",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      kernel.projectDir = "/tmp/opentide-loaded-project";
+      const refused = async (args: Record<string, unknown>) => {
+        const result = await dispatchMcpTool(
+          "get_session_context",
+          { session_id: "session_x", ...args },
+          kernel,
+          noop,
+        );
+        const block = result.content[0];
+        assert(block?.type === "text");
+        return result.isError === true &&
+          block.text.includes("OTHER_PROJECT");
+      };
+      assert(await refused({ project_path: "/tmp/some-other-project" }));
+      assert(await refused({ project_name: "no-such-project-anywhere" }));
+      assert(
+        await refused({
+          project_path: "/tmp/opentide-loaded-project",
+          project_name: "no-such-project-anywhere",
+        }),
+      );
+      assertFalse(await refused({}));
+      assertFalse(
+        await refused({ project_path: "/tmp/opentide-loaded-project/." }),
+      );
     });
   },
 });
@@ -453,11 +492,11 @@ Deno.test({
   name:
     "dispatchMcpTool returns a clean not-available result for a hidden verb",
   fn: async () => {
-    // A composition without the agent tool handlers → refute_claims (agent-gated)
-    // is hidden and dispatch returns a clean not-available result, never a throw.
+    // A composition without the verification handlers → request_review is
+    // hidden and dispatch returns a clean not-available result, never a throw.
     await withKernel(async (kernel) => {
       const result = await dispatchMcpTool(
-        "refute_claims",
+        "request_review",
         {},
         kernel,
         noop,
@@ -521,6 +560,22 @@ Deno.test({
         mcpContext(sessionId),
       );
       assertEquals(handlerResult.isError, undefined, "handler should compile");
+      // The result says what changed and where the changeset stands, so the
+      // client can link its messages to the change.
+      const changeBlock = handlerResult.content.at(-1);
+      assert(changeBlock?.type === "text");
+      const changed = JSON.parse(changeBlock.text) as {
+        changes: Array<{ id: number; scope: string; action: string }>;
+        changesets: Array<{ id: string; status: string; steps: unknown }>;
+      };
+      assertEquals(changed.changes.map((c) => c.scope), ["handler:mcp_demo"]);
+      const record = await kernel.changelog.get(changed.changes[0]!.id);
+      assertEquals(record?.changesetId, changeset.id);
+      assertEquals(changed.changesets, [{
+        id: changeset.id,
+        status: "in_progress",
+        steps: { done: 0, total: demoPlan().steps.length },
+      }]);
 
       // 3. Register the route.
       const routeResult = await dispatchMcpTool(
@@ -824,6 +879,8 @@ Deno.test({
         // And the record is readable by id — what project-doctor resolves against.
         const stored = await kernel.sessions.getSession(sessionId);
         assert(stored, "the session id resolves to a stored session");
+        // An MCP client's history is the project's, so it is committed with it.
+        assertEquals(stored.visibility, "project");
       } finally {
         await a.dispose();
       }
@@ -984,12 +1041,11 @@ Deno.test({
     // despite reading like reads — readOnlyHint must never be true for them.
     for (
       const minting of [
-        "run_audit",
+        "submit_review",
         "run_tests",
         "check_export_types",
         "test_coverage",
         "verify_formal_specs",
-        "refute_claims",
       ]
     ) {
       assert(
@@ -1060,7 +1116,7 @@ Deno.test({
     // The crux on the wire: check_export_types LOOKS like a read but mints, so it
     // must be advertised as a writer.
     assertEquals(ann("check_export_types").readOnlyHint, false);
-    assertEquals(ann("run_audit").readOnlyHint, false);
+    assertEquals(ann("submit_review").readOnlyHint, false);
 
     // Git status flushes live Tide state before reading the repository; commit and
     // push are explicit user-confirmed writers, and push reaches an external remote.
@@ -1311,8 +1367,31 @@ Deno.test({
 // shared productionTest schema to cut tools/list size. Text only, so PATCH.
 // v6.3.0 adds adopt_changeset (108 -> 109). Additive, so MINOR.
 // v6.4.0 adds show_app (109 -> 110), MCP-only. Additive, so MINOR.
-const PINNED_SURFACE_FINGERPRINT = "d374-7a75615a";
-const PINNED_SURFACE_TOOL_COUNT = 110;
+// v6.5.0 gives list_tests an optional claim_id filter. Additive, so MINOR.
+// v6.6.0 serves get_session_context and manage_sessions (110 -> 112), and
+// manage_sessions gains action=end. Additive, so MINOR.
+// v6.7.0 adds the MCP-only history writes append_session_messages,
+// set_session_summary and record_usage (112 -> 115). Additive, so MINOR.
+// v6.8.0 adds get_code_context (115 -> 116). Additive, so MINOR.
+// v6.9.0 adds the change block to results. No schema change, same pin.
+// v6.10.0 adds skills to project_status. No schema change, same pin.
+// v6.11.0: get_session_context refuses project_path/project_name naming another
+// project, so a client can't read other projects' private sessions. No schema
+// change, same pin. It narrows what a call may do, but only for a read that
+// should never have worked here.
+// v6.12.0: complete_changeset commits and returns `commit`. No schema change,
+// same pin.
+// v6.13.0 adds open_session (116 -> 117) and optional fields on the history
+// writes and get_session_context. Additive, so MINOR.
+// v7.0.0 adds request_review and submit_review and drops run_audit (117 -> 118
+// in the open build, which never listed refute_claims). A removal, so MAJOR.
+// v7.1.0 adds request_review kind "imports"; index_codebase's assist mode
+// leaves the classification owed instead of running a model. Same count.
+// v7.2.0 adds get_changeset, link_session_message and the MCP-only
+// approve_changeset (118 -> 121), and optional fields on create/amend, the
+// document verbs and git_commit. Additive, so MINOR.
+const PINNED_SURFACE_FINGERPRINT = "f8d7-ea949677";
+const PINNED_SURFACE_TOOL_COUNT = 121;
 
 Deno.test({
   ...testOpts,

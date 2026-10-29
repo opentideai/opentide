@@ -14,6 +14,11 @@ import {
   setRecommendedModels,
 } from "../config.ts";
 import { setUtilityModelCallForTest } from "../utility-model.ts";
+import { decodeBase64, encodeBase64 } from "../util.ts";
+import {
+  ATTACHMENT_DOCUMENT_SOURCE,
+  type DocumentRecord,
+} from "../documents.ts";
 import {
   existsSync,
   mkdtempSync,
@@ -49,7 +54,6 @@ import { AGENT_TOOLS, CUSTOM_TOOLS } from "./definitions.ts";
 import {
   IMPORT_CLASSIFIER_PLUGIN_ID,
   type ImportClassifierRequest,
-  type ImportClassifierResult,
 } from "../codebase/index.ts";
 import { TEST_TMP_DIR } from "../test-home_test.ts";
 
@@ -71,25 +75,6 @@ async function withKernel<T>(
 }
 
 const noop = () => {};
-
-function compositionWithImportClassifier(
-  runImportClassifier: (
-    request: ImportClassifierRequest,
-    opts?: Parameters<
-      NonNullable<CompositionContext["agentTools"]>["runImportClassifier"]
-    >[1],
-  ) => Promise<ImportClassifierResult> | ImportClassifierResult,
-): CompositionContext {
-  const composition = testComposition();
-  return {
-    ...composition,
-    agentTools: {
-      ...composition.agentTools!,
-      runImportClassifier: async (request, opts) =>
-        await runImportClassifier(request, opts),
-    },
-  };
-}
 
 function registryEntityCounts(kernel: Kernel): Record<string, number> {
   return {
@@ -1616,14 +1601,74 @@ Deno.test("git tools are exposed outside the changeset mutation gate", () => {
 
 Deno.test({
   ...testOpts,
-  name: "git_commit records generated message usage on session and changeset",
+  name:
+    "git_commit with a changeset_id commits OpenTide's paths, not the user's",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      const projectDir = await Deno.makeTempDir({
+        dir: TEST_TMP_DIR,
+        prefix: "genie-dispatch-git-scoped-",
+      });
+      try {
+        kernel.projectDir = projectDir;
+        runGit(projectDir, ["init"]);
+        runGit(projectDir, ["config", "user.email", "tide-test@example.com"]);
+        runGit(projectDir, ["config", "user.name", "Tide Test"]);
+        writeFileSync(join(projectDir, "opentide.json"), "{}\n");
+        writeFileSync(join(projectDir, "notes.txt"), "the user's own\n");
+
+        const noMessage = await dispatchTool(
+          "git_commit",
+          { changeset_id: "cs_scoped" },
+          kernel,
+          noop,
+        );
+        assertEquals(noMessage.error?.code, "INVALID_INPUT");
+
+        const result = await dispatchTool(
+          "git_commit",
+          { changeset_id: "cs_scoped", message: "Step 1" },
+          kernel,
+          noop,
+        );
+        assertEquals(result.ok, true, JSON.stringify(result.error));
+        assertEquals((result.data as { committed: boolean }).committed, true);
+        const listed = new Deno.Command("git", {
+          args: ["show", "--name-only", "--format=", "HEAD"],
+          cwd: projectDir,
+          stdout: "piped",
+        }).outputSync();
+        const files = new TextDecoder().decode(listed.stdout).trim()
+          .split("\n");
+        assert(files.includes("opentide.json"), files.join(", "));
+        assert(!files.includes("notes.txt"), files.join(", "));
+
+        const again = await dispatchTool(
+          "git_commit",
+          { changeset_id: "cs_scoped", message: "Step 2" },
+          kernel,
+          noop,
+        );
+        assertEquals(again.data, { committed: false });
+      } finally {
+        rmSync(projectDir, { recursive: true, force: true });
+      }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "git_commit with no message calls no model, even with one configured",
   fn: async () => {
     await withTempHomeAndProviderEnv({ openai: "sk-openai-test" }, async () => {
       const home = Deno.env.get("HOME")!;
       seedModelCache(home, "gpt-5-mini", "openai");
       setRecommendedModels({ utility: "gpt-5-mini" });
-      const restoreModelCall = setUtilityModelCallForTest((req) =>
-        Promise.resolve({
+      let modelCalls = 0;
+      const restoreModelCall = setUtilityModelCallForTest((req) => {
+        modelCalls += 1;
+        return Promise.resolve({
           text: "Add project config",
           provider: "openai",
           model: req.model,
@@ -1633,8 +1678,8 @@ Deno.test({
             cacheCreationInputTokens: 0,
             cacheReadInputTokens: 0,
           },
-        })
-      );
+        });
+      });
       try {
         await withKernel(async (kernel) => {
           const projectDir = await Deno.makeTempDir({
@@ -1662,18 +1707,12 @@ Deno.test({
               { sessionId: session.id, changesetId },
             );
 
-            assertEquals(result.ok, true);
-            const sessionUsage = await kernel.sessions.getSessionUsage(
-              session.id,
+            assertEquals(result.ok, true, JSON.stringify(result.error));
+            assertEquals(modelCalls, 0);
+            assertEquals(
+              await kernel.sessions.getModelUsagesForChangeset(changesetId),
+              [],
             );
-            const changesetRows = await kernel.sessions
-              .getModelUsagesForChangeset(changesetId);
-            assertEquals(sessionUsage.unpricedCalls, 1);
-            assertEquals(sessionUsage.unpricedInputTokens, 12);
-            assertEquals(changesetRows.length, 1);
-            assertEquals(changesetRows[0]!.sessionId, session.id);
-            assertEquals(changesetRows[0]!.changesetId, changesetId);
-            assertEquals(changesetRows[0]!.caller, "git_message");
           } finally {
             rmSync(projectDir, { recursive: true, force: true });
           }
@@ -1821,294 +1860,202 @@ Deno.test({
   },
 });
 
+// index_codebase in "assist" mode leaves the classification to the client:
+// request_review kind "imports", then submit_review.
+async function withIndexedForClassification(
+  fn: (kernel: Kernel, sessionId: string) => Promise<void>,
+): Promise<void> {
+  await withKernel(async (kernel) => {
+    const root = await Deno.makeTempDir({ prefix: "genie-index-assist-" });
+    try {
+      await writeTinySourceProject(root);
+      const session = await kernel.sessions.createSession("Import");
+      const result = await dispatchTool(
+        "index_codebase",
+        { rootPath: root, classification: "assist" },
+        kernel,
+        noop,
+        { sessionId: session.id },
+      );
+      assertEquals(result.ok, true);
+      const data = result.data as {
+        classification: { status: string };
+        counts: { files: number };
+      };
+      assertEquals(data.classification.status, "review_owed");
+      assertEquals(data.counts.files, 1);
+      await fn(kernel, session.id);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
+async function importsPacket(kernel: Kernel, sessionId: string) {
+  const result = await dispatchTool(
+    "request_review",
+    { kind: "imports" },
+    kernel,
+    noop,
+    { sessionId },
+  );
+  assert(result.ok, JSON.stringify(result.error));
+  return result.data as {
+    packetId: string;
+    request: ImportClassifierRequest;
+  };
+}
+
+const CLASSIFICATION = {
+  facts: [{
+    kind: "import-strategy",
+    name: "import strategy",
+    value: { mode: "source-backed-overlay" },
+    confidence: 0.93,
+  }],
+  mappings: [],
+  diagnostics: [{ severity: "warning", message: "Ambiguous auth middleware." }],
+  candidateEntities: [{
+    entityType: "handler",
+    name: "listUsers",
+    confidence: 0.82,
+    rationale: "Candidate only; do not materialize.",
+    locations: [{ file: "src/index.ts", startLine: 1, startColumn: 14 }],
+    sourceExcerpt: "export const value = 1;",
+  }],
+};
+
+function hasClassifier(kernel: Kernel): boolean {
+  return kernel.codebaseGraph!.plugins.some((plugin) =>
+    plugin.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID
+  );
+}
+
 Deno.test({
   ...testOpts,
   name:
-    "index_codebase classification assist merges agent facts and diagnostics",
+    "index_codebase assist leaves the classification owed; a submitted one merges into the graph",
   fn: async () => {
-    let seenRequest: ImportClassifierRequest | null = null;
-    const turnId = "turn_import_classifier";
-    await withKernel(
-      async (kernel) => {
-        const root = await Deno.makeTempDir({
-          prefix: "genie-index-assist-",
-        });
-        try {
-          await writeTinySourceProject(root);
-          const session = await kernel.sessions.createSession("Import");
-          const beforeRegistryCounts = registryEntityCounts(kernel);
+    await withIndexedForClassification(async (kernel, sessionId) => {
+      assertEquals(hasClassifier(kernel), false);
+      const before = registryEntityCounts(kernel);
+      const packet = await importsPacket(kernel, sessionId);
+      assertEquals(packet.request.graphSummary.counts.files, 1);
 
-          const result = await dispatchTool(
-            "index_codebase",
-            { rootPath: root, classification: "assist" },
-            kernel,
-            noop,
-            { sessionId: session.id, turnId },
-          );
+      const submitted = await dispatchTool(
+        "submit_review",
+        {
+          packet_id: packet.packetId,
+          verdict: CLASSIFICATION,
+          reviewer: "claude-import-test",
+        },
+        kernel,
+        noop,
+        { sessionId },
+      );
+      assert(submitted.ok, JSON.stringify(submitted.error));
+      assertEquals(
+        (submitted.data as { classification: { status: string } })
+          .classification.status,
+        "completed",
+      );
 
-          assertEquals(result.ok, true);
-          const data = result.data as {
-            classification: { status: string };
-            counts: { facts: number; diagnostics: number };
-          };
-          assertEquals(data.classification.status, "completed");
-          assert(seenRequest !== null);
-          assertEquals(seenRequest.graphSummary.counts.files, 1);
+      const graph = kernel.codebaseGraph!;
+      assert(
+        graph.facts.some((fact) =>
+          fact.source.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID &&
+          fact.source.method === "agent" &&
+          fact.name === "import strategy"
+        ),
+      );
+      assert(
+        graph.diagnostics.some((diagnostic) =>
+          diagnostic.source.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID &&
+          diagnostic.message === "Ambiguous auth middleware."
+        ),
+      );
+      assert(
+        graph.plugins.some((plugin) =>
+          plugin.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID &&
+          plugin.status === "completed"
+        ),
+      );
+      const candidate = graph.facts.find((fact) =>
+        fact.factKind === "candidate-entity" &&
+        fact.source.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID
+      );
+      assertEquals(candidate?.confidence, 0.82);
+      assertEquals(
+        (candidate?.value as { sourceExcerpt?: string }).sourceExcerpt,
+        "export const value = 1;",
+      );
+      // A classification describes; it never writes registry entities.
+      assertEquals(registryEntityCounts(kernel), before);
+    });
+  },
+});
 
-          assert(kernel.codebaseGraph !== null);
-          assertEquals(
-            kernel.codebaseGraph!.facts.some((fact) =>
-              fact.source.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID &&
-              fact.source.method === "agent" &&
-              fact.name === "import strategy"
-            ),
-            true,
-          );
-          assertEquals(
-            kernel.codebaseGraph!.diagnostics.some((diagnostic) =>
-              diagnostic.source.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID &&
-              diagnostic.message === "Ambiguous auth middleware."
-            ),
-            true,
-          );
-          assertEquals(
-            kernel.codebaseGraph!.plugins.some((plugin) =>
-              plugin.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID &&
-              plugin.status === "completed"
-            ),
-            true,
-          );
-          const candidate = kernel.codebaseGraph!.facts.find((fact) =>
-            fact.factKind === "candidate-entity" &&
-            fact.source.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID
-          );
-          assert(candidate);
-          assertEquals(candidate.source.method, "agent");
-          assertEquals(candidate.confidence, 0.82);
-          assertEquals(candidate.locations, [{
-            file: "src/index.ts",
-            startLine: 1,
-            startColumn: 14,
-          }]);
-          assertEquals(
-            (candidate.value as { sourceExcerpt?: string }).sourceExcerpt,
-            "export const value = 1;",
-          );
-          assertEquals(registryEntityCounts(kernel), beforeRegistryCounts);
-          const usage = await kernel.sessions.getSessionUsage(session.id);
-          assertEquals(usage.unpricedCalls, 1);
-          assertEquals(usage.unpricedInputTokens, 21);
-          assertEquals(usage.unpricedOutputTokens, 8);
-          const rows = await kernel.sessions.getModelUsagesForTurn(turnId);
-          assertEquals(rows.length, 1);
-          assertEquals(rows[0]!.role, "import");
-          assertEquals(rows[0]!.caller, "codebase_import_classifier");
-        } finally {
-          await Deno.remove(root, { recursive: true });
-        }
-      },
-      compositionWithImportClassifier(async (request, opts) => {
-        seenRequest = request;
-        await opts?.recordUsage?.({
-          sessionId: opts.sessionId,
-          turnId: opts.turnId,
-          changesetId: opts.changesetId,
-          provider: "anthropic",
-          model: "claude-import-test",
-          role: "import",
-          caller: "codebase_import_classifier",
-          startedAt: new Date("2026-09-11T00:00:00.000Z"),
-          endedAt: new Date("2026-09-11T00:00:01.000Z"),
-          usage: {
-            inputTokens: 21,
-            outputTokens: 8,
-            cacheCreationInputTokens: 0,
-            cacheReadInputTokens: 0,
+Deno.test({
+  ...testOpts,
+  name: "an imports packet goes stale when the codebase is indexed again",
+  fn: async () => {
+    await withIndexedForClassification(async (kernel, sessionId) => {
+      const packet = await importsPacket(kernel, sessionId);
+      const root = kernel.codebaseGraph!.rootPath;
+      await dispatchTool("index_codebase", { rootPath: root }, kernel, noop);
+      const submitted = await dispatchTool(
+        "submit_review",
+        {
+          packet_id: packet.packetId,
+          verdict: CLASSIFICATION,
+        },
+        kernel,
+        noop,
+        { sessionId },
+      );
+      assertEquals(submitted.error?.code, "STALE_REVIEW");
+      assertEquals(hasClassifier(kernel), false);
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "a classification that isn't one is refused and the graph is untouched",
+  fn: async () => {
+    await withIndexedForClassification(async (kernel, sessionId) => {
+      const packet = await importsPacket(kernel, sessionId);
+      for (const verdict of ["facts", { facts: "none" }]) {
+        const submitted = await dispatchTool(
+          "submit_review",
+          {
+            packet_id: packet.packetId,
+            verdict,
           },
-          metadata: { test: "index_codebase" },
-        });
-        return {
-          status: "completed",
-          model: "claude-import-test",
-          facts: [{
-            kind: "import-strategy",
-            name: "import strategy",
-            value: { mode: "source-backed-overlay" },
-            confidence: 0.93,
-          }],
-          mappings: [],
-          diagnostics: [{
-            severity: "warning",
-            message: "Ambiguous auth middleware.",
-          }],
-          candidateEntities: [{
-            entityType: "handler",
-            name: "listUsers",
-            confidence: 0.82,
-            rationale: "Candidate only; do not materialize.",
-            locations: [{
-              file: "src/index.ts",
-              startLine: 1,
-              startColumn: 14,
-            }],
-            sourceExcerpt: "export const value = 1;",
-          }],
-        };
-      }),
-    );
+          kernel,
+          noop,
+          { sessionId },
+        );
+        assertEquals(submitted.error?.code, "INVALID_VERDICT");
+      }
+      assertEquals(hasClassifier(kernel), false);
+    });
   },
 });
 
 Deno.test({
   ...testOpts,
-  name:
-    "index_codebase classification assist skips unconfigured import model without losing deterministic graph",
+  name: "request_review imports needs an assist-mode index first",
   fn: async () => {
-    await withKernel(
-      async (kernel) => {
-        const root = await Deno.makeTempDir({
-          prefix: "genie-index-skip-",
-        });
-        try {
-          await writeTinySourceProject(root);
-
-          const result = await dispatchTool(
-            "index_codebase",
-            { rootPath: root, classification: "assist" },
-            kernel,
-            noop,
-          );
-
-          assertEquals(result.ok, true);
-          const data = result.data as {
-            classification: { status: string; reason?: string };
-            counts: { files: number };
-          };
-          assertEquals(data.classification.status, "skipped_unconfigured");
-          assertEquals(data.counts.files, 1);
-          assert(kernel.codebaseGraph !== null);
-          assertEquals(kernel.codebaseGraph!.files.length, 1);
-          assertEquals(
-            kernel.codebaseGraph!.plugins.some((plugin) =>
-              plugin.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID
-            ),
-            false,
-          );
-        } finally {
-          await Deno.remove(root, { recursive: true });
-        }
-      },
-      compositionWithImportClassifier(() => ({
-        status: "skipped_unconfigured",
-        reason: "No model is configured for this role.",
-        diagnostics: [{
-          severity: "info",
-          message: "Import model is unconfigured.",
-        }],
-      })),
-    );
-  },
-});
-
-Deno.test({
-  ...testOpts,
-  name:
-    "index_codebase classification assist reports classifier failure without throwing",
-  fn: async () => {
-    await withKernel(
-      async (kernel) => {
-        const root = await Deno.makeTempDir({
-          prefix: "genie-index-fail-",
-        });
-        try {
-          await writeTinySourceProject(root);
-
-          const result = await dispatchTool(
-            "index_codebase",
-            { rootPath: root, classification: "assist" },
-            kernel,
-            noop,
-          );
-
-          assertEquals(result.ok, true);
-          const data = result.data as {
-            classification: { status: string; reason?: string };
-            counts: { files: number };
-          };
-          assertEquals(data.classification.status, "failed");
-          assertStringIncludes(data.classification.reason ?? "", "bad JSON");
-          assertEquals(data.counts.files, 1);
-          assert(kernel.codebaseGraph !== null);
-          assertEquals(kernel.codebaseGraph!.files.length, 1);
-          assertEquals(
-            kernel.codebaseGraph!.plugins.some((plugin) =>
-              plugin.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID
-            ),
-            false,
-          );
-        } finally {
-          await Deno.remove(root, { recursive: true });
-        }
-      },
-      compositionWithImportClassifier(() => {
-        throw new Error("bad JSON from classifier");
-      }),
-    );
-  },
-});
-
-Deno.test({
-  ...testOpts,
-  name:
-    "index_codebase classification assist reports malformed classifier output as failed",
-  fn: async () => {
-    await withKernel(
-      async (kernel) => {
-        const root = await Deno.makeTempDir({
-          prefix: "genie-index-malformed-",
-        });
-        try {
-          await writeTinySourceProject(root);
-
-          const result = await dispatchTool(
-            "index_codebase",
-            { rootPath: root, classification: "assist" },
-            kernel,
-            noop,
-          );
-
-          assertEquals(result.ok, true);
-          const data = result.data as {
-            classification: { status: string; reason?: string };
-            counts: { files: number };
-          };
-          assertEquals(data.classification.status, "failed");
-          assertStringIncludes(
-            data.classification.reason ?? "",
-            "not valid JSON",
-          );
-          assertEquals(data.counts.files, 1);
-          assert(kernel.codebaseGraph !== null);
-          assertEquals(kernel.codebaseGraph!.files.length, 1);
-          assertEquals(
-            kernel.codebaseGraph!.plugins.some((plugin) =>
-              plugin.pluginId === IMPORT_CLASSIFIER_PLUGIN_ID
-            ),
-            false,
-          );
-        } finally {
-          await Deno.remove(root, { recursive: true });
-        }
-      },
-      compositionWithImportClassifier(() => ({
-        status: "failed",
-        reason: "Classifier response was not valid JSON: unexpected token",
-        diagnostics: [{
-          severity: "warning",
-          message: "Model-assisted import classification failed.",
-        }],
-      })),
-    );
+    await withKernel(async (kernel) => {
+      const result = await dispatchTool(
+        "request_review",
+        { kind: "imports" },
+        kernel,
+        noop,
+      );
+      assertEquals(result.error?.code, "NO_INDEX_TO_CLASSIFY");
+    });
   },
 });
 
@@ -2210,6 +2157,183 @@ Deno.test({
       } finally {
         rmSync(projectDir, { recursive: true, force: true });
       }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "manage_sessions end closes the calling session by default",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      const session = await kernel.sessions.createSession("to end");
+      const result = await dispatchTool(
+        "manage_sessions",
+        { action: "end" },
+        kernel,
+        noop,
+        { sessionId: session.id },
+      );
+      assertEquals(result.ok, true);
+      const ended = await kernel.sessions.getSession(session.id);
+      assertEquals(typeof ended?.endedAt, "string");
+
+      const none = await dispatchTool(
+        "manage_sessions",
+        { action: "end" },
+        kernel,
+        noop,
+      );
+      assertEquals(none.ok, false);
+      assertEquals(none.error?.code, "NO_SESSION");
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "list_tests filters by claim_id and returns verification metadata",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      const pass = async () => {};
+      kernel.tests.register(
+        "claimedTest",
+        "async function claimedTest() {}",
+        pass,
+        undefined,
+        "cs-1",
+        undefined,
+        undefined,
+        { claimIds: ["c1"], kind: "unit" },
+      );
+      kernel.tests.register(
+        "otherTest",
+        "async function otherTest() {}",
+        pass,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { claimIds: ["c2"] },
+      );
+      kernel.tests.register("plainTest", "async function plainTest() {}", pass);
+
+      const filtered = await dispatchTool(
+        "list_tests",
+        { claim_id: "c1" },
+        kernel,
+        noop,
+      );
+      assertEquals(filtered.ok, true);
+      const rows = filtered.data as Array<Record<string, unknown>>;
+      assertEquals(rows.map((r) => r.name), ["claimedTest"]);
+      assertEquals(rows[0]?.changesetId, "cs-1");
+      assertEquals(rows[0]?.verification, { claimIds: ["c1"], kind: "unit" });
+
+      const all = await dispatchTool("list_tests", {}, kernel, noop);
+      const names = (all.data as Array<{ name: string }>).map((r) => r.name);
+      assertEquals(names.length >= 3, true);
+      const plain = (all.data as Array<Record<string, unknown>>).find((r) =>
+        r.name === "plainTest"
+      );
+      assertEquals(plain && "verification" in plain, false);
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "get_code_context serves the project, scopes, a changeset or a claim",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      const ok = () => new Response();
+      kernel.handlers.register("changed", "const a = 'changed-src';", ok);
+      kernel.handlers.register("untouched", "const b = 'untouched-src';", ok);
+      kernel.tests.register(
+        "claimTest",
+        "async function claimTest() { 'claim-test-src'; }",
+        async () => {},
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { claimIds: ["claim_0"] },
+      );
+      const session = await kernel.sessions.createSession("ctx");
+      const changeset = await kernel.changesets.create({
+        sessionId: session.id,
+        title: "Ctx",
+        plan: {
+          summary: "Change a handler.",
+          steps: [{ id: "s1", description: "Change it", status: "pending" }],
+          acceptanceCriteria: [{
+            id: "claim_0",
+            text: "It works.",
+            source: "agent",
+            priority: "must",
+          }],
+          verificationPlan: [{
+            id: "v1",
+            claimIds: ["claim_0"],
+            kind: "unit",
+            description: "Test it.",
+          }],
+        },
+      });
+      await kernel.changelog.record({
+        category: "handler",
+        key: "changed",
+        action: "update",
+        beforeSnapshot: null,
+        afterSnapshot: { source: "x" },
+        context: { sessionId: session.id, changesetId: changeset.id },
+      });
+      const context = async (input: Record<string, unknown>) => {
+        const result = await dispatchTool(
+          "get_code_context",
+          input,
+          kernel,
+          noop,
+        );
+        assertEquals(result.ok, true, JSON.stringify(result));
+        return (result.data as { context: string }).context;
+      };
+
+      const project = await context({});
+      assertStringIncludes(project, "changed-src");
+      assertStringIncludes(project, "untouched-src");
+
+      const scoped = await context({ scopes: ["handler:untouched"] });
+      assertStringIncludes(scoped, "untouched-src");
+      assert(!scoped.includes("changed-src"));
+
+      const touched = await context({ changeset_id: changeset.id });
+      assertStringIncludes(touched, "changed-src");
+      assert(!touched.includes("untouched-src"));
+
+      const claim = await context({
+        changeset_id: changeset.id,
+        claim_id: "claim_0",
+      });
+      assertStringIncludes(claim, "claim-test-src");
+
+      const orphan = await dispatchTool(
+        "get_code_context",
+        { claim_id: "claim_0" },
+        kernel,
+        noop,
+      );
+      assertEquals(orphan.error?.code, "INVALID_INPUT");
+      const missing = await dispatchTool(
+        "get_code_context",
+        { changeset_id: "cs-missing" },
+        kernel,
+        noop,
+      );
+      assertEquals(
+        missing.error?.code,
+        "CHANGESET_NOT_FOUND",
+      );
     });
   },
 });
@@ -3177,6 +3301,7 @@ Deno.test({
         stepCount: 1,
         completedAt: (await kernel.changesets.get(changeset.id))?.completedAt,
         stateFlushed: false,
+        commit: { committed: false, reason: "no_project" },
       });
       const expectedUsage = {
         inputTokens: 1200,
@@ -3510,58 +3635,6 @@ Deno.test({
       assertEquals(
         (result.data as { attestationId?: string }).attestationId,
         atts[0]?.id,
-      );
-    });
-  },
-});
-
-Deno.test({
-  ...testOpts,
-  name: "run_audit mints no attestation when the audit could not run",
-  fn: async () => {
-    await withKernel(async (kernel) => {
-      const session = await kernel.sessions.createSession("Audit Session");
-      const cs = await kernel.changesets.create({
-        sessionId: session.id,
-        title: "Auditing",
-        plan: {
-          summary: "s",
-          steps: [{ id: "s1", description: "step", status: "done" }],
-          acceptanceCriteria: [{
-            id: "claim_0",
-            text: "secure",
-            source: "agent",
-            priority: "must",
-          }],
-          verificationPlan: [{
-            id: "c0",
-            claimIds: ["claim_0"],
-            kind: "manual",
-            description: "Audit it.",
-          }],
-        },
-      });
-      await kernel.changesets.approve(cs.id);
-      await kernel.changesets.startWork(cs.id);
-
-      // testComposition() has no audit provider, so the audit errors out.
-      const result = await dispatchTool(
-        "run_audit",
-        { category: "security" },
-        kernel,
-        noop,
-        { sessionId: session.id, changesetId: cs.id },
-      );
-      assertEquals(result.ok, true);
-      assertEquals(
-        (result as { ok: true; data: { status: string } }).data.status,
-        "error",
-      );
-
-      const stored = await kernel.changesets.get(cs.id);
-      assertEquals(
-        (stored?.plan.attestations ?? []).filter((a) => a.kind === "audit"),
-        [],
       );
     });
   },
@@ -4295,6 +4368,127 @@ Deno.test({
         );
         assert(pinned.ok);
         assertEquals(await kernel.documents.listPinned("sess_disp"), [doc.id]);
+      } finally {
+        rmSync(projectDir, { recursive: true, force: true });
+      }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name:
+    "documents carry bytes as base64, list a session's pins and take message refs",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      const projectDir = mkdtempSync(join(tmpdir(), "genie-doc-bytes-"));
+      kernel.projectDir = projectDir;
+      try {
+        const session = await kernel.sessions.createSession("Docs");
+        const ctx = { sessionId: session.id };
+        const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+        const created = await dispatchTool(
+          "document_write",
+          {
+            action: "create",
+            name: "shot.png",
+            kind: "image/png",
+            content_base64: encodeBase64(bytes),
+            attachment: true,
+          },
+          kernel,
+          noop,
+          ctx,
+        );
+        assert(created.ok, created.error?.message);
+        const doc = created.data as DocumentRecord;
+        assertEquals(doc.createdBy, "user");
+        assertEquals(doc.metadata?.source, ATTACHMENT_DOCUMENT_SOURCE);
+
+        const read = await dispatchTool(
+          "document_query",
+          {
+            action: "read",
+            id: doc.id,
+            includeContent: true,
+            encoding: "base64",
+          },
+          kernel,
+          noop,
+        );
+        assert(read.ok);
+        const readData = read.data as {
+          contentBase64: string;
+          version: { versionHash: string };
+        };
+        assertEquals(decodeBase64(readData.contentBase64), bytes);
+        assertEquals(readData.version.versionHash, doc.currentVersionHash);
+
+        await dispatchTool(
+          "document_pin",
+          { id: doc.id, pinned: true },
+          kernel,
+          noop,
+          ctx,
+        );
+        const pinned = await dispatchTool(
+          "document_query",
+          { action: "pinned" },
+          kernel,
+          noop,
+          ctx,
+        );
+        assertEquals(pinned.data, { ids: [doc.id] });
+
+        const message = await kernel.sessions.addMessage({
+          sessionId: session.id,
+          role: "user",
+          content: "see the shot",
+        });
+        const ref = await dispatchTool(
+          "document_write",
+          {
+            action: "ref",
+            id: doc.id,
+            message_id: message.id,
+            role: "attachment",
+            versionHash: doc.currentVersionHash,
+          },
+          kernel,
+          noop,
+          ctx,
+        );
+        assert(ref.ok, ref.error?.message);
+        const refs = await kernel.documents.listRefsByTarget(
+          "message",
+          String(message.id),
+          "attachment",
+        );
+        assertEquals(refs.map((r) => r.documentId), [doc.id]);
+
+        // A message in another session, or a role the kernel owns, is refused.
+        const other = await kernel.sessions.createSession("Other");
+        const foreign = await dispatchTool(
+          "document_write",
+          {
+            action: "ref",
+            id: doc.id,
+            message_id: message.id,
+            role: "mention",
+          },
+          kernel,
+          noop,
+          { sessionId: other.id },
+        );
+        assertEquals(foreign.error?.code, "MESSAGE_NOT_FOUND");
+        const planRef = await dispatchTool(
+          "document_write",
+          { action: "ref", id: doc.id, message_id: message.id, role: "plan" },
+          kernel,
+          noop,
+          ctx,
+        );
+        assertEquals(planRef.error?.code, "INVALID_INPUT");
       } finally {
         rmSync(projectDir, { recursive: true, force: true });
       }

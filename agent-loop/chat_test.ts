@@ -1,30 +1,20 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   buildUserContentBlocks,
-  captureChangesetPlanDocument,
-  captureScreenshotEvidenceDocument,
   type ChatEvent,
   ChatOrchestrator,
-  formatCurrentAppMapForContext,
   formatProjectHistoryForContext,
   formatRecentMessagesForContext,
   hasMultipleSteps,
   hasSessionContextToReload,
-  renderChangesetPlanDocument,
   resolveDocumentMentions,
   resolveMessageAttachments,
-  screenshotEvidenceLedgerKey,
 } from "./chat.ts";
-import {
-  ATTACHMENT_DOCUMENT_SOURCE,
-  PLAN_DOCUMENT_SOURCE,
-  SCREENSHOT_DOCUMENT_SOURCE,
-} from "../core/documents.ts";
-import { genieDocumentRefsTable } from "../core/db/schema/index.ts";
-import { and, eq } from "drizzle-orm";
+import { inProcessChatBackend } from "./chat-backend.ts";
+import { ATTACHMENT_DOCUMENT_SOURCE } from "../core/documents.ts";
 import { encodeBase64 } from "../core/util.ts";
 import { composePrompt } from "./prompt-compose.ts";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatIntelligence } from "../core/chat-intelligence.ts";
@@ -172,134 +162,6 @@ Deno.test("formatProjectHistoryForContext summarizes turns and changesets", () =
   assert(!context.includes("afterSnapshot"));
 });
 
-Deno.test("formatCurrentAppMapForContext exposes semantic app structure without source", async () => {
-  const context = await formatCurrentAppMapForContext(
-    {
-      listModules: () => ["routing"],
-      routes: {
-        list: () => [{
-          method: "GET",
-          path: "/plans/:id",
-          handlerName: "showPlan",
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-          schema: { summary: "Show a route plan" },
-        }],
-      },
-      handlers: {
-        list: () => [{
-          name: "showPlan",
-          source: "async function showPlan(c) { return c.json({ ok: true }); }",
-          fn: () => new Response(),
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-          purpose: "Render a route plan.",
-        }],
-      },
-      functions: {
-        list: () => [{
-          name: "computeRisk",
-          source: "function computeRisk() { return 1; }",
-          fn: () => 1,
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-          returnType: "RiskScore",
-        }],
-      },
-      templates: {
-        list: () => [{
-          name: "plan-page",
-          content: "<html></html>",
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-        }],
-      },
-      assets: {
-        list: () => [{
-          name: "route.css",
-          mimeType: "text/css",
-          size: 120,
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-        }],
-      },
-      configs: {
-        list: () => [{
-          name: "riskThreshold",
-          type: "number",
-          updatedAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-        }],
-      },
-      types: {
-        serialize: () => [{
-          name: "RiskScore",
-          fields: [{ name: "level", type: "number" }],
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-        }],
-      },
-      tests: {
-        list: () => [{
-          name: "showPlan returns risk",
-          source: "Deno.test('x', () => {})",
-          fn: async () => {},
-          registeredAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-          lastResult: {
-            passed: true,
-            durationMs: 5,
-            ranAt: "2026-06-19T00:00:00.000Z",
-          },
-        }],
-      },
-      db: {
-        listSchemas: async () => [{
-          tableName: "plans",
-          columns: [{
-            name: "id",
-            type: "text",
-            nullable: false,
-            defaultValue: null,
-            primaryKey: true,
-          }],
-          sql: "CREATE TABLE plans (id text primary key)",
-          createdAt: "2026-06-19T00:00:00.000Z",
-          updatedAt: "2026-06-19T00:00:00.000Z",
-          module: "routing",
-        }],
-      },
-      requestLog: {
-        recent: () => [{
-          timestamp: "2026-06-19T00:00:00.000Z",
-          method: "GET",
-          path: "/plans/1",
-          status: 200,
-          durationMs: 12.3,
-          requestHeaders: {},
-          responseHeaders: {},
-          responseBody: null,
-        }],
-      },
-    } as unknown as import("../core/registries.ts").Kernel,
-  );
-
-  assert(context.includes("Current app map") === false);
-  assert(context.includes("routes:"));
-  assert(context.includes("- GET /plans/:id -> showPlan [routing]; schema"));
-  assert(context.includes("schemas:"));
-  assert(context.includes("- plans [routing] (id:text pk)"));
-  assert(context.includes("assets:"));
-  assert(context.includes("route.css"));
-  assert(!context.includes("return c.json"));
-  assert(!context.includes("CREATE TABLE"));
-  assert(
-    context.includes(
-      "Use this current app map before choosing inspection tools",
-    ),
-  );
-});
-
 // A minimal stand-in brain: the lifecycle tests below never reach the model, so the
 // loop's injected intelligence can be an inert stub. (The tuned brain's own behavior is
 // covered in brain_test.ts.) Typed against the core contract so this test carries no
@@ -345,7 +207,7 @@ function localTurnHarness(
   script: ProviderEvent[][],
   opts: {
     brain?: ChatIntelligence;
-    nameGen?: ConstructorParameters<typeof ChatOrchestrator>[5];
+    nameGen?: ConstructorParameters<typeof ChatOrchestrator>[4];
   } = {},
 ): {
   chat: ChatOrchestrator;
@@ -354,8 +216,7 @@ function localTurnHarness(
 } {
   const provider = new FakeModelProvider(script);
   const chat = new ChatOrchestrator(
-    kernel,
-    () => {},
+    inProcessChatBackend(kernel, () => {}),
     new MCPManager(),
     opts.brain ?? stubBrain,
     provider,
@@ -449,8 +310,7 @@ Deno.test("sendMessage routes planning changeset revision turns to the planning 
       });
       const provider = new FakeModelProvider([usageTurn()]);
       const chat = new ChatOrchestrator(
-        kernel,
-        () => {},
+        inProcessChatBackend(kernel, () => {}),
         new MCPManager(),
         configuredRoleBrain(),
         provider,
@@ -515,8 +375,7 @@ Deno.test("sendMessage routes approval turns that start work to the agent role",
       });
       const provider = new FakeModelProvider([usageTurn()]);
       const chat = new ChatOrchestrator(
-        kernel,
-        () => {},
+        inProcessChatBackend(kernel, () => {}),
         new MCPManager(),
         configuredRoleBrain((content) => content === "approve"),
         provider,
@@ -557,8 +416,7 @@ Deno.test("runStepTurn keeps per-step execution on the agent role", async () => 
       const session = await kernel.sessions.createSession("Step Role");
       const provider = new FakeModelProvider([usageTurn()]);
       const chat = new ChatOrchestrator(
-        kernel,
-        () => {},
+        inProcessChatBackend(kernel, () => {}),
         new MCPManager(),
         configuredRoleBrain(),
         provider,
@@ -628,8 +486,7 @@ Deno.test("sendMessage surfaces the standard unconfigured message when planning 
       });
       const provider = new FakeModelProvider([usageTurn()]);
       const chat = new ChatOrchestrator(
-        kernel,
-        () => {},
+        inProcessChatBackend(kernel, () => {}),
         new MCPManager(),
         configuredRoleBrain(),
         provider,
@@ -682,8 +539,7 @@ Deno.test("ChatOrchestrator starts planning changeset when brain classifies comp
     },
   };
   const chat = new ChatOrchestrator(
-    kernel,
-    () => {},
+    inProcessChatBackend(kernel, () => {}),
     new MCPManager(),
     brain,
     new FakeModelProvider([]),
@@ -712,8 +568,7 @@ Deno.test("ChatOrchestrator rejects unreadable direct lifecycle operations", asy
   const db = await Database.create({ driver: "pglite" });
   const kernel = new Kernel(db);
   const chat = new ChatOrchestrator(
-    kernel,
-    () => {},
+    inProcessChatBackend(kernel, () => {}),
     new MCPManager(),
     stubBrain,
     new FakeModelProvider([]),
@@ -778,11 +633,11 @@ function configureGitIdentity(dir: string): void {
 
 // Stage 5 binding — exercises the real git side of the per-step checkpoint (commitStep):
 // a step with a file delta lands a real "step N: <desc>" commit, and a second step whose
-// flush produces no change is swallowed as NOTHING_TO_COMMIT without breaking the loop.
+// flush produces no change commits nothing without breaking the loop.
 // The flush inside commitStep persists the kernel's project state to disk before staging,
 // so an unchanged kernel flushed twice yields an identical tree — the deterministic way to
 // reach the no-delta branch through the real gitCommit path.
-Deno.test("commitStep lands a real step checkpoint and swallows NOTHING_TO_COMMIT", async () => {
+Deno.test("commitStep lands a real step checkpoint and skips a step with no delta", async () => {
   if (!gitAvailable()) return;
   const db = await Database.create({ driver: "pglite" });
   const kernel = new Kernel(db);
@@ -793,18 +648,18 @@ Deno.test("commitStep lands a real step checkpoint and swallows NOTHING_TO_COMMI
   try {
     gitInit(dir);
     configureGitIdentity(dir);
+    writeFileSync(join(dir, "opentide.json"), JSON.stringify({ name: "cp" }));
     kernel.projectDir = dir;
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
     );
     const commit = (step: PlanStep, i: number): Promise<void> =>
       (chat as unknown as {
-        commitStep: (s: PlanStep, i: number) => Promise<void>;
-      }).commitStep(step, i);
+        commitStep: (s: PlanStep, i: number, cs: string) => Promise<void>;
+      }).commitStep(step, i, "cs_checkpoint");
 
     const step1: PlanStep = {
       id: "s1",
@@ -819,8 +674,8 @@ Deno.test("commitStep lands a real step checkpoint and swallows NOTHING_TO_COMMI
       "step 1: Scaffold the project",
     );
 
-    // Second step: the kernel is unchanged, so the flush rewrites an identical tree →
-    // gitCommit throws NOTHING_TO_COMMIT, which commitStep swallows. The call must resolve
+    // Second step: the kernel is unchanged, so the flush rewrites an identical tree and
+    // there is nothing to commit. The call must resolve
     // (never reject) and leave the prior commit as the last checkpoint — no new commit.
     const step2: PlanStep = {
       id: "s2",
@@ -847,8 +702,7 @@ Deno.test("commitStep is a no-op when no project directory is loaded", async () 
     // projectDir stays null (a BYO-key / no-project run) → commitStep resolves without
     // touching git. It must not throw.
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
@@ -859,8 +713,8 @@ Deno.test("commitStep is a no-op when no project directory is loaded", async () 
       status: "in_progress",
     };
     await (chat as unknown as {
-      commitStep: (s: PlanStep, i: number) => Promise<void>;
-    }).commitStep(step, 0);
+      commitStep: (s: PlanStep, i: number, cs: string) => Promise<void>;
+    }).commitStep(step, 0, "cs_checkpoint");
   } finally {
     await db.close();
   }
@@ -1376,8 +1230,7 @@ async function pinnedDocFixture(): Promise<{
   });
   if (!doc.ok) throw new Error("fixture doc create failed");
   const chat = new ChatOrchestrator(
-    kernel,
-    () => {},
+    inProcessChatBackend(kernel, () => {}),
     new MCPManager(),
     composingBrain,
     new FakeModelProvider([]),
@@ -1658,414 +1511,6 @@ Deno.test("runTurn degrades to today's behavior when an attachment cannot be per
     const docs = await kernel.documents.list({});
     assert(docs.ok);
     assertEquals(docs.data.length, 0);
-  } finally {
-    await db.close();
-  }
-});
-
-// --- Slice B: changeset plan captured as a versioned document (D4, minimal) ---
-
-// A minimal Changeset carrying only the fields captureChangesetPlanDocument reads
-// (id, title, sessionId, plan.summary, plan.steps); the rest is filled to satisfy the
-// type without cast, since Slice B does not touch changeset lifecycle behavior.
-function fakePlanChangeset(over: {
-  id: string;
-  title?: string;
-  sessionId?: string | null;
-  summary?: string;
-  steps?: Array<{ id: string; description: string }>;
-}): Changeset {
-  return {
-    id: over.id,
-    sessionId: over.sessionId ?? null,
-    title: over.title ?? "Do the thing",
-    description: null,
-    status: "planning",
-    plan: {
-      summary: over.summary ?? "Summary.",
-      steps: (over.steps ?? [{ id: "step_0", description: "First step" }]).map(
-        (s) => ({ ...s, status: "pending" as const }),
-      ),
-    },
-    planMessageIds: [],
-    approvalMessageId: null,
-    workMessageIds: [],
-    toolCalls: null,
-    reasoning: null,
-    tokenUsage: null,
-    createdAt: "2026-08-01T00:00:00.000Z",
-    updatedAt: "2026-08-01T00:00:00.000Z",
-    completedAt: null,
-    creatorUserId: null,
-  };
-}
-
-Deno.test("renderChangesetPlanDocument is deterministic markdown of title + summary + steps", () => {
-  const cs = fakePlanChangeset({
-    id: "cs_r",
-    title: "Implement tiers",
-    summary: "Wire the three tiers.",
-    steps: [
-      { id: "step_0", description: "Add schema" },
-      { id: "step_1", description: "Add store" },
-    ],
-  });
-  const md = renderChangesetPlanDocument(cs);
-  assertEquals(
-    md,
-    "# Implement tiers\n\nWire the three tiers.\n\n## Steps\n\n1. Add schema\n2. Add store\n",
-  );
-  // Deterministic: same plan renders byte-identical (→ content-addressed dedupe).
-  assertEquals(renderChangesetPlanDocument(cs), md);
-});
-
-Deno.test("captureChangesetPlanDocument persists a plan doc + one changeset/plan ref; re-plan moves head, ref follows", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  const projectDir = mkdtempSync(join(tmpdir(), "genie-chat-plan-"));
-  kernel.projectDir = projectDir;
-  try {
-    const cs = fakePlanChangeset({
-      id: "cs_1",
-      title: "Implement tiers",
-      sessionId: "sess_p",
-      summary: "Wire the three tiers.",
-      steps: [
-        { id: "step_0", description: "Add schema" },
-        { id: "step_1", description: "Add store" },
-      ],
-    });
-
-    const first = await captureChangesetPlanDocument(kernel.documents, cs);
-    assert(first.ok);
-
-    // Exactly one changeset/plan ref, at the head, citing an agent-created plan doc.
-    let refs = await kernel.documents.listRefsByTarget(
-      "changeset",
-      "cs_1",
-      "plan",
-    );
-    assertEquals(refs.length, 1);
-    const docId = refs[0]!.documentId;
-    const doc1 = await kernel.documents.read(docId);
-    assert(doc1.ok);
-    const v1 = doc1.data.document.currentVersionHash;
-    assertEquals(doc1.data.document.createdBy, "agent");
-    assertEquals(doc1.data.document.metadata.source, PLAN_DOCUMENT_SOURCE);
-    assertEquals(doc1.data.document.scope, "session");
-    assertEquals(doc1.data.document.sessionId, "sess_p");
-    assertEquals(refs[0]!.versionHash, v1);
-    assertEquals(refs[0]!.sessionId, "sess_p");
-
-    // The rendered markdown carries the title, summary, and steps.
-    const content1 = await kernel.documents.readContent(docId);
-    assert(content1.ok);
-    assert(content1.data.content.includes("# Implement tiers"));
-    assert(content1.data.content.includes("Wire the three tiers."));
-    assert(content1.data.content.includes("Add schema"));
-
-    // RE-PLAN: same changeset, edited plan → SAME doc, new immutable version, head moves.
-    const replanned = fakePlanChangeset({
-      id: "cs_1",
-      title: "Implement tiers",
-      sessionId: "sess_p",
-      summary: "Wire the three tiers, revised.",
-      steps: [
-        { id: "step_0", description: "Add schema" },
-        { id: "step_1", description: "Add store" },
-        { id: "step_2", description: "Add tools" },
-      ],
-    });
-    const second = await captureChangesetPlanDocument(
-      kernel.documents,
-      replanned,
-    );
-    assert(second.ok);
-
-    refs = await kernel.documents.listRefsByTarget("changeset", "cs_1", "plan");
-    assertEquals(refs.length, 1, "no duplicate refs accumulate across re-plan");
-    assertEquals(refs[0]!.documentId, docId, "the SAME plan doc is updated");
-    const doc2 = await kernel.documents.read(docId);
-    assert(doc2.ok);
-    assertEquals(
-      doc2.data.versions.length,
-      2,
-      "a new immutable version was minted",
-    );
-    const v2 = doc2.data.document.currentVersionHash;
-    assert(v1 !== v2, "the head moved");
-    assertEquals(
-      refs[0]!.versionHash,
-      v2,
-      "the changeset/plan ref cites the NEW head",
-    );
-    const content2 = await kernel.documents.readContent(docId);
-    assert(content2.ok);
-    assert(content2.data.content.includes("Add tools"));
-
-    // An unchanged re-plan is a content-addressed no-op: no new version, one ref at head.
-    const third = await captureChangesetPlanDocument(
-      kernel.documents,
-      replanned,
-    );
-    assert(third.ok);
-    const doc3 = await kernel.documents.read(docId);
-    assert(doc3.ok);
-    assertEquals(
-      doc3.data.versions.length,
-      2,
-      "identical bytes dedupe — no new version",
-    );
-    refs = await kernel.documents.listRefsByTarget("changeset", "cs_1", "plan");
-    assertEquals(refs.length, 1);
-    assertEquals(refs[0]!.versionHash, v2);
-  } finally {
-    await db.close();
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-Deno.test("captureChangesetPlanDocument is idempotent per changeset even if the ref is lost (no duplicate doc)", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  const projectDir = mkdtempSync(join(tmpdir(), "genie-chat-plan-heal-"));
-  kernel.projectDir = projectDir;
-  try {
-    const cs = fakePlanChangeset({
-      id: "cs_h",
-      title: "Heal",
-      sessionId: "sess_h",
-      summary: "First cut.",
-    });
-    const first = await captureChangesetPlanDocument(kernel.documents, cs);
-    assert(first.ok);
-    const docId = (await kernel.documents.listRefsByTarget(
-      "changeset",
-      "cs_h",
-      "plan",
-    ))[0]!.documentId;
-
-    // Simulate a failed ref write after the doc was created: drop the plan ref, so
-    // the changeset now has a doc but no backlink pointing at it.
-    await db.drizzle.delete(genieDocumentRefsTable).where(and(
-      eq(genieDocumentRefsTable.refType, "changeset"),
-      eq(genieDocumentRefsTable.refId, "cs_h"),
-      eq(genieDocumentRefsTable.role, "plan"),
-    ));
-    assertEquals(
-      await kernel.documents.listRefsByTarget("changeset", "cs_h", "plan"),
-      [],
-    );
-
-    // Re-plan: the doc is rediscovered by ORIGIN (not by the missing ref), UPDATED in
-    // place, and the ref is restored — no second plan doc is minted.
-    const replanned = fakePlanChangeset({
-      id: "cs_h",
-      title: "Heal",
-      sessionId: "sess_h",
-      summary: "Second cut, revised.",
-    });
-    const second = await captureChangesetPlanDocument(
-      kernel.documents,
-      replanned,
-    );
-    assert(second.ok);
-
-    const docs = await kernel.documents.list({ sessionId: "sess_h" });
-    assert(docs.ok);
-    const planDocs = docs.data.filter((d) =>
-      d.metadata.source === PLAN_DOCUMENT_SOURCE &&
-      d.metadata.sourceId === "cs_h"
-    );
-    assertEquals(planDocs.length, 1, "no duplicate plan doc after a lost ref");
-    assertEquals(
-      planDocs[0]!.id,
-      docId,
-      "the original doc was updated in place",
-    );
-
-    const refs = await kernel.documents.listRefsByTarget(
-      "changeset",
-      "cs_h",
-      "plan",
-    );
-    assertEquals(
-      refs.length,
-      1,
-      "the single plan ref is restored on re-capture",
-    );
-    assertEquals(refs[0]!.documentId, docId);
-    assertEquals(refs[0]!.versionHash, planDocs[0]!.currentVersionHash);
-  } finally {
-    await db.close();
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-Deno.test("captureChangesetPlanDocument degrades without a project (no throw, no ref)", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  // No kernel.projectDir → a session-scoped create() returns PROJECT_REQUIRED.
-  try {
-    const cs = fakePlanChangeset({ id: "cs_np", sessionId: "sess_np" });
-    const res = await captureChangesetPlanDocument(kernel.documents, cs);
-    assert(!res.ok, "capture surfaces the store error instead of throwing");
-    assertEquals(res.error.code, "PROJECT_REQUIRED");
-    assertEquals(
-      await kernel.documents.listRefsByTarget("changeset", "cs_np", "plan"),
-      [],
-    );
-  } finally {
-    await db.close();
-  }
-});
-
-// --- Slice C-rich SECONDARY (plan §8/§11): screenshot PNG blobs captured as versioned
-// image/png agent documents + one ledger/evidence ref each, at the open agent-loop `_images`
-// seam. The raw bytes are stored VERBATIM (content-addressing dedupes identical shots). ---
-
-// A PNG signature + a few bytes stands in for a real screenshot blob — the store keeps bytes
-// verbatim, so any Uint8Array round-trips; the signature just makes the fixture recognisable.
-function fakePngBytes(tag: number): Uint8Array {
-  return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, tag]);
-}
-
-Deno.test("captureScreenshotEvidenceDocument persists an image/png doc that round-trips the exact PNG + one ledger/evidence ref", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  const projectDir = mkdtempSync(join(tmpdir(), "genie-chat-shot-"));
-  kernel.projectDir = projectDir;
-  try {
-    const png = fakePngBytes(1);
-    const captured = await captureScreenshotEvidenceDocument(
-      kernel.documents,
-      "call_abc",
-      0,
-      png,
-      "sess_s",
-    );
-    assert(captured.ok);
-    assertEquals(captured.data.refType, "ledger");
-    assertEquals(captured.data.role, "evidence");
-
-    const key = screenshotEvidenceLedgerKey("call_abc", 0);
-    assertEquals(captured.data.refId, key);
-
-    const doc = await kernel.documents.findBySource(
-      SCREENSHOT_DOCUMENT_SOURCE,
-      key,
-      { sessionId: "sess_s" },
-    );
-    assert(doc, "screenshot document should exist by origin");
-    assertEquals(doc.kind, "image/png");
-    assertEquals(doc.createdBy, "agent");
-    assertEquals(doc.scope, "session");
-    assertEquals(doc.metadata.sourceId, key);
-    assertEquals(captured.data.versionHash, doc.currentVersionHash);
-
-    // The blob round-trips byte-exact (the whole point of C-rich — the real bytes).
-    const bytes = await kernel.documents.readContentBytes(doc.id);
-    assert(bytes.ok);
-    assertEquals(bytes.data.bytes, png);
-
-    const refs = await kernel.documents.listRefsByTarget(
-      "ledger",
-      key,
-      "evidence",
-    );
-    assertEquals(refs.length, 1);
-    assertEquals(refs[0]!.documentId, doc.id);
-  } finally {
-    await db.close();
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-Deno.test("captureScreenshotEvidenceDocument is idempotent per (tool call, image index); distinct images are distinct docs", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  const projectDir = mkdtempSync(join(tmpdir(), "genie-chat-shot-idem-"));
-  kernel.projectDir = projectDir;
-  try {
-    const png0 = fakePngBytes(0);
-    const png1 = fakePngBytes(1);
-
-    // Same tool call, two images → two distinct targets.
-    const a = await captureScreenshotEvidenceDocument(
-      kernel.documents,
-      "call_multi",
-      0,
-      png0,
-      "sess_s",
-    );
-    const b = await captureScreenshotEvidenceDocument(
-      kernel.documents,
-      "call_multi",
-      1,
-      png1,
-      "sess_s",
-    );
-    // Re-dispatch of image 0 — clean no-op, not a second doc.
-    const aAgain = await captureScreenshotEvidenceDocument(
-      kernel.documents,
-      "call_multi",
-      0,
-      png0,
-      "sess_s",
-    );
-    assert(a.ok && b.ok && aAgain.ok);
-
-    const key0 = screenshotEvidenceLedgerKey("call_multi", 0);
-    const key1 = screenshotEvidenceLedgerKey("call_multi", 1);
-
-    const doc0 = await kernel.documents.findBySource(
-      SCREENSHOT_DOCUMENT_SOURCE,
-      key0,
-      { sessionId: "sess_s" },
-    );
-    const doc1 = await kernel.documents.findBySource(
-      SCREENSHOT_DOCUMENT_SOURCE,
-      key1,
-      { sessionId: "sess_s" },
-    );
-    assert(doc0 && doc1);
-    assert(doc0.id !== doc1.id, "two images are distinct documents");
-
-    assertEquals(
-      (await kernel.documents.listRefsByTarget("ledger", key0, "evidence"))
-        .length,
-      1,
-    );
-    assertEquals(
-      (await kernel.documents.listRefsByTarget("ledger", key1, "evidence"))
-        .length,
-      1,
-    );
-  } finally {
-    await db.close();
-    rmSync(projectDir, { recursive: true, force: true });
-  }
-});
-
-Deno.test("captureScreenshotEvidenceDocument degrades without a project (no throw, no doc, no ref)", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  // No kernel.projectDir → a session-scoped create() returns PROJECT_REQUIRED.
-  try {
-    const res = await captureScreenshotEvidenceDocument(
-      kernel.documents,
-      "call_np",
-      0,
-      fakePngBytes(9),
-      "sess_np",
-    );
-    assert(!res.ok, "capture surfaces the store error instead of throwing");
-    assertEquals(res.error.code, "PROJECT_REQUIRED");
-    const key = screenshotEvidenceLedgerKey("call_np", 0);
-    assertEquals(
-      await kernel.documents.listRefsByTarget("ledger", key, "evidence"),
-      [],
-    );
   } finally {
     await db.close();
   }

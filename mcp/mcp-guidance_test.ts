@@ -15,11 +15,7 @@ import { Kernel } from "../core/registries.ts";
 import { Database } from "../core/db.ts";
 import type { ChangeContext } from "../core/changelog.ts";
 import { dispatchTool } from "../core/tools/dispatch.ts";
-import {
-  BILLED_DESCRIPTION_PREFIX,
-  dispatchMcpTool,
-  projectedMcpTools,
-} from "./mcp-projection.ts";
+import { dispatchMcpTool, projectedMcpTools } from "./mcp-projection.ts";
 import { unadvertisedToolMentions } from "./test-guidance.ts";
 import {
   CUSTOM_INSTRUCTIONS_CONFIG,
@@ -278,6 +274,33 @@ Deno.test({
   },
 });
 
+Deno.test({
+  ...testOpts,
+  name: "MCP: project_status returns the enabled skills",
+  fn: async () => {
+    await withKernel(async (kernel) => {
+      await kernel.skills.create("tone", "House voice", "Write plainly.");
+      const off = await kernel.skills.create("old", "Retired", "Ignore me.");
+      await kernel.skills.update(off.id, { enabled: false });
+      const status = await dispatchMcpTool(
+        "project_status",
+        {},
+        kernel,
+        noop,
+        mcpContext("mcp:skills"),
+      );
+      const data = JSON.parse(text(status)) as {
+        skills: Array<{ name: string; description: string; prompt: string }>;
+      };
+      assertEquals(data.skills, [{
+        name: "tone",
+        description: "House voice",
+        prompt: "Write plainly.",
+      }]);
+    });
+  },
+});
+
 // Every snake_case word in the guidance is either a real tool or a known
 // argument/placeholder — so renaming a verb cannot leave the guidance pointing
 // at a tool that no longer exists. The Tide assembly is held to the same rule in
@@ -415,14 +438,13 @@ Deno.test({
   ...testOpts,
   name: "MCP: the open surface claims no billing anywhere",
   fn: () => {
-    const composition = testComposition();
-    for (const tool of projectedMcpTools(composition)) {
+    for (const tool of projectedMcpTools(testComposition())) {
       assertFalse(
-        tool.description.startsWith(BILLED_DESCRIPTION_PREFIX),
-        `${tool.name} cannot bill without the agent, so must not say it does`,
+        tool.description.includes("BILLS"),
+        `${tool.name} runs no model on the server, so must not say it bills`,
       );
     }
-    assertFalse(generalGuide(composition).includes("bill"));
+    assertFalse(generalGuide().includes("bill"));
   },
 });
 

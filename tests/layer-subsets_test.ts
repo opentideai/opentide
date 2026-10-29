@@ -17,7 +17,6 @@ import {
   coreOnlyComposition,
 } from "../core/composition.ts";
 import { verificationOnlyComposition } from "../cli/assembly.ts";
-import { executeAudit } from "../verification/audit-runner.ts";
 import { dispatchMcpTool, projectedMcpTools } from "../mcp/mcp-projection.ts";
 import { TOOL_CAPABILITY_REQUIREMENTS } from "../core/tool-capabilities.ts";
 
@@ -28,9 +27,6 @@ const noop = () => {};
 const GATED_VERBS = Object.keys(TOOL_CAPABILITY_REQUIREMENTS);
 const VERIFICATION_VERBS = GATED_VERBS.filter(
   (v) => TOOL_CAPABILITY_REQUIREMENTS[v] === "verification",
-);
-const AGENT_VERBS = GATED_VERBS.filter(
-  (v) => TOOL_CAPABILITY_REQUIREMENTS[v] === "agent",
 );
 
 async function withKernel(
@@ -67,7 +63,7 @@ Deno.test("core-only assembly: stores throw, all capability verbs hidden, dispat
     assert(advertised.has("list_routes"), "ungated read verb should remain");
 
     // Dispatching a hidden verb returns a clean not-available result, not a throw.
-    const result = await dispatchMcpTool("run_audit", {}, kernel, noop);
+    const result = await dispatchMcpTool("request_review", {}, kernel, noop);
     assertEquals(result.isError, true);
     const block = result.content[0];
     assert(block?.type === "text");
@@ -92,19 +88,6 @@ Deno.test("core+verification assembly: stores work, verification advertised, age
         `${verb} should be advertised with verification`,
       );
     }
-    for (const verb of AGENT_VERBS) {
-      assert(
-        !advertised.has(verb),
-        `${verb} (agent) should be hidden with no agent`,
-      );
-    }
-
-    const result = await executeAudit("security", kernel);
-    assertEquals(result.status, "error");
-    assert(
-      result.error?.includes("provider"),
-      "model audit must report the provider is not configured",
-    );
   });
 });
 

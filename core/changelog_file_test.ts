@@ -199,3 +199,17 @@ Deno.test("file changelog groups turns and filters changesets", async () => {
     assertEquals(await log.count(), 1);
   });
 });
+
+Deno.test("file changelog reads follow every write, this log's or another's", async () => {
+  await withFileLog(async (log, historyDir) => {
+    const first = await recordHandler(log, "first", "turn_1");
+    assertEquals(await log.count(), 1);
+
+    const other = new Changelog(historyDir);
+    await recordHandler(other, "second", "turn_2");
+    assertEquals(await log.count(), 2);
+
+    await other.updateWorkblockMetadata(first.id, { rationale: "why" });
+    assertEquals((await log.get(first.id))?.rationale, "why");
+  });
+});

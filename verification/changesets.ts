@@ -180,6 +180,8 @@ function rowToLedgerEntry(row: LedgerRow): LedgerEntry {
     ...(row.toolCallId !== null ? { toolCallId: row.toolCallId } : {}),
     ...(row.turnId !== null ? { turnId: row.turnId } : {}),
     ...(row.principalId !== null ? { principalId: row.principalId } : {}),
+    ...(row.producer === "client" ? { producer: "client" as const } : {}),
+    ...(row.reviewer !== null ? { reviewer: row.reviewer } : {}),
   };
 }
 
@@ -324,6 +326,13 @@ function promotedReadinessCodes(mode: ReadinessEnforcement): Set<string> {
   if (mode === "strict") return STRICT_PROMOTED_CODES;
   if (mode === "graduated") return GRADUATED_PROMOTED_CODES;
   return new Set();
+}
+
+// Who ran a review the client submitted, for a finding's message. Empty for
+// the kernel's own.
+function reviewedBy(att: Attestation): string {
+  if (att.producer !== "client") return "";
+  return att.reviewer ? ` (client, ${att.reviewer})` : " (client)";
 }
 
 // Evidence kinds that must be backed by a kernel-minted attestation to be
@@ -671,7 +680,7 @@ export function checkChangesetReadiness(
       pushGraduated(
         "UNATTESTED_EVIDENCE",
         `${item.kind} evidence "${item.id}" is not backed by a kernel attestation.`,
-        "Produce it via the matching verifier (run_tests, check_export_types, verify_formal_specs, test_coverage, run_audit) and reference the returned attestationId.",
+        "Produce it via the matching verifier (run_tests, check_export_types, verify_formal_specs, test_coverage, or an audit review) and reference the returned attestationId.",
       );
     } else if (!isFreshAttestation(att, currentFingerprints)) {
       pushGraduated(
@@ -741,17 +750,17 @@ export function checkChangesetReadiness(
     const claim = att.checkId ? claimById.get(att.checkId) : undefined;
     errors.push(validationIssue(
       "CLAIM_REFUTED",
-      `Adversarial review found a counterexample for ${
+      `Adversarial review${reviewedBy(att)} found a counterexample for ${
         claim ? `"${claim.text}"` : `claim "${att.checkId}"`
       }: ${att.summary}`,
-      "Review the counterexample, fix the code, tighten the claim, or dismiss it if invalid, then re-run refute_claims.",
+      'Review the counterexample, fix the code, tighten the claim, or dismiss it if invalid, then run a fresh refute review (refute_claims, or request_review with kind "refute").',
     ));
   }
 
   // Every `must` criterion should face adversarial review. A must-claim with no
   // fresh adversarial attestation (any verdict) raises an advisory
-  // MUST_CLAIM_UNREVIEWED warning — it self-clears once refute_claims, or the
-  // completion gate's auto-refute, reviews it against current code.
+  // MUST_CLAIM_UNREVIEWED warning. It clears once a refute review against the
+  // current code is submitted (core/reviews.ts).
   const freshAdversarialClaimIds = new Set(
     attestations
       .filter((a) =>
@@ -770,7 +779,7 @@ export function checkChangesetReadiness(
     pushGraduated(
       "MUST_CLAIM_UNREVIEWED",
       `Must-criterion "${claim.text}" has not faced adversarial review against current code.`,
-      "Run refute_claims (or let complete_changeset auto-run it) to review this criterion.",
+      'Run a refute review on this criterion (refute_claims, or request_review with kind "refute").',
     );
   }
 
@@ -822,7 +831,7 @@ export function checkChangesetReadiness(
       pushGraduated(
         "PRIORITY_DOWNGRADED",
         `Independent review rated "${proposal.text}" a \`must\`, but the covering acceptance criterion is \`${covering}\` — so it is not adversarially reviewed.`,
-        "Promote the acceptance criterion to `must` with amend_changeset_plan and re-run refute_claims, or leave it if the lower priority is deliberate.",
+        "Promote the acceptance criterion to `must` with amend_changeset_plan and run a fresh refute review, or leave it if the lower priority is deliberate.",
       );
     }
   }
@@ -2182,6 +2191,8 @@ class DbChangesetStore implements ChangesetStore {
         toolCallId: entry.toolCallId ?? null,
         turnId: entry.turnId ?? null,
         principalId: entry.principalId ?? null,
+        producer: entry.producer ?? null,
+        reviewer: entry.reviewer ?? null,
         createdAt: entry.createdAt,
       })
       .onConflictDoNothing();

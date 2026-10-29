@@ -1,6 +1,7 @@
 export * from "./discovery.ts";
 export * from "./hono-plugin.ts";
 export * from "./import-classifier.ts";
+export * from "./import-classification.ts";
 export * from "./import.ts";
 export * from "./plugins.ts";
 export * from "./related-tests.ts";

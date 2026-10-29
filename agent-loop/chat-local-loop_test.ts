@@ -5,6 +5,7 @@
 // See docs/multi-model-harness-plan.md §5.
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { ChatOrchestrator, toNeutralContentBlocks } from "./chat.ts";
+import { inProcessChatBackend } from "./chat-backend.ts";
 import type { ChatEvent } from "../core/chat-contract.ts";
 import type { TurnResult } from "./chat.ts";
 import { FakeModelProvider } from "../core/model-provider-fake.ts";
@@ -170,8 +171,7 @@ async function runScript(
     const kernel = new Kernel(db);
     const provider = new FakeModelProvider(script);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -219,8 +219,7 @@ Deno.test("sendMessage — in-progress state exposes the current streamed assist
     const kernel = new Kernel(db, { composition: testStoreComposition() });
     const provider = new BlockingAfterFirstDeltaProvider();
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -249,8 +248,7 @@ Deno.test("getInProgressState returns compact tool results by default and full d
   try {
     const kernel = new Kernel(db, { composition: testStoreComposition() });
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
@@ -414,8 +412,7 @@ Deno.test("runTurn — retained array carries assistant tool_use + tool_result a
       ],
     ]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -545,8 +542,7 @@ Deno.test("sendMessage — approval pause stops + retains the array, resume cont
       isApprovalMessage: (content) => content.includes("approve"),
     };
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       approvingBrain,
       provider,
@@ -655,8 +651,7 @@ Deno.test("sendMessage — changeset_created does not replace the preceding stre
       { type: "message_complete", stopReason: "requires_action" },
     ]]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -719,8 +714,7 @@ Deno.test("sendMessage discards archived current session and writes to a fresh s
       ],
     ]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -754,8 +748,7 @@ Deno.test("resumeSession rejects archived sessions until they are unarchived", a
     const archived = await kernel.sessions.createSession("Archived");
     await kernel.sessions.archiveSession(archived.id);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
@@ -794,8 +787,7 @@ async function runSessionTurn(opts: {
     if (opts.preset) await opts.preset(kernel, session.id);
     const provider = new FakeModelProvider(opts.script);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -895,8 +887,7 @@ Deno.test("runTurn — occupancy is the LAST request's context size, not the who
       ],
     ]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -1049,8 +1040,7 @@ async function withCtxSession(
     const script: ProviderEvent[][] = [];
     const provider = new FakeModelProvider(script);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -1209,8 +1199,7 @@ async function withSendMessage(
     if (opts.preset) await opts.preset(kernel, session.id);
     const provider = new FakeModelProvider(opts.script);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       opts.brain ?? stubBrain,
       provider,
@@ -1780,8 +1769,7 @@ async function runPruneTurn(opts: {
     const session = await kernel.sessions.createSession("prune");
     const provider = new SnapshotProvider(script);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -2612,8 +2600,7 @@ Deno.test("compactSession — compacts IN PLACE: same session, keeps focus/pins/
     });
 
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
@@ -2664,8 +2651,7 @@ Deno.test("compactSession — re-seeds a trailing unanswered user question onto 
     const kernel = new Kernel(db, { composition: testStoreComposition() });
     const session = await kernel.sessions.createSession("work");
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
@@ -2702,8 +2688,7 @@ Deno.test("compactSession — an answered tail (assistant last) re-seeds nothing
     const kernel = new Kernel(db, { composition: testStoreComposition() });
     const session = await kernel.sessions.createSession("work");
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       new FakeModelProvider([]),
@@ -2911,8 +2896,7 @@ Deno.test("sendMessage — a light-lane changeset auto-approves and continues in
       ],
     ]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -2994,8 +2978,7 @@ Deno.test('sendMessage — proportionalVerification "never" restores the approva
       ],
     ]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,
@@ -3080,8 +3063,7 @@ Deno.test("runTurn — tool_result on the wire drops _changeset/_changesetEvent,
       ],
     ]);
     const chat = new ChatOrchestrator(
-      kernel,
-      () => {},
+      inProcessChatBackend(kernel, () => {}),
       new MCPManager(),
       stubBrain,
       provider,

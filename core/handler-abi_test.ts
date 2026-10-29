@@ -2,6 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { Hono } from "hono";
 import {
   detectHandlerAbi,
+  type HandlerAbi,
   type LegacyContext,
   type LegacyHandlerFn,
   wrapLegacyContextHandler,
@@ -536,21 +537,37 @@ function corpusAvailable(): boolean {
   }
 }
 
+// What a handler's own source says it is, without the classifier: a legacy
+// handler reaches through the context (`c.req`, `c.json`), a fetch handler
+// declares `req: Request`. A handler with neither cue isn't checked.
+const LEGACY_CUE = /\bc\.(req|json|text|html|body|header|redirect|status)\b/;
+const FETCH_CUE = /\(\s*req\s*:\s*Request\b/;
+
+function expectedAbi(source: string): HandlerAbi | null {
+  const legacy = LEGACY_CUE.test(source);
+  const fetch = FETCH_CUE.test(source);
+  if (legacy === fetch) return null;
+  return legacy ? "legacy-context" : "fetch";
+}
+
 Deno.test({
-  name: "detectHandlerAbi: every handler in the field corpus reads as legacy",
+  name:
+    "detectHandlerAbi: every handler in the field corpus reads as its source says",
   ignore: !corpusAvailable(),
   fn: () => {
-    const handlers = corpusHandlerSources();
-    const misread = handlers
-      .filter((h) => detectHandlerAbi(h.source, h.name) !== "legacy-context")
-      .map((h) => h.file);
+    const checked = corpusHandlerSources().flatMap((h) => {
+      const expected = expectedAbi(h.source);
+      return expected ? [{ ...h, expected }] : [];
+    });
+    const misread = checked
+      .filter((h) => detectHandlerAbi(h.source, h.name) !== h.expected)
+      .map((h) => `${h.file} (expected ${h.expected})`);
     assertEquals(misread, [], `misclassified ${misread.length} field handlers`);
-    // Every one of these predates the new ABI, so an empty corpus would pass
-    // vacuously. Fail instead if the scan found nothing to check.
+    // An empty corpus would pass vacuously.
     assert(
-      handlers.length > 0,
+      checked.length > 0,
       `found no handler sources under ${CORPUS_ROOT}`,
     );
-    console.log(`  checked ${handlers.length} field handlers`);
+    console.log(`  checked ${checked.length} field handlers`);
   },
 });

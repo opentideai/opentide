@@ -1,7 +1,7 @@
 // Slice A gate (OpenTide §3.3): the core boots and serves REST with no agent and
-// no API key; when a composition root supplies a chat provider via chatFactory,
-// the control server adopts it. Proves the agent is an optional plug-in.
-import { assert, assertEquals } from "@std/assert";
+// no API key. The chat agent is its own process (cli/agent-main.ts); serve has
+// no chat socket at all.
+import { assertEquals } from "@std/assert";
 import { rmSync } from "node:fs";
 import { Database } from "./db.ts";
 import { Kernel } from "./registries.ts";
@@ -11,13 +11,11 @@ import { testStoreComposition } from "../verification/test-stores.ts";
 import { mountVerificationRoutes } from "../verification/verification-routes.ts";
 import { mountAuditRoutes } from "../verification/audit-routes.ts";
 import type { RouteMounter } from "./route-mount.ts";
-import type { ChatRuntime } from "./chat-contract.ts";
 import type { ProjectContext } from "./project-loader.ts";
 import { isolateHome } from "./test-home_test.ts";
 
-// The control server builds the chat only when a provider key is configured,
-// so this file gets a throwaway HOME with a dummy one rather than relying on
-// the developer's real key (CI has none).
+// A throwaway HOME with a dummy key: a key must change nothing about what
+// serve offers.
 isolateHome({ anthropicApiKey: "sk-ant-test-not-a-real-key" });
 
 async function makeProjectContext(): Promise<
@@ -44,86 +42,26 @@ async function makeProjectContext(): Promise<
   return { ctx, db, dir };
 }
 
-// A no-op ChatRuntime, standing in for the integrated agent.
-class StubChat implements ChatRuntime {
-  setOnTurnComplete(): void {}
-  initialize(): Promise<void> {
-    return Promise.resolve();
-  }
-  reloadApiKey(): Promise<void> {
-    return Promise.resolve();
-  }
-  reloadModel(): Promise<void> {
-    return Promise.resolve();
-  }
-  getInProgressState(): null {
-    return null;
-  }
-  abort(): void {}
-  sendMessage(): Promise<string> {
-    return Promise.resolve("");
-  }
-  getCurrentSessionId(): string | null {
-    return null;
-  }
-  clearCurrentSession(): void {}
-  clearContext(): Promise<void> {
-    return Promise.resolve();
-  }
-  clearSession(): Promise<{ newSessionId: string | null }> {
-    return Promise.resolve({ newSessionId: null });
-  }
-  compactSession(): Promise<{ sessionId: string }> {
-    return Promise.resolve({ sessionId: "s" });
-  }
-  resumeSession(): Promise<{ newSessionId: string }> {
-    return Promise.resolve({ newSessionId: "s" });
-  }
-  close(): Promise<void> {
-    return Promise.resolve();
-  }
-}
-
 Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
   name: "core boots and serves REST with no agent and no API key",
   fn: async () => {
     const { ctx, db, dir } = await makeProjectContext();
-    // No chatFactory, no ANTHROPIC key needed. devAccountAuth lets an
-    // unauthenticated request through so we can assert the REST route serves.
+    // devAccountAuth lets an unauthenticated request through so we can assert
+    // the REST route serves.
     const control = await startControlServer(ctx, 0, {
       authProvider: new LocalAuthProvider(),
     });
     try {
-      assertEquals(control.chat, null); // agent absent
       const base = `http://127.0.0.1:${control.server.addr.port}`;
-      const res = await fetch(`${base}/api/chat/status`);
-      assertEquals(res.status, 200); // REST still serves
-      const body = await res.json();
-      assertEquals(body.currentSessionId, null);
-      assertEquals(body.inProgress, null);
-    } finally {
-      await control.server.shutdown();
-      await db.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "chatFactory registers the agent provider",
-  fn: async () => {
-    const { ctx, db, dir } = await makeProjectContext();
-    const stub = new StubChat();
-    const control = await startControlServer(ctx, 0, {
-      chatFactory: () => stub,
-    });
-    try {
-      assertEquals(control.chat, stub); // provider adopted via the hook
-      assert(control.chat !== null);
+      const res = await fetch(`${base}/api/status`);
+      assertEquals(res.status, 200);
+      await res.body?.cancel();
+      // The chat belongs to the agent process.
+      const chat = await fetch(`${base}/api/chat/status`);
+      assertEquals(chat.status, 404);
+      await chat.body?.cancel();
     } finally {
       await control.server.shutdown();
       await db.close();

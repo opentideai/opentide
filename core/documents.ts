@@ -109,10 +109,10 @@ export const RUN_EVIDENCE_DOCUMENT_KIND = "text/markdown";
 // metadata.source tag + kind for the document minted from a screenshot BLOB produced by a
 // viz/screenshot tool (Phase 3 Slice C-rich, SECONDARY deliverable — plan §8/§11). The raw
 // PNG bytes are stored verbatim (content-addressing dedupes identical shots); the tag
-// distinguishes screenshot-evidence docs from the markdown run-evidence docs. Captured at
-// the open agent-loop `_images` seam (that is where the bytes exist) — see
-// screenshotEvidenceLedgerKey in agent-loop/chat.ts — and cited by a ledger/evidence ref
-// keyed on the producing tool-call id. ADDITIVE provenance, same contract as the item docs.
+// distinguishes screenshot-evidence docs from the markdown run-evidence docs. Captured by
+// tool dispatch from any result carrying `_images` — see core/document-capture.ts — and
+// cited by a ledger/evidence ref keyed on the producing tool-call id. ADDITIVE provenance,
+// same contract as the item docs.
 export const SCREENSHOT_DOCUMENT_SOURCE = "screenshot";
 export const SCREENSHOT_DOCUMENT_KIND = "image/png";
 

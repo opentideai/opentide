@@ -24,11 +24,14 @@ import { recommendModelsFromCatalog } from "./model-recommend.ts";
 import { errorMessage } from "./util.ts";
 
 // Project-load lifecycle hook (carried by the composition root's initHooks).
-// Returns fast: if the catalog is fresh within the TTL, it logs a skip and
-// returns without spawning any work. Otherwise it kicks the refresh off detached
-// and returns — runProjectInitHooks never waits on the network.
+// Returns fast: if the catalog is fresh within the TTL and recommendations
+// exist, it logs a skip and returns without spawning any work. Otherwise it
+// kicks the refresh off detached and returns — runProjectInitHooks never waits
+// on the network. A fresh catalog alone isn't enough: serve also fetches it on
+// startup and on a key change without recommending, and skipping then left a
+// new install with every role unconfigured.
 export function refreshModelsOnStart(kernel: Kernel): Promise<void> {
-  if (!isModelCacheStale(MODELS_REFRESH_TTL_MS)) {
+  if (!isModelCacheStale(MODELS_REFRESH_TTL_MS) && hasRecommendations()) {
     kernel.log.log(
       "debug",
       "system",
@@ -47,6 +50,10 @@ export function refreshModelsOnStart(kernel: Kernel): Promise<void> {
     );
   });
   return Promise.resolve();
+}
+
+function hasRecommendations(): boolean {
+  return Object.keys(getRecommendedModels()).length > 0;
 }
 
 // The detached refresh sequence: freshen the catalog (network only with a key),

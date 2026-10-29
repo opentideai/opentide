@@ -11,19 +11,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-import {
-  parseMcpServerConfigInput,
-  resolveProjectFilePath,
-} from "./control-helpers.ts";
-import type {
-  ChatEventHandler,
-  InProgressDetail,
-  InProgressState,
-} from "./chat-contract.ts";
+import { resolveProjectFilePath } from "./control-helpers.ts";
 import {
   type BuildTargetExtras,
   type BuildTargetExtraTarget,
-  type ChatRuntime,
   type ControlServer,
   isAllowedWebSocketRequest,
   resolveScreenshotArtifactPath,
@@ -34,7 +25,6 @@ import { DevServerManager } from "./dev-server.ts";
 import { CommandRunner } from "./command-runner.ts";
 import { createAppServer } from "./app-server.ts";
 import { unloadProject } from "./project-loader.ts";
-import { setGitCommitMessageModelCallForTest } from "./git-message.ts";
 import { mountVerificationRoutes } from "../verification/verification-routes.ts";
 import { type TestAccountProfile, TestAuthProvider } from "./test-auth.ts";
 import { Database } from "./db.ts";
@@ -79,11 +69,7 @@ import {
   type ProjectCommand,
   semanticId,
 } from "./codebase/types.ts";
-import {
-  IMPORT_CLASSIFIER_PLUGIN_ID,
-  type ImportClassifierRequest,
-  type ImportClassifierResult,
-} from "./codebase/index.ts";
+import { IMPORT_CLASSIFIER_PLUGIN_ID } from "./codebase/index.ts";
 import type { ColumnDef, MigrationEntry, SchemaEntry } from "./types.ts";
 import { isolateHome, TEST_TMP_DIR } from "./test-home_test.ts";
 
@@ -118,27 +104,6 @@ const emptyDynamicSchemaColumns: ColumnDef[] = [];
 
 function writeJsonFile(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
-}
-
-function compositionWithImportClassifier(
-  runImportClassifier: (
-    request: ImportClassifierRequest,
-    opts?: Parameters<
-      NonNullable<ReturnType<typeof testComposition>["agentTools"]>[
-        "runImportClassifier"
-      ]
-    >[1],
-  ) => Promise<ImportClassifierResult> | ImportClassifierResult,
-): ReturnType<typeof testComposition> {
-  const composition = testComposition();
-  return {
-    ...composition,
-    agentTools: {
-      ...composition.agentTools!,
-      runImportClassifier: async (request, opts) =>
-        await runImportClassifier(request, opts),
-    },
-  };
 }
 
 function seedModelCache(home: string, model: string, provider: string): void {
@@ -249,120 +214,6 @@ function writeDynamicSchemaRestoreFixture(projectDir: string): void {
       "2026-01-01T00:00:02.000Z",
     ),
   ]);
-}
-
-class SessionRecordingChat implements ChatRuntime {
-  readonly sentMessages: string[] = [];
-  readonly sentSessionIds: Array<string | null> = [];
-  readonly resumedSessionIds: string[] = [];
-  readonly compactSummaries: string[] = [];
-  clearContextCount = 0;
-  clearCurrentSessionCount = 0;
-  abortCount = 0;
-  closeCount = 0;
-  rejectSendOnAbort = false;
-  sendMessageBlocker: Promise<void> | null = null;
-  readonly events: string[] = [];
-  private rejectAbortableSend: ((reason?: unknown) => void) | null = null;
-  inProgressState: InProgressState | null = null;
-  inProgressFullState: InProgressState | null = null;
-  readonly sentDocumentRefs: Array<
-    Array<{ id: string; versionHash?: string }> | undefined
-  > = [];
-
-  constructor(
-    private readonly kernel: Kernel,
-    private currentSessionId: string,
-  ) {}
-
-  setOnTurnComplete(_cb: () => void): void {}
-  async initialize(): Promise<void> {}
-  async reloadApiKey(): Promise<void> {}
-  async reloadModel(): Promise<void> {}
-  getInProgressState(
-    detail: InProgressDetail = "compact",
-  ): InProgressState | null {
-    return detail === "full"
-      ? this.inProgressFullState ?? this.inProgressState
-      : this.inProgressState;
-  }
-  abort(): void {
-    this.abortCount++;
-    this.events.push("chat.abort");
-    if (this.rejectSendOnAbort) {
-      this.rejectAbortableSend?.(new Error("send rejected after abort"));
-      this.rejectAbortableSend = null;
-    }
-  }
-  async clearContext(): Promise<void> {
-    this.clearContextCount++;
-  }
-  clearCurrentSession(): void {
-    this.clearCurrentSessionCount++;
-    this.currentSessionId = "";
-  }
-  getCurrentSessionId(): string | null {
-    return this.currentSessionId || null;
-  }
-  async clearSession(): Promise<{ newSessionId: string }> {
-    const session = await this.kernel.sessions.createSession();
-    this.currentSessionId = session.id;
-    return { newSessionId: session.id };
-  }
-  async compactSession(summary: string): Promise<{ sessionId: string }> {
-    this.compactSummaries.push(summary);
-    return { sessionId: this.currentSessionId };
-  }
-  async resumeSession(
-    targetSessionId: string,
-  ): Promise<{ newSessionId: string }> {
-    await this.kernel.sessions.reopenSession(targetSessionId);
-    this.currentSessionId = targetSessionId;
-    this.resumedSessionIds.push(targetSessionId);
-    return { newSessionId: targetSessionId };
-  }
-  async close(): Promise<void> {
-    this.closeCount++;
-    this.events.push("chat.close");
-  }
-
-  async sendMessage(
-    content: string,
-    onEvent?: ChatEventHandler,
-    _attachments?: Array<{ name: string; type: string; data: string }>,
-    _storedContent?: string,
-    _changesetId?: string,
-    _user?: unknown,
-    documentRefs?: Array<{ id: string; versionHash?: string }>,
-  ): Promise<string> {
-    this.events.push("send.start");
-    this.sentMessages.push(content);
-    this.sentSessionIds.push(this.getCurrentSessionId());
-    this.sentDocumentRefs.push(documentRefs);
-    if (this.rejectSendOnAbort) {
-      await new Promise<void>((_, reject) => {
-        this.rejectAbortableSend = reject;
-      });
-    }
-    if (this.sendMessageBlocker) await this.sendMessageBlocker;
-    onEvent?.({ type: "message_complete" });
-    this.events.push("send.complete");
-    return "";
-  }
-}
-
-function deferred<T = void>(): {
-  promise: Promise<T>;
-  resolve: (value: T | PromiseLike<T>) => void;
-  reject: (reason?: unknown) => void;
-} {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 function accountSession(
@@ -1066,19 +917,7 @@ Deno.test({
     const db = await Database.create({ driver: "pglite" });
     const kernel = new Kernel(db, {
       historyDir: paths.historyDir,
-      composition: compositionWithImportClassifier(() => ({
-        status: "completed",
-        model: "claude-import-test",
-        facts: [{
-          kind: "import-strategy",
-          name: "api served overlay",
-          value: { mode: "source-backed-overlay" },
-          confidence: 0.91,
-        }],
-        mappings: [],
-        diagnostics: [],
-        candidateEntities: [],
-      })),
+      composition: testComposition(),
     });
     kernel.projectDir = projectDir;
 
@@ -1111,11 +950,30 @@ Deno.test({
         () => {},
       );
       assertEquals(run.ok, true);
-      assertEquals(
-        (run.data as { classification: { status: string } }).classification
-          .status,
-        "completed",
+      const packet = await dispatchTool(
+        "request_review",
+        { kind: "imports" },
+        kernel,
+        () => {},
       );
+      const submitted = await dispatchTool(
+        "submit_review",
+        {
+          packet_id: (packet.data as { packetId: string }).packetId,
+          verdict: {
+            facts: [{
+              kind: "import-strategy",
+              name: "api served overlay",
+              value: { mode: "source-backed-overlay" },
+              confidence: 0.91,
+            }],
+          },
+          reviewer: "claude-import-test",
+        },
+        kernel,
+        () => {},
+      );
+      assertEquals(submitted.ok, true, JSON.stringify(submitted.error));
 
       const served = await (await fetch(`${base}/api/codebase`, {
         headers: authHeaders(auth),
@@ -1148,7 +1006,6 @@ Deno.test({
     const db = await Database.create({ driver: "pglite" });
     const kernel = new Kernel(db, { composition: testStoreComposition() });
     const session = await kernel.sessions.createSession("Shell");
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
     const projectDir = await Deno.makeTempDir({
       prefix: "genie-shell-origin-",
     });
@@ -1171,10 +1028,7 @@ Deno.test({
         rebuild: () => {},
       },
       0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
+      { authProvider: auth },
     );
 
     try {
@@ -1186,7 +1040,10 @@ Deno.test({
           Cookie: cookie,
           Origin: "https://evil.example",
         },
-        body: JSON.stringify({ command: "echo hacked > csrf.txt" }),
+        body: JSON.stringify({
+          command: "echo hacked > csrf.txt",
+          sessionId: session.id,
+        }),
       });
 
       assertEquals(res.status, 403);
@@ -1635,8 +1492,7 @@ Deno.test({
 Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
-  name:
-    "recovery chat works without an open project while normal chat remains project-gated",
+  name: "recovery chat works without an open project",
   fn: async () => {
     const projectDir = await Deno.makeTempDir({
       dir: TEST_TMP_DIR,
@@ -1655,7 +1511,6 @@ Deno.test({
     });
     const port = control.server.addr.port;
     let recoveryWs: WebSocket | null = null;
-    let normalWs: WebSocket | null = null;
     try {
       const recoveryEvents: Array<Record<string, unknown>> = [];
       recoveryWs = new WebSocket(
@@ -1683,22 +1538,8 @@ Deno.test({
         provider.requests[0]?.tools[0]?.name,
         "inspect_project_manifest",
       );
-
-      const normalEvents: Array<Record<string, unknown>> = [];
-      normalWs = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-      normalWs.onmessage = (event) => {
-        normalEvents.push(JSON.parse(String(event.data)));
-      };
-      await waitForSocketOpen(normalWs);
-      normalWs.send(JSON.stringify({
-        type: "user_message",
-        content: "hello",
-      }));
-      await waitFor(() => normalEvents.some((event) => event.type === "error"));
-      assertEquals(normalEvents[0]?.text, "No project open");
     } finally {
       recoveryWs?.close();
-      normalWs?.close();
       await control.server.shutdown();
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -2032,8 +1873,6 @@ Deno.test({
     });
     const db = await Database.create({ driver: "pglite" });
     const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Close");
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
     const now = new Date().toISOString();
     const control = await startControlServer(
       {
@@ -2051,7 +1890,6 @@ Deno.test({
         rebuild: () => {},
       },
       0,
-      { chatFactory: () => fakeChat },
     );
 
     try {
@@ -2064,7 +1902,6 @@ Deno.test({
       assertEquals(res.status, 200);
       assertEquals(await res.json(), { ok: true });
       assertEquals(control.setProject.current(), null);
-      assertEquals(fakeChat.closeCount, 1);
 
       const projectAfter = await (await fetch(`${base}/api/project`)).json();
       assertEquals(projectAfter, { project: null });
@@ -2074,472 +1911,6 @@ Deno.test({
       }
       await control.server.shutdown();
       rmSync(projectDir, { recursive: true, force: true });
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name:
-    "projects close: aborts and waits for an active chat turn before unloading",
-  fn: async () => {
-    const projectDir = await Deno.makeTempDir({
-      prefix: "genie-project-close-busy-",
-    });
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Busy Close");
-    const blocker = deferred();
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.sendMessageBlocker = blocker.promise;
-    const events = fakeChat.events;
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: projectDir,
-          name: "project-close-busy-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: {
-          shutdown: async () => {
-            events.push("app.shutdown");
-          },
-        } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      { chatFactory: () => fakeChat },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const base = `http://127.0.0.1:${port}`;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "keep working",
-      }));
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-
-      const closePromise = fetch(`${base}/api/projects/close`, {
-        method: "POST",
-      });
-      await waitFor(() => fakeChat.abortCount === 1);
-      const closedEarly = await Promise.race([
-        closePromise.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
-      ]);
-      assertEquals(closedEarly, false);
-      assertEquals(fakeChat.closeCount, 0);
-      assertEquals(events.includes("app.shutdown"), false);
-      assert(control.setProject.current());
-
-      blocker.resolve();
-      const res = await closePromise;
-      assertEquals(res.status, 200);
-      assertEquals(fakeChat.abortCount, 1);
-      assertEquals(fakeChat.closeCount, 1);
-      assertEquals(control.setProject.current(), null);
-      assertEquals(events, [
-        "send.start",
-        "chat.abort",
-        "send.complete",
-        "chat.close",
-        "app.shutdown",
-      ]);
-    } finally {
-      blocker.resolve();
-      ws?.close();
-      if (control.setProject.current()) {
-        await unloadProject(control.setProject.current()!);
-      }
-      await control.server.shutdown();
-      rmSync(projectDir, { recursive: true, force: true });
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name:
-    "projects close: aborts and waits for an active terminal agent turn before unloading",
-  fn: async () => {
-    const projectDir = await Deno.makeTempDir({
-      prefix: "genie-project-close-terminal-busy-",
-    });
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Terminal Busy Close");
-    const blocker = deferred();
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.sendMessageBlocker = blocker.promise;
-    const events = fakeChat.events;
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: projectDir,
-          name: "project-close-terminal-busy-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: {
-          shutdown: async () => {
-            events.push("app.shutdown");
-          },
-        } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      { chatFactory: () => fakeChat },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const base = `http://127.0.0.1:${port}`;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/terminal`);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "eval",
-        code: 'ask("keep working from terminal")',
-      }));
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-
-      const closePromise = fetch(`${base}/api/projects/close`, {
-        method: "POST",
-      });
-      await waitFor(() => fakeChat.abortCount === 1);
-      const closedEarly = await Promise.race([
-        closePromise.then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
-      ]);
-      assertEquals(closedEarly, false);
-      assertEquals(fakeChat.closeCount, 0);
-      assertEquals(events.includes("app.shutdown"), false);
-      assert(control.setProject.current());
-
-      blocker.resolve();
-      const res = await closePromise;
-      assertEquals(res.status, 200);
-      assertEquals(fakeChat.abortCount, 1);
-      assertEquals(fakeChat.closeCount, 1);
-      assertEquals(control.setProject.current(), null);
-      assertEquals(events, [
-        "send.start",
-        "chat.abort",
-        "send.complete",
-        "chat.close",
-        "app.shutdown",
-      ]);
-    } finally {
-      blocker.resolve();
-      ws?.close();
-      if (control.setProject.current()) {
-        await unloadProject(control.setProject.current()!);
-      }
-      await control.server.shutdown();
-      rmSync(projectDir, { recursive: true, force: true });
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name:
-    "projects close: active turn rejection after abort settles before ctx is nulled",
-  fn: async () => {
-    const projectDir = await Deno.makeTempDir({
-      prefix: "genie-project-close-reject-",
-    });
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Rejecting Close");
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.rejectSendOnAbort = true;
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: projectDir,
-          name: "project-close-reject-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      { chatFactory: () => fakeChat },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const base = `http://127.0.0.1:${port}`;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "abort me",
-      }));
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-
-      const res = await fetch(`${base}/api/projects/close`, { method: "POST" });
-      assertEquals(res.status, 200);
-      assertEquals(await res.json(), { ok: true });
-      assertEquals(fakeChat.abortCount, 1);
-      assertEquals(fakeChat.closeCount, 1);
-      assertEquals(control.setProject.current(), null);
-      assertEquals(await (await fetch(`${base}/api/project`)).json(), {
-        project: null,
-      });
-    } finally {
-      ws?.close();
-      if (control.setProject.current()) {
-        await unloadProject(control.setProject.current()!);
-      }
-      await control.server.shutdown();
-      rmSync(projectDir, { recursive: true, force: true });
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name:
-    "chat status returns compact in-progress state by default and full detail on request",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Busy Status");
-    const blocker = deferred();
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.sendMessageBlocker = blocker.promise;
-    const fullResult = {
-      output: "x".repeat(10_000),
-      metadata: { path: "big.log" },
-    };
-    fakeChat.inProgressState = {
-      text: "visible text",
-      toolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: {
-          omitted: true,
-          type: "object",
-          keys: ["output", "metadata"],
-          keyCount: 2,
-        },
-      }],
-      segmentText: "visible segment",
-      segmentToolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: {
-          omitted: true,
-          type: "object",
-          keys: ["output", "metadata"],
-          keyCount: 2,
-        },
-      }],
-    };
-    fakeChat.inProgressFullState = {
-      text: "visible text",
-      toolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: fullResult,
-      }],
-      segmentText: "visible segment",
-      segmentToolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: fullResult,
-      }],
-    };
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-chat-status-detail-test",
-          name: "control-server-chat-status-detail-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      { chatFactory: () => fakeChat },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const base = `http://127.0.0.1:${port}`;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "inspect a large file",
-      }));
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-
-      const compact = await (await fetch(`${base}/api/chat/status`)).json();
-      assertEquals(compact.busy, true);
-      assertEquals(compact.inProgress.toolCalls[0].result.omitted, true);
-      assertEquals(compact.inProgress.toolCalls[0].result.keys, [
-        "output",
-        "metadata",
-      ]);
-
-      const full = await (await fetch(`${base}/api/chat/status?detail=full`))
-        .json();
-      assertEquals(full.busy, true);
-      assertEquals(full.inProgress.toolCalls[0].result, fullResult);
-    } finally {
-      blocker.resolve();
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "chat websocket reconnect sends compact in-progress state",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Busy Reconnect");
-    const blocker = deferred();
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.sendMessageBlocker = blocker.promise;
-    fakeChat.inProgressState = {
-      text: "visible text",
-      toolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: {
-          omitted: true,
-          type: "object",
-          keys: ["output"],
-          keyCount: 1,
-        },
-      }],
-      segmentText: "visible segment",
-      segmentToolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: {
-          omitted: true,
-          type: "object",
-          keys: ["output"],
-          keyCount: 1,
-        },
-      }],
-    };
-    fakeChat.inProgressFullState = {
-      text: "visible text",
-      toolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: { output: "x".repeat(10_000) },
-      }],
-      segmentText: "visible segment",
-      segmentToolCalls: [{
-        name: "read_file",
-        input: { path: "big.log" },
-        result: { output: "x".repeat(10_000) },
-      }],
-    };
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-chat-reconnect-detail-test",
-          name: "control-server-chat-reconnect-detail-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      { chatFactory: () => fakeChat },
-    );
-
-    let firstWs: WebSocket | null = null;
-    let reconnectWs: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      firstWs = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-      await waitForSocketOpen(firstWs);
-      firstWs.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "inspect a large file",
-      }));
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-
-      reconnectWs = new WebSocket(`ws://127.0.0.1:${port}/chat`);
-      const reconnectMessage = new Promise<Record<string, unknown>>(
-        (resolve) => {
-          reconnectWs!.onmessage = (evt) => resolve(JSON.parse(evt.data));
-        },
-      );
-      await waitForSocketOpen(reconnectWs);
-      const status = await reconnectMessage;
-
-      assertEquals(status.type, "agent_status");
-      assertEquals(status.busy, true);
-      const toolCalls = status.toolCalls as Array<{ result?: unknown }>;
-      assertEquals(toolCalls[0]?.result, {
-        omitted: true,
-        type: "object",
-        keys: ["output"],
-        keyCount: 1,
-      });
-    } finally {
-      blocker.resolve();
-      firstWs?.close();
-      reconnectWs?.close();
-      await control.server.shutdown();
-      await db.close();
     }
   },
 });
@@ -2660,30 +2031,6 @@ Deno.test("resolveScreenshotArtifactPath allows only persisted PNG basenames", (
   );
   assertEquals(resolveScreenshotArtifactPath(projectDir, "../proof.png"), null);
   assertEquals(resolveScreenshotArtifactPath(projectDir, "proof.jpg"), null);
-});
-
-Deno.test("parseMcpServerConfigInput rejects non-string stdio args", () => {
-  const result = parseMcpServerConfigInput({
-    name: "local",
-    transport: "stdio",
-    command: "tool",
-    args: ["ok", 123],
-  });
-  assertEquals(result.ok, false);
-  if (result.ok) throw new Error("unreachable");
-  assertEquals(result.error, "args must be an array of strings");
-});
-
-Deno.test("parseMcpServerConfigInput rejects non-string stdio env values", () => {
-  const result = parseMcpServerConfigInput({
-    name: "local",
-    transport: "stdio",
-    command: "tool",
-    env: { GOOD: "yes", BAD: false },
-  });
-  assertEquals(result.ok, false);
-  if (result.ok) throw new Error("unreachable");
-  assertEquals(result.error, "env must be an object of string values");
 });
 
 Deno.test({
@@ -5341,8 +4688,7 @@ Deno.test({
 Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
-  name:
-    "archiving or soft-deleting the current session clears active chat state",
+  name: "soft-deleting a session with history archives it, as archiving does",
   fn: async () => {
     const db = await Database.create({ driver: "pglite" });
     const kernel = new Kernel(db, { composition: testStoreComposition() });
@@ -5367,7 +4713,6 @@ Deno.test({
     const archived = await kernel.sessions.createSession("Archive", {
       ownerUserId: "acct_test_owner",
     });
-    const fakeChat = new SessionRecordingChat(kernel, softDeleted.id);
     const now = new Date().toISOString();
     const control = await startControlServer(
       {
@@ -5385,10 +4730,7 @@ Deno.test({
         rebuild: () => {},
       },
       0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
+      { authProvider: auth },
     );
 
     try {
@@ -5403,498 +4745,22 @@ Deno.test({
         archived: true,
         deleted: false,
       });
-      assertEquals(fakeChat.getCurrentSessionId(), null);
-      assertEquals(fakeChat.clearCurrentSessionCount, 1);
-      assertEquals(fakeChat.clearContextCount, 1);
       assertEquals(
         (await kernel.sessions.getSession(softDeleted.id))?.archived,
         true,
       );
-      assert((await kernel.sessions.getSession(softDeleted.id))?.endedAt);
-      assertEquals(
-        (await fetch(`${base}/api/sessions/current`, { headers })).status,
-        404,
-      );
 
-      await fakeChat.resumeSession(archived.id);
       const archiveRes = await fetch(
         `${base}/api/sessions/${archived.id}/archive`,
         { method: "POST", headers },
       );
       assertEquals(archiveRes.status, 200);
-      assertEquals(fakeChat.getCurrentSessionId(), null);
-      assertEquals(fakeChat.clearCurrentSessionCount, 2);
-      assertEquals(fakeChat.clearContextCount, 2);
+      await archiveRes.body?.cancel();
       assertEquals(
         (await kernel.sessions.getSession(archived.id))?.archived,
         true,
       );
-      assert((await kernel.sessions.getSession(archived.id))?.endedAt);
-      assertEquals(
-        (await fetch(`${base}/api/sessions/current`, { headers })).status,
-        404,
-      );
     } finally {
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "chat websocket realigns to message session before send",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const visibleSession = await kernel.sessions.createSession(
-      "Visible Session",
-    );
-    const freshSession = await kernel.sessions.createSession("Fresh Session");
-    const fakeChat = new SessionRecordingChat(kernel, freshSession.id);
-    const auth = new TestAuthProvider();
-    const sessionToken = cookieFor(
-      auth,
-      accountSession("acct_test_owner", "Test Owner"),
-    )
-      .replace(/^genie_session=/, "")
-      .split(";")[0];
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-chat-session-test",
-          name: "control-server-chat-session-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: visibleSession.id,
-        content: "yes",
-      }));
-
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-      assertEquals(fakeChat.resumedSessionIds, [visibleSession.id]);
-      assertEquals(fakeChat.sentSessionIds, [visibleSession.id]);
-      assertEquals(fakeChat.sentMessages, ["yes"]);
-    } finally {
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name:
-    "deferred session compaction queues while chat is busy and flushes after turn",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Busy Session", {
-      ownerUserId: "acct_test_owner",
-    });
-    await kernel.sessions.addMessage({
-      sessionId: session.id,
-      role: "user",
-      content: "keep the active build context",
-    });
-    const blocker = deferred();
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.sendMessageBlocker = blocker.promise;
-    const auth = new TestAuthProvider();
-    const sessionToken = cookieFor(
-      auth,
-      accountSession("acct_test_owner", "Test Owner"),
-    )
-      .replace(/^genie_session=/, "")
-      .split(";")[0];
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-deferred-compact-test",
-          name: "control-server-deferred-compact-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const base = `http://127.0.0.1:${port}`;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "continue building",
-      }));
-
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-      const compactRes = await fetch(`${base}/api/sessions/compact`, {
-        method: "POST",
-        headers: jsonAuthHeaders(auth, "acct_test_owner"),
-        body: JSON.stringify({ defer: true }),
-      });
-      assertEquals(compactRes.status, 202);
-      const queued = await compactRes.json();
-      assertEquals(queued.queued, true);
-      assertEquals(queued.coalesced, false);
-      assertEquals(queued.sessionId, session.id);
-      assertEquals(fakeChat.abortCount, 0);
-      assertEquals(fakeChat.compactSummaries.length, 0);
-
-      blocker.resolve();
-      await waitFor(() => fakeChat.compactSummaries.length === 1);
-      assertStringIncludes(
-        fakeChat.compactSummaries[0]!,
-        "keep the active build context",
-      );
-      const status = await (await fetch(`${base}/api/chat/status`, {
-        headers: authHeaders(auth, "acct_test_owner"),
-      })).json();
-      assertEquals(status.busy, false);
-    } finally {
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "deferred session compaction coalesces duplicate requests",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Busy Session", {
-      ownerUserId: "acct_test_owner",
-    });
-    await kernel.sessions.addMessage({
-      sessionId: session.id,
-      role: "user",
-      content: "compact this once",
-    });
-    const blocker = deferred();
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    fakeChat.sendMessageBlocker = blocker.promise;
-    const auth = new TestAuthProvider();
-    const sessionToken = cookieFor(
-      auth,
-      accountSession("acct_test_owner", "Test Owner"),
-    )
-      .replace(/^genie_session=/, "")
-      .split(";")[0];
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-deferred-compact-coalesce-test",
-          name: "control-server-deferred-compact-coalesce-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const base = `http://127.0.0.1:${port}`;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "continue building",
-      }));
-
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-      const first = await fetch(`${base}/api/sessions/compact`, {
-        method: "POST",
-        headers: jsonAuthHeaders(auth, "acct_test_owner"),
-        body: JSON.stringify({ defer: true }),
-      });
-      const second = await fetch(`${base}/api/sessions/compact`, {
-        method: "POST",
-        headers: jsonAuthHeaders(auth, "acct_test_owner"),
-        body: JSON.stringify({ defer: true }),
-      });
-      assertEquals(first.status, 202);
-      assertEquals(second.status, 202);
-      assertEquals((await first.json()).coalesced, false);
-      assertEquals((await second.json()).coalesced, true);
-
-      blocker.resolve();
-      await waitFor(() => fakeChat.compactSummaries.length === 1);
-    } finally {
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "chat websocket clears archived implicit active session before send",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Archived Active", {
-      ownerUserId: "acct_test_owner",
-    });
-    await kernel.sessions.archiveSession(session.id);
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    const auth = new TestAuthProvider();
-    const sessionToken = cookieFor(
-      auth,
-      accountSession("acct_test_owner", "Test Owner"),
-    )
-      .replace(/^genie_session=/, "")
-      .split(";")[0];
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-chat-implicit-archive-test",
-          name: "control-server-chat-implicit-archive-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: null,
-        content: "new thread",
-      }));
-
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-      assertEquals(fakeChat.clearCurrentSessionCount, 1);
-      assertEquals(fakeChat.clearContextCount, 1);
-      assertEquals(fakeChat.sentSessionIds, [null]);
-      assertEquals(fakeChat.sentMessages, ["new thread"]);
-      assert((await kernel.sessions.getSession(session.id))?.endedAt);
-    } finally {
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "chat websocket rejects explicit archived session before send",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Archived Target", {
-      ownerUserId: "acct_test_owner",
-    });
-    await kernel.sessions.archiveSession(session.id);
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    const auth = new TestAuthProvider();
-    const sessionToken = cookieFor(
-      auth,
-      accountSession("acct_test_owner", "Test Owner"),
-    )
-      .replace(/^genie_session=/, "")
-      .split(";")[0];
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-chat-explicit-archive-test",
-          name: "control-server-chat-explicit-archive-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      const errorMessage = new Promise<string>((resolve) => {
-        ws!.onmessage = (evt) => {
-          const event = JSON.parse(String(evt.data)) as {
-            type?: string;
-            text?: string;
-          };
-          if (event.type === "error") resolve(event.text ?? "");
-        };
-      });
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "should not write",
-      }));
-
-      assertStringIncludes(
-        await errorMessage,
-        "Archived sessions must be unarchived",
-      );
-      assertEquals(fakeChat.sentMessages, []);
-    } finally {
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
-  name: "chat websocket forwards document refs to the chat runtime",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const session = await kernel.sessions.createSession("Docs Session");
-    const fakeChat = new SessionRecordingChat(kernel, session.id);
-    const auth = new TestAuthProvider();
-    const sessionToken = cookieFor(
-      auth,
-      accountSession("acct_test_owner", "Test Owner"),
-    )
-      .replace(/^genie_session=/, "")
-      .split(";")[0];
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-server-chat-docrefs-test",
-          name: "control-server-chat-docrefs-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      {
-        authProvider: auth,
-        chatFactory: () => fakeChat,
-      },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        sessionId: session.id,
-        content: "see @[document:doc_1]",
-        documentRefs: [{ id: "doc_1" }],
-      }));
-
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-      // The parsed frame's documentRefs must reach sendMessage as the 7th arg.
-      assertEquals(fakeChat.sentDocumentRefs, [[{ id: "doc_1" }]]);
-    } finally {
-      ws?.close();
       await control.server.shutdown();
       await db.close();
     }
@@ -6420,64 +5286,6 @@ Deno.test({
 Deno.test({
   sanitizeResources: false,
   sanitizeOps: false,
-  name: "chat websocket clears unreadable active session before send",
-  fn: async () => {
-    const db = await Database.create({ driver: "pglite" });
-    const kernel = new Kernel(db, { composition: testStoreComposition() });
-    const privateSession = await kernel.sessions.createSession("Private", {
-      ownerUserId: "account_owner",
-      visibility: "private",
-    });
-    const fakeChat = new SessionRecordingChat(kernel, privateSession.id);
-    const auth = new TestAuthProvider();
-    const cookie = cookieFor(auth, accountSession("other", "Other"));
-    const now = new Date().toISOString();
-    const control = await startControlServer(
-      {
-        entry: {
-          path: "/tmp/genie-control-chat-owner-test",
-          name: "control-chat-owner-test",
-          createdAt: now,
-          lastOpenedAt: now,
-        },
-        kernel,
-        db,
-        appServer: { shutdown: async () => {} } as never,
-        devServer: { shutdown: async () => {} } as never,
-        commandRunner: { shutdown: async () => {} } as never,
-        rebuild: () => {},
-      },
-      0,
-      { authProvider: auth, chatFactory: () => fakeChat },
-    );
-
-    let ws: WebSocket | null = null;
-    try {
-      const port = control.server.addr.port;
-      const sessionToken = cookie.replace(/^genie_session=/, "").split(";")[0];
-      ws = new WebSocket(`ws://127.0.0.1:${port}/chat`, [
-        `genie-session.${sessionToken}`,
-      ]);
-      await waitForSocketOpen(ws);
-      ws.send(JSON.stringify({
-        type: "user_message",
-        content: "new user's message",
-      }));
-
-      await waitFor(() => fakeChat.sentMessages.length === 1);
-      assertEquals(fakeChat.sentSessionIds, [null]);
-      assertEquals(fakeChat.sentMessages, ["new user's message"]);
-    } finally {
-      ws?.close();
-      await control.server.shutdown();
-      await db.close();
-    }
-  },
-});
-
-Deno.test({
-  sanitizeResources: false,
-  sanitizeOps: false,
   name: "private-session changelog previews are redacted for other users",
   fn: async () => {
     const db = await Database.create({ driver: "pglite" });
@@ -6890,28 +5698,22 @@ Deno.test({
       );
 
       writeFileSync(join(projectDir, "CHANGELOG.md"), "# Changes\n");
-      const restoreMessageModel = setGitCommitMessageModelCallForTest(
-        async () => "Add changelog",
+      // No message: serve builds the subject from the staged files.
+      const generatedCommit = await fetch(`${base}/api/git/commit`, {
+        method: "POST",
+        headers: jsonAuthHeaders(auth),
+        body: JSON.stringify({}),
+      });
+      const generatedCommitBody = await generatedCommit.json();
+      assertEquals(generatedCommit.status, 200);
+      assertEquals(generatedCommitBody.status.clean, true);
+      assertEquals(generatedCommitBody.message, "Add CHANGELOG.md");
+      assertEquals(generatedCommitBody.messageGenerated, true);
+      assertEquals(generatedCommitBody.messageGeneratedBy, "fallback");
+      assertEquals(
+        generatedCommitBody.status.latestCommit.subject,
+        "Add CHANGELOG.md",
       );
-      try {
-        const generatedCommit = await fetch(`${base}/api/git/commit`, {
-          method: "POST",
-          headers: jsonAuthHeaders(auth),
-          body: JSON.stringify({}),
-        });
-        const generatedCommitBody = await generatedCommit.json();
-        assertEquals(generatedCommit.status, 200);
-        assertEquals(generatedCommitBody.status.clean, true);
-        assertEquals(generatedCommitBody.message, "Add changelog");
-        assertEquals(generatedCommitBody.messageGenerated, true);
-        assertEquals(generatedCommitBody.messageGeneratedBy, "model");
-        assertEquals(
-          generatedCommitBody.status.latestCommit.subject,
-          "Add changelog",
-        );
-      } finally {
-        restoreMessageModel();
-      }
 
       const remote = await fetch(`${base}/api/git/remote`, {
         method: "POST",
@@ -7652,7 +6454,6 @@ Deno.test({
 
     const now = new Date().toISOString();
     const auth = new TestAuthProvider();
-    const chat = new SessionRecordingChat(kernel, session.id);
     const control = await startControlServer(
       {
         entry: {
@@ -7671,7 +6472,6 @@ Deno.test({
       0,
       {
         authProvider: auth,
-        chatFactory: () => chat,
         mountRoutes: [mountVerificationRoutes],
       },
     );
@@ -7717,7 +6517,6 @@ Deno.test({
       assertEquals(completed.status, 200);
       assertEquals(completedBody.status, "completed");
       assertEquals(stored?.status, "completed");
-      assertEquals(chat.sentMessages.length, 0);
     } finally {
       await control.server.shutdown();
       await db.close();
@@ -8034,8 +6833,6 @@ async function withConfigTestServer(
   const projectDir = await Deno.makeTempDir({ prefix: `${prefix}proj-` });
   const db = await Database.create({ driver: "pglite" });
   const kernel = new Kernel(db, { composition: testStoreComposition() });
-  const session = await kernel.sessions.createSession("Config");
-  const fakeChat = new SessionRecordingChat(kernel, session.id);
   const now = new Date().toISOString();
   Deno.env.set("HOME", home);
   // Isolate from any ambient provider keys so `set` starts false everywhere.
@@ -8057,7 +6854,6 @@ async function withConfigTestServer(
       rebuild: () => {},
     },
     0,
-    { chatFactory: () => fakeChat },
   );
   try {
     await fn(`http://127.0.0.1:${control.server.addr.port}`, home);
@@ -8586,5 +7382,188 @@ Deno.test({
       },
     );
     assertEquals(calls, []);
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name: "the terminal hands ask() back to the IDE for the agent",
+  fn: async () => {
+    const db = await Database.create({ driver: "pglite" });
+    const kernel = new Kernel(db, { composition: testStoreComposition() });
+    const now = new Date().toISOString();
+    const control = await startControlServer(
+      {
+        entry: {
+          path: "/tmp/genie-control-terminal-ask-test",
+          name: "terminal-ask",
+          createdAt: now,
+          lastOpenedAt: now,
+        },
+        kernel,
+        db,
+        appServer: { shutdown: async () => {} } as never,
+        devServer: { shutdown: async () => {} } as never,
+        commandRunner: { shutdown: async () => {} } as never,
+        rebuild: () => {},
+      },
+      0,
+    );
+    let ws: WebSocket | null = null;
+    try {
+      const messages: Array<Record<string, unknown>> = [];
+      ws = new WebSocket(
+        `ws://127.0.0.1:${control.server.addr.port}/terminal`,
+      );
+      ws.onmessage = (evt) => messages.push(JSON.parse(String(evt.data)));
+      await waitForSocketOpen(ws);
+      await waitFor(() => messages.some((m) => m.type === "ready"));
+      ws.send(JSON.stringify({ type: "eval", code: 'ask("what is here?")' }));
+      await waitFor(() => messages.some((m) => m.type === "result"));
+      const asked = messages.findIndex((m) => m.type === "agent_ask");
+      const result = messages.findIndex((m) => m.type === "result");
+      assert(asked >= 0 && asked < result);
+      assertEquals(messages[asked]!.question, "what is here?");
+    } finally {
+      ws?.close();
+      await control.server.shutdown();
+      await db.close();
+    }
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name: "API responses are gzipped for a client that asks",
+  fn: async () => {
+    const control = await startControlServer(null, 0);
+    const url =
+      `http://127.0.0.1:${control.server.addr.port}/api/tools/builtin`;
+    try {
+      const zipped = await fetch(url, {
+        headers: { "accept-encoding": "gzip" },
+      });
+      assertEquals(zipped.headers.get("content-encoding"), "gzip");
+      const body = await zipped.json();
+      const plain = await fetch(url, {
+        headers: { "accept-encoding": "identity" },
+      });
+      assertEquals(plain.headers.get("content-encoding"), null);
+      assertEquals(await plain.json(), body);
+    } finally {
+      await control.server.shutdown();
+    }
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name: "a conversation loads a window at a time, and its change cards at once",
+  fn: async () => {
+    const db = await Database.create({ driver: "pglite" });
+    const kernel = new Kernel(db, { composition: testStoreComposition() });
+    const session = await kernel.sessions.createSession("Long", {
+      visibility: "project",
+    });
+    const ids: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const message = await kernel.sessions.addMessage({
+        sessionId: session.id,
+        role: "user",
+        content: `message ${i}`,
+      });
+      ids.push(message.id);
+    }
+    const changes = [];
+    for (const key of ["first", "second"]) {
+      changes.push(
+        await kernel.changelog.record({
+          category: "function",
+          key,
+          action: "create",
+          beforeSnapshot: null,
+          afterSnapshot: { source: `function ${key}() {}` },
+          context: null,
+        }),
+      );
+    }
+    const now = new Date().toISOString();
+    const control = await startControlServer(
+      {
+        entry: {
+          path: "/tmp/genie-control-window-test",
+          name: "control-window-test",
+          createdAt: now,
+          lastOpenedAt: now,
+        },
+        kernel,
+        db,
+        appServer: { shutdown: async () => {} } as never,
+        devServer: { shutdown: async () => {} } as never,
+        commandRunner: { shutdown: async () => {} } as never,
+        rebuild: () => {},
+      },
+      0,
+    );
+    const base = `http://127.0.0.1:${control.server.addr.port}`;
+    const read = async (query: string) => {
+      const res = await fetch(
+        `${base}/api/sessions/${session.id}/messages?${query}`,
+      );
+      const body = await res.json() as Array<{ content: string }>;
+      return {
+        contents: body.map((m) => m.content),
+        earlier: res.headers.get("X-Earlier-Messages"),
+      };
+    };
+
+    try {
+      assertEquals(await read("last=2"), {
+        contents: ["message 3", "message 4"],
+        earlier: "3",
+      });
+      assertEquals(await read(`last=2&before=${ids[3]}`), {
+        contents: ["message 1", "message 2"],
+        earlier: "1",
+      });
+      assertEquals(await read(`since=${ids[2]}`), {
+        contents: ["message 2", "message 3", "message 4"],
+        earlier: "2",
+      });
+      assertEquals((await read("limit=all")).earlier, null);
+
+      const big = { ok: true, data: { screenshot: "x".repeat(20_000) } };
+      const withTool = await kernel.sessions.addMessage({
+        sessionId: session.id,
+        role: "assistant",
+        content: "looked",
+        toolCalls: [{ name: "screenshot_app", input: {}, result: big }],
+      });
+      const compact = await (await fetch(
+        `${base}/api/sessions/${session.id}/messages?last=1&compact=1`,
+      )).json() as Array<{ toolCalls: string }>;
+      const stub = JSON.parse(compact[0]!.toolCalls)[0].result;
+      assertEquals(stub.ok, true);
+      assertEquals(stub.data, undefined);
+      assert(stub._omitted.bytes > 20_000);
+      const full = await (await fetch(
+        `${base}/api/sessions/${session.id}/messages/${withTool.id}/tool-calls`,
+      )).json() as Array<{ result: unknown }>;
+      assertEquals(full[0]!.result, big);
+
+      const res = await fetch(
+        `${base}/api/changelog/records?ids=${changes[1]!.id},${
+          changes[0]!.id
+        },999`,
+      );
+      const records = await res.json() as Array<{ key: string }>;
+      assertEquals(records.map((r) => r.key).toSorted(), ["first", "second"]);
+    } finally {
+      await control.server.shutdown();
+      await db.close();
+    }
   },
 });

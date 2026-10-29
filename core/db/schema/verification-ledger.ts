@@ -24,6 +24,8 @@ export const genieVerificationLedgerTable = pgTable(
     toolCallId: text("tool_call_id"),
     turnId: text("turn_id"),
     principalId: text("principal_id"),
+    producer: text("producer"),
+    reviewer: text("reviewer"),
     createdAt: text("created_at").notNull(),
   },
   (table) => [

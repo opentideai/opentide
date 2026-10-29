@@ -1,14 +1,43 @@
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
 export function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
+}
+
+export function writeFileIfMissing(path: string, content: string): void {
+  if (existsSync(path)) return;
+  ensureDir(dirname(path));
+  writeFileSync(path, content);
+}
+
+// Copies a file and reads both back, so a move can delete the original only
+// once the copy is known good.
+export function copyVerified(from: string, to: string): void {
+  ensureDir(dirname(to));
+  copyFileSync(from, to);
+  if (readFileSync(from, "utf-8") !== readFileSync(to, "utf-8")) {
+    throw new Error(`Copy of ${from} to ${to} does not match the original`);
+  }
+}
+
+// Changes whenever the file does: appends grow it, rewrites replace it by
+// rename (a new inode), and either moves the mtime. Null when it's missing.
+export function fileStamp(path: string): string | null {
+  try {
+    const stat = statSync(path);
+    return `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return null;
+  }
 }
 
 export function readJsonFile<T>(path: string): T | null {

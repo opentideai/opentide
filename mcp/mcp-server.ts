@@ -41,8 +41,31 @@ import {
 } from "../core/config.ts";
 import type { McpCallInput } from "../core/types.ts";
 import { errorMessage } from "../core/util.ts";
+import {
+  flushKernelProjectState,
+  isMutationTool,
+  isReadOnlyTool,
+} from "../core/tools/dispatch.ts";
 import { buildAgentInstructions } from "../core/agent-guide.ts";
 import { mcpSessionMetadata } from "../core/session-liveness.ts";
+import {
+  OPEN_SESSION,
+  type SessionBinding,
+  turnContextFrom,
+} from "./mcp-history.ts";
+
+// Whether a call needs the connection's own session, and so starts one if
+// there's none yet. open_session chooses the session; a read has nothing to
+// record in one; manage_sessions lists and searches, or acts on the session it
+// names. Those use the bound session if there is one.
+const MANAGE_SESSIONS = "manage_sessions";
+const SESSION_FREE_ACTIONS: ReadonlySet<string> = new Set(["list", "search"]);
+
+function startsSession(name: string, args: Record<string, unknown>): boolean {
+  if (name === OPEN_SESSION || isReadOnlyTool(name)) return false;
+  if (name !== MANAGE_SESSIONS) return true;
+  return !SESSION_FREE_ACTIONS.has(String(args.action)) && !args.session_id;
+}
 
 // How work driven over MCP is labelled when the client doesn't say who it is:
 // the name of the session record this server creates (so it is attributable in
@@ -134,18 +157,31 @@ export function createMcpServer(
   // existing empty session when called without one, which would collapse two
   // instances onto a single scope.
   //
-  // Created on the first tool call and memoized, because listing tools must not
-  // leave an empty session behind and the SDK's call handler is the first place
-  // an await is available. By then initialize has run, so the session can carry
-  // the client's name.
+  // Created on the first call that writes, and memoized: listing tools or
+  // reading must not leave an empty session behind, and the SDK's call handler
+  // is the first place an await is available. By then initialize has run, so
+  // the session can carry the client's name.
   //
   // The record is tagged as an MCP session and tracked in kernel.liveSessions
   // while the client is connected, so a changeset it leaves behind when it goes
   // away can be adopted by the next client (core/session-liveness.ts).
   let session: Promise<string> | null = null;
+  // open_session moves the connection to another session. The one it leaves
+  // stays open: it may be resumed, and only the connection is going.
+  const binding: SessionBinding = {
+    bind: (sessionId) => {
+      const previous = session;
+      session = Promise.resolve(sessionId);
+      void previous?.then((id) => {
+        if (id !== sessionId) deps.kernel.liveSessions.close(id);
+      });
+      deps.kernel.liveSessions.touch(sessionId);
+    },
+  };
   const sessionIdFor = (caller: McpCaller): Promise<string> =>
     session ??= deps.kernel.sessions
-      .createSession(sessionName(caller))
+      // Project visibility: an MCP client's history is the project's.
+      .createSession(sessionName(caller), { visibility: "project" })
       .then(async (created) => {
         await deps.kernel.sessions.updateSummaryMetadata(
           created.id,
@@ -202,12 +238,15 @@ export function createMcpServer(
       // changeset (dispatch.ts) as a side effect, so a reused object could leak
       // one changeset's id into a later call. A new object each time keeps the
       // only shared state the stable sessionId.
-      const sessionId = await sessionIdFor(caller);
-      deps.kernel.liveSessions.touch(sessionId);
+      const sessionId = startsSession(name, args)
+        ? await sessionIdFor(caller)
+        : await session ?? undefined;
+      if (sessionId) deps.kernel.liveSessions.touch(sessionId);
       const context: ChangeContext = {
-        sessionId,
+        ...(sessionId ? { sessionId } : {}),
         userMessage: caller.label,
         principalId: caller.principalId,
+        ...turnContextFrom(request.params._meta),
       };
       const bytes = argBytes(args);
       const audit = (decision: McpCallInput["decision"], reason?: string) =>
@@ -227,13 +266,16 @@ export function createMcpServer(
         return argsTooLarge(bytes);
       }
       try {
-        return await dispatchMcpTool(
+        const result = await dispatchMcpTool(
           name,
           args,
           deps.kernel,
           deps.rebuild,
           context,
+          binding,
         );
+        if (!result.isError) persistMutation(deps.kernel, name);
+        return result;
       } finally {
         // After dispatch, so the record carries the changeset the gate pinned.
         await audit("allow");
@@ -318,4 +360,20 @@ export async function serveMcpStdio(deps: McpServerDeps): Promise<void> {
       resolve();
     };
   });
+}
+
+// Writes the project's state after a change lands. Serve has no turn end to
+// save at; without this a client's work lived in memory until a clean exit.
+// Unchanged files aren't rewritten, so a save costs the comparison.
+function persistMutation(kernel: Kernel, toolName: string): void {
+  if (!kernel.projectDir || !isMutationTool(toolName)) return;
+  try {
+    flushKernelProjectState(kernel);
+  } catch (err) {
+    kernel.log.log(
+      "warn",
+      "system",
+      `Saving project state after ${toolName} failed: ${errorMessage(err)}`,
+    );
+  }
 }

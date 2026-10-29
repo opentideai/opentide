@@ -154,3 +154,11 @@ Deno.test("invocationCwd: INIT_CWD under deno task, the real cwd under the insta
     "/here",
   );
 });
+
+Deno.test("getServeArgs: --exit-when-idle is off unless passed", () => {
+  assertEquals(getServeArgs(3003, ["--project", "/x"]).exitWhenIdle, false);
+  assertEquals(
+    getServeArgs(3003, ["--project", "/x", "--exit-when-idle"]).exitWhenIdle,
+    true,
+  );
+});

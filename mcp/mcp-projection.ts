@@ -13,7 +13,7 @@
 // otherwise throw.
 import type { Kernel } from "../core/registries.ts";
 import type { Changeset } from "../core/types.ts";
-import type { ChangeContext } from "../core/changelog.ts";
+import type { ChangeContext, ChangeRecord } from "../core/changelog.ts";
 import { AGENT_TOOLS, type CustomToolDef } from "../core/tools/definitions.ts";
 import {
   dispatchTool,
@@ -21,21 +21,31 @@ import {
   isIdempotentTool,
   isOpenWorldTool,
   isReadOnlyTool,
-  MAY_BILL_TOOLS,
   type ToolResult,
 } from "../core/tools/dispatch.ts";
-import {
-  canBillUnder,
-  isToolCapabilityAvailable,
-} from "../core/tool-capabilities.ts";
+import { isToolCapabilityAvailable } from "../core/tool-capabilities.ts";
 import { checkToolArgs, formatArgIssues } from "../core/tools/validate-args.ts";
 import type { CompositionContext } from "../core/composition.ts";
 import { canonicalizeJson, hashParts } from "../core/fingerprint.ts";
-import { MCP_SURFACE_VERSION } from "../core/config.ts";
+import { MCP_SUGGESTION_PREFIX, MCP_SURFACE_VERSION } from "../core/config.ts";
+import { resolveProject } from "../core/project-context.ts";
+import { resolve } from "node:path";
 import { encodeBase64, errorMessage } from "../core/util.ts";
 import type { CreatedTaskWithServe } from "../shared/tasks.ts";
 import { taskConnect } from "./mcp-connect.ts";
 import { SHOW_APP, showAppListing, showAppResult } from "./mcp-app-preview.ts";
+import {
+  dispatchHistoryTool,
+  HISTORY_TOOL_NAMES,
+  HISTORY_TOOLS,
+  type SessionBinding,
+} from "./mcp-history.ts";
+import {
+  APPROVE_CHANGESET,
+  APPROVE_CHANGESET_TOOL,
+  changesetFaceTools,
+  dispatchApproveChangeset,
+} from "./mcp-changesets.ts";
 
 // The standard MCP tool annotations (SDK ToolAnnotationsSchema). All advisory
 // hints: clients use them to auto-approve reads, warn on destructive calls, etc.
@@ -85,23 +95,26 @@ export interface McpToolResult {
 // keeps the full set (§4 non-goal: public tool names are unchanged, we just do
 // not advertise these over this face).
 //
-//   summarize_session / get_session_context / manage_sessions — operate on
-//     Genie IDE chat sessions; a headless agent has its own conversation, so
-//     there is no Genie session to summarize, read, or manage.
+//   summarize_session — model-backed and server-side; a client summarizes its
+//     own session and records the result.
 //   list_projects       — the launcher's cross-project list (with recent-session
 //     summaries); the MCP agent drives the one project loaded via --project, not
 //     the launcher.
 //   get_project_context — its distinguishing value (cross-project @mention
 //     resolution, recent sessions) is launcher/session-scoped; its current-project
 //     entity counts are already covered by list_routes/handlers/schemas/modules.
+// get_session_context and manage_sessions are served: past sessions are project
+// history, and every client reads them and manages its own.
 // Verbs only this face has, not in AGENT_TOOLS: show_app (the IDE has its own
-// preview pane). They carry their own listing and annotations.
-export const MCP_ONLY_TOOLS: ReadonlySet<string> = new Set([SHOW_APP]);
+// preview pane) and the history writes (the IDE chat writes its own history).
+export const MCP_ONLY_TOOLS: ReadonlySet<string> = new Set([
+  SHOW_APP,
+  ...HISTORY_TOOL_NAMES,
+  APPROVE_CHANGESET,
+]);
 
 const MCP_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "summarize_session",
-  "get_session_context",
-  "manage_sessions",
   "list_projects",
   "get_project_context",
 ]);
@@ -146,22 +159,30 @@ function textError(text: string): McpToolResult {
 //     instruction is actively wrong here and would strand a headless agent.
 //   amend_changeset_plan — core says the amendment goes back to the user for
 //     approval; this face re-approves it automatically (projectAutoAdvance).
+//   get_session_context — core offers other projects' sessions; this face
+//     serves the loaded project only (otherProjectRefusal).
 //   export_project   — core says "the user can download the archive from the UI";
 //     there is no UI for an MCP agent.
 const MCP_DESCRIPTION_OVERRIDES: Readonly<Record<string, string>> = {
+  get_session_context:
+    "Fetch messages and metadata for a past session in this project: what was " +
+    "done, why, and what was decided. Other projects' sessions aren't served " +
+    "here, so leave out project_path and project_name.",
   create_changeset:
     "Propose a detailed plan for a complex request. Include what will be done, " +
     "how it will be implemented, why it is needed, and why this implementation " +
     "strategy fits the existing app. Creates a changeset and, on this MCP " +
     "interface, auto-approves it to 'in_progress' so you can begin work " +
-    "immediately — there is no separate human approval step. The " +
+    "immediately. Pass await_approval to leave it in 'planning' until the " +
+    "user approves it, in the IDE or through you with approve_changeset. The " +
     "completion/readiness gate still applies at complete_changeset.",
   amend_changeset_plan:
     "Amend the active changeset's plan when the work outgrows it: add steps, " +
     "acceptance criteria, verification plan entries, or formal specs, and append " +
     "to the summary. Amending a light-lane changeset escalates it to standard. " +
     "On this MCP interface the amended changeset is re-approved and restarted " +
-    "automatically, so carry on with the work straight after.",
+    "automatically, so carry on with the work straight after, unless you pass " +
+    "await_approval.",
   export_project:
     "Export the current app as a standalone Deno project. Pass `out` to write the " +
     "export tree to a directory inside the project (default dist/v<version>) — on " +
@@ -292,27 +313,10 @@ function toolAnnotations(name: string): McpToolAnnotations {
   return annotations;
 }
 
-// Prepended to every verb that can spend the user's model API key. It goes in
-// the description because that is what reaches the model: clients do not show
-// it a tool's _meta or annotations.
-export const BILLED_DESCRIPTION_PREFIX =
-  "BILLS the user's model API key (runs an LLM). Call only when the user asked for it.";
-
-function toListing(
-  tool: CustomToolDef,
-  composition: CompositionContext,
-): McpToolListing {
-  const base = MCP_DESCRIPTION_OVERRIDES[tool.name] ?? tool.description;
+function toListing(tool: CustomToolDef): McpToolListing {
   const listing: McpToolListing = {
     name: tool.name,
-    description: MAY_BILL_TOOLS.has(tool.name) &&
-        canBillUnder(composition, tool.name)
-      ? `${BILLED_DESCRIPTION_PREFIX}${
-        tool.name === "index_codebase"
-          ? ' (Only with classification "assist".)'
-          : ""
-      }\n\n${base}`
-      : base,
+    description: MCP_DESCRIPTION_OVERRIDES[tool.name] ?? tool.description,
     inputSchema: tool.input_schema,
     annotations: toolAnnotations(tool.name),
   };
@@ -331,9 +335,11 @@ export function projectedMcpTools(
   return [
     ...AGENT_TOOLS
       .filter((t) => toolAvailability(composition, t.name) === "ok")
-      .map((t) => toListing(t, composition)),
+      .map((t) => toListing(t)),
     // MCP-only: the IDE has its own preview pane.
     showAppListing(),
+    ...HISTORY_TOOLS.map((t) => toListing(t)),
+    ...changesetFaceTools(composition).map((t) => toListing(t)),
   ];
 }
 
@@ -421,19 +427,29 @@ function mcpErrorText(
     message = message.split(from).join(to);
   }
   const suggestion = override?.suggestion ?? err.suggestion;
-  return [`Error [${err.code}]: ${message}`, suggestion].filter(Boolean)
-    .join("\n");
+  const text = `Error [${err.code}]: ${message}`;
+  return suggestion ? `${text}\n${MCP_SUGGESTION_PREFIX}${suggestion}` : text;
 }
 
 // Map a core ToolResult onto an MCP tool-call result. Success serializes the
 // tool data as JSON text plus any surfaced images; failure becomes an isError
 // result carrying the semantic code/message/suggestion so the calling agent can
-// react. Never throws.
+// react, then the data, when the refusal has any. Never throws.
 function toMcpResult(name: string, result: ToolResult): McpToolResult {
   if (!result.ok) {
-    return textError(
+    const error = textError(
       result.error ? mcpErrorText(name, result.error) : "Tool call failed.",
     );
+    // A refusal can carry what it found (complete_changeset's readiness), and
+    // the agent needs that as much as the message.
+    if (result.data === undefined) return error;
+    return {
+      ...error,
+      content: [
+        ...error.content,
+        { type: "text", text: JSON.stringify(result.data, null, 2) },
+      ],
+    };
   }
   const content: McpContent[] = [
     { type: "text", text: JSON.stringify(result.data ?? null, null, 2) },
@@ -471,7 +487,8 @@ async function autoAdvanceChangeset(
 
 // The verbs whose successful result leaves a changeset waiting for human
 // approval: create_changeset (planning) and amend_changeset_plan (back to
-// planning). Over MCP both are auto-advanced to in_progress.
+// planning). Over MCP both are auto-advanced to in_progress, unless the call
+// asks to await approval.
 const AUTO_ADVANCE_TOOLS: ReadonlySet<string> = new Set([
   "create_changeset",
   "amend_changeset_plan",
@@ -505,18 +522,19 @@ async function projectAutoAdvance(
       `complete_changeset.`,
     ];
     // Only a criterion written as "must" lands here: a bare string or a missing
-    // priority is stored as "should" (normalizeAcceptanceCriteria). Asking for
-    // "must" is legitimate, but it is billed, so it is said out loud.
+    // priority is stored as "should" (normalizeAcceptanceCriteria). A "must"
+    // one owes a refute review, which costs the client's tokens, so it is said
+    // out loud.
     const must = (started.plan.acceptanceCriteria ?? [])
       .filter((c) => c.priority === "must")
       .map((c) => c.id);
     if (must.length > 0) {
       notes.push(
         `Warning: ${must.join(", ")} ${must.length === 1 ? "is" : "are"} ` +
-          `priority "must". complete_changeset runs a refutation agent on ` +
-          `"must" criteria, billed to the user's model API key. A priority ` +
-          `cannot be lowered once the changeset has started, so if the user ` +
-          `did not ask for this, tell them before calling complete_changeset.`,
+          `priority "must". Each owes a refute review (request_review, ` +
+          `then submit_review), run on your own model, before ` +
+          `complete_changeset. A priority cannot be lowered once the ` +
+          `changeset has started.`,
       );
     }
     return {
@@ -534,7 +552,10 @@ async function projectAutoAdvance(
 }
 
 const AGENT_TOOLS_BY_NAME: ReadonlyMap<string, CustomToolDef> = new Map(
-  AGENT_TOOLS.map((t) => [t.name, t]),
+  [...AGENT_TOOLS, ...HISTORY_TOOLS, APPROVE_CHANGESET_TOOL].map((t) => [
+    t.name,
+    t,
+  ]),
 );
 
 // Dispatch an MCP `tools/call` through the existing core dispatch. The optional
@@ -549,8 +570,17 @@ export async function dispatchMcpTool(
   kernel: Kernel,
   rebuild: () => void,
   context?: ChangeContext,
+  binding?: SessionBinding,
 ): Promise<McpToolResult> {
   if (name === SHOW_APP) return showAppResult(kernel, args);
+  if (
+    name === APPROVE_CHANGESET &&
+    changesetFaceTools(kernel.composition).length === 0
+  ) {
+    return textError(
+      `Tool "${name}" is not available in this MCP server assembly (its handler layer is not installed).`,
+    );
+  }
   const availability = toolAvailability(kernel.composition, name);
   if (availability === "excluded") {
     return textError(
@@ -575,33 +605,138 @@ export async function dispatchMcpTool(
     }
     args = checked.args;
   }
+  const otherProject = otherProjectRefusal(name, args, kernel);
+  if (otherProject) return otherProject;
   try {
-    const result = await dispatchTool(name, args, kernel, rebuild, context);
-    if (AUTO_ADVANCE_TOOLS.has(name) && result.ok && result._changeset) {
-      return await projectAutoAdvance(name, kernel, result);
-    }
-    if (name === "project_status" && result.ok) {
-      // Core knows the contract version; only this face knows what it actually
-      // advertises (exclusions, capability gating), so it fills in the rest.
-      const data = result.data as Record<string, unknown>;
-      return toMcpResult(name, {
-        ...result,
-        data: {
-          ...data,
-          surface: mcpSurfaceMeta(projectedMcpTools(kernel.composition)),
-        },
-      });
-    }
-    if (name === "start_task" && result.ok) {
-      // Core can't build a client config; this face knows its own invocation.
-      const data = result.data as CreatedTaskWithServe;
-      return toMcpResult(name, {
-        ...result,
-        data: { ...data, connect: taskConnect(data.task.path) },
-      });
-    }
-    return toMcpResult(name, result);
+    const { value, records } = await kernel.changelog.collect(() =>
+      dispatchChecked(name, args, kernel, rebuild, context, binding)
+    );
+    return await withChanges(kernel, value, records);
   } catch (err) {
     return textError(`Tool "${name}" failed: ${errorMessage(err)}`);
   }
+}
+
+// Verbs whose project_path/project_name can reach another project's history.
+// This face serves the loaded project and nothing else: another project's
+// sessions, private ones included, aren't the caller's to read.
+const PROJECT_SCOPED_TOOLS: ReadonlySet<string> = new Set([
+  "get_session_context",
+]);
+
+function otherProjectRefusal(
+  name: string,
+  args: Record<string, unknown>,
+  kernel: Kernel,
+): McpToolResult | null {
+  if (!PROJECT_SCOPED_TOOLS.has(name)) return null;
+  const current = kernel.projectDir ? resolve(kernel.projectDir) : null;
+  const isCurrent = (path: string | undefined) =>
+    current !== null && path !== undefined && resolve(path) === current;
+  const { project_path: path, project_name: projectName } = args;
+  const pathOk = path === undefined ||
+    (typeof path === "string" && isCurrent(path));
+  const nameOk = projectName === undefined ||
+    (typeof projectName === "string" &&
+      isCurrent(resolveProject({ projectName })?.path));
+  if (pathOk && nameOk) return null;
+  return textError(
+    `Error [OTHER_PROJECT]: ${name} reads this project's sessions only. Leave out project_path and project_name.`,
+  );
+}
+
+// Dispatches a call whose arguments have been checked, shaping the result for
+// the MCP face.
+async function dispatchChecked(
+  name: string,
+  args: Record<string, unknown>,
+  kernel: Kernel,
+  rebuild: () => void,
+  context?: ChangeContext,
+  binding?: SessionBinding,
+): Promise<McpToolResult> {
+  if (HISTORY_TOOL_NAMES.has(name)) {
+    return toMcpResult(
+      name,
+      await dispatchHistoryTool(name, args, kernel, context, binding),
+    );
+  }
+  if (name === APPROVE_CHANGESET) {
+    return toMcpResult(name, await dispatchApproveChangeset(kernel, args));
+  }
+  const result = await dispatchTool(name, args, kernel, rebuild, context);
+  if (
+    AUTO_ADVANCE_TOOLS.has(name) && result.ok && result._changeset &&
+    args.await_approval !== true
+  ) {
+    return await projectAutoAdvance(name, kernel, result);
+  }
+  if (name === "project_status" && result.ok) {
+    // Core knows the contract version; only this face knows what it actually
+    // advertises (exclusions, capability gating), so it fills in the rest.
+    const data = result.data as Record<string, unknown>;
+    return toMcpResult(name, {
+      ...result,
+      data: {
+        ...data,
+        surface: mcpSurfaceMeta(projectedMcpTools(kernel.composition)),
+      },
+    });
+  }
+  if (name === "start_task" && result.ok) {
+    // Core can't build a client config; this face knows its own invocation.
+    const data = result.data as CreatedTaskWithServe;
+    return toMcpResult(name, {
+      ...result,
+      data: { ...data, connect: taskConnect(data.task.path) },
+    });
+  }
+  return toMcpResult(name, result);
+}
+
+// What one call changed, appended to its result as a second text block: the
+// change ids a client links its messages to (append_session_messages), and the
+// state of each changeset they landed in. Absent when nothing changed.
+async function withChanges(
+  kernel: Kernel,
+  result: McpToolResult,
+  records: readonly ChangeRecord[],
+): Promise<McpToolResult> {
+  if (records.length === 0) return result;
+  const changesetIds = [
+    ...new Set(records.flatMap((r) => r.changesetId ? [r.changesetId] : [])),
+  ];
+  const changesets = [];
+  for (const id of changesetIds) {
+    const changeset = await kernel.changesets.get(id);
+    if (changeset) changesets.push(changesetState(changeset));
+  }
+  const changes = {
+    changes: records.map((r) => ({
+      id: r.id,
+      scope: `${r.category}:${r.key}`,
+      action: r.action,
+    })),
+    ...(changesets.length > 0 ? { changesets } : {}),
+  };
+  return {
+    ...result,
+    content: [
+      ...result.content,
+      { type: "text", text: JSON.stringify(changes, null, 2) },
+    ],
+  };
+}
+
+function changesetState(changeset: Changeset) {
+  const steps = changeset.plan.steps;
+  return {
+    id: changeset.id,
+    status: changeset.status,
+    steps: {
+      done: steps.filter((s) => s.status === "done" || s.status === "skipped")
+        .length,
+      total: steps.length,
+    },
+  };
 }
