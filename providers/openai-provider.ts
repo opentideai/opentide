@@ -1,5 +1,5 @@
 // @layer providers — the concrete OpenAI ModelProvider (multi-model harness,
-// docs/multi-model-harness-plan.md §5 Stage 4). This is the SECOND transport behind
+// docs/archive/multi-model-harness-plan.md §5 Stage 4). This is the SECOND transport behind
 // the ModelProvider seam (core/model-provider.ts) — the executable proof the harness
 // is real: the SAME agentic loop runs on a non-Anthropic provider with a byte-identical
 // ChatEvent contract. It drives @ai-sdk/openai via streamText().fullStream and reuses

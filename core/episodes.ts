@@ -3,7 +3,7 @@
 // (episodes.jsonl), plus the paired survival-observation log (survival.jsonl).
 // This is the payoff slice: it composes A1 (authorOrigin), A2 (entityUid) and A3
 // (rename-as-op) into the record from which Entity Survival Rate is computable.
-// See docs/stream-a-data-foundation-plan.md §3.3, §3.4, §4 A4, §7.
+// See docs/archive/stream-a-data-foundation-plan.md §3.3, §3.4, §4 A4, §7.
 //
 // DELIBERATE NO-DB-STORE CHOICE (sharpening S3, plan §2): unlike the changelog and
 // changesets, the episode log has **no** DB-backed store and does not follow the

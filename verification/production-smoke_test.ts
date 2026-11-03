@@ -5,7 +5,7 @@ import {
   type RouteProbeResult,
 } from "./production-smoke.ts";
 
-// Slice 4.2 (docs/production-output-hardening-plan.md → Milestone 4): the route
+// Slice 4.2 (docs/archive/production-output-hardening-plan.md → Milestone 4): the route
 // contract `checkRouteSmokeContract` is pure and never throws — given the results
 // probeRouteSmoke observed against a booted app, it returns the FIRST failure
 // message (naming the offending METHOD /path) or null when every probe holds.

@@ -16,7 +16,7 @@ import {
   withKernel,
 } from "../verification/export-fixtures.ts";
 
-// Phase 1 (docs/production-output-hardening-plan.md): the same kernel state must
+// Phase 1 (docs/archive/production-output-hardening-plan.md): the same kernel state must
 // export to byte-identical source, tar, and zip — independent of registry
 // insertion order, wall-clock time, logs, or the local project path.
 // Phase 2 (bottom of this file): the opt-in manifest.json describes every file

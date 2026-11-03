@@ -23,20 +23,8 @@ import {
 } from "./persistence.ts";
 import { createBackup, saveBackup } from "./backup.ts";
 import { forgetBackupClock } from "./backup-cadence.ts";
-import {
-  APP_SERVER_PORT,
-  getKernelSettings,
-  getPricingCheckRecord,
-  getPricingTableOverrides,
-  getProviderModelPricingRows,
-} from "./config.ts";
-import {
-  setPricingDriftWarnHandler,
-  setPricingTableProvider,
-  setProviderModelPricingTableProvider,
-} from "./usage.ts";
-import { auditOverlayPricing, type OverlayRowAudit } from "./pricing-audit.ts";
-import { evaluatePricingCheckFreshness } from "./pricing-refresh.ts";
+import { APP_SERVER_PORT, getKernelSettings } from "./config.ts";
+import { setUnpricedModelWarnHandler } from "./usage.ts";
 import { type DoctorIssue, doctorProject } from "./project-doctor.ts";
 import { runProjectInitHooks } from "./project-hooks.ts";
 import type { CompositionContext } from "./composition.ts";
@@ -164,31 +152,10 @@ async function loadProjectLocked(
       `  Moved ${relocated} private session(s) out of shared history`,
     );
   }
-  // Surface unknown-model pricing fallbacks (e.g. a new Opus tier not yet in the
-  // pricing table) through structured logging instead of silently mispricing.
-  setPricingDriftWarnHandler((message, metadata) =>
+  // A model models.dev doesn't price is recorded unpriced; say so in the log.
+  setUnpricedModelWarnHandler((message, metadata) =>
     kernel.log.log("warn", "system", message, { metadata })
   );
-  // Inject the config-stored pricing overlay into usage.ts's pure read API (Stage
-  // 2B Slice 1). Read fresh on each price lookup so a setPricingTier write lands
-  // immediately; an empty config resolves every price to the built-in seed.
-  setPricingTableProvider(getPricingTableOverrides);
-  // Exact provider/model pricing rows (Stage B) layer above the legacy Anthropic
-  // tier table. Empty config leaves OpenAI models explicitly unpriced.
-  setProviderModelPricingTableProvider(getProviderModelPricingRows);
-  // Slice 10: the overlay audit runs HERE, at startup, because nobody runs a
-  // manual pricing task — `pricing:check` sat broken on main (bad permissions,
-  // then a bad parse) for an unknown length of time and nothing surfaced it. This
-  // is pure and offline: no docs fetch, no ledger, no network, a few ms over the
-  // rows the kernel can actually bill through. `deno task pricing:audit` prints
-  // the full report; this only shouts about the two things that mean money is
-  // moving through the wrong table.
-  warnOnOverlayPricing(kernel);
-  // Slice 11 Part A: the same startup path, pointed at the staleness of the
-  // DIAGNOSTIC rather than of the data. A drift check nobody runs is silent in
-  // exactly the way a clean drift check is silent, and that symmetry is what let
-  // two mispricings live on main for weeks.
-  warnOnStalePricingCheck(kernel);
   const logLoadWarnings = kernel.log.loadFromFile(paths.logsCache);
   if (logLoadWarnings.length > 0) {
     console.warn(`  Log restore warnings:`);
@@ -340,85 +307,4 @@ async function unloadProjectOnce(ctx: ProjectContext): Promise<void> {
   // waiting for the process to exit.
   ctx.lock?.release();
   console.log(`  Project "${ctx.entry.name}" saved & closed`);
-}
-
-// How many actionable overlay rows to name individually before collapsing to a
-// count. A startup warning that scrolls is a startup warning nobody reads.
-const OVERLAY_WARN_MAX_ROWS = 5;
-
-function overlayRowSummary(row: OverlayRowAudit): string {
-  const builtIn = row.builtIn
-    ? `$${row.builtIn.input}/$${row.builtIn.output}`
-    : "no built-in price";
-  return `${row.provider}/${row.model} priced $${row.row.input}/$` +
-    `${row.row.output} from ${row.row.source} (built-in: ${builtIn})`;
-}
-
-// Startup half of the Slice-10 overlay audit: actionable findings named, expired
-// rows aggregated. Expiry is a whole-catalog event — every models.dev row shares
-// one effectiveThrough — so listing them individually would bury the signal.
-function warnOnOverlayPricing(kernel: Kernel): void {
-  const report = auditOverlayPricing();
-  const named = report.actionable.slice(0, OVERLAY_WARN_MAX_ROWS);
-  for (const row of named) {
-    kernel.log.log(
-      "warn",
-      "system",
-      `Pricing overlay: ${overlayRowSummary(row)}. A snapshot source is ` +
-        `outranking the curated table — run \`deno task pricing:audit\`.`,
-      {
-        metadata: {
-          provider: row.provider,
-          model: row.model,
-          notes: row.notes,
-        },
-      },
-    );
-  }
-  if (report.actionable.length > named.length) {
-    kernel.log.log(
-      "warn",
-      "system",
-      `Pricing overlay: ${report.actionable.length - named.length} further ` +
-        `actionable row(s) not listed — run \`deno task pricing:audit\`.`,
-      { metadata: { total: report.actionable.length } },
-    );
-  }
-  if (report.expired.length) {
-    const earliest = report.expired
-      .map((r) => r.row.effectiveThrough ?? "")
-      .toSorted()[0];
-    kernel.log.log(
-      "warn",
-      "system",
-      `Pricing overlay: ${report.expired.length} row(s) past their ` +
-        `effectiveThrough (earliest ${earliest}); those models have degraded ` +
-        `to the built-in table or to unpriced. Refresh the models.dev catalog.`,
-      { metadata: { expired: report.expired.length, earliest } },
-    );
-  }
-}
-
-// Part A: how old is the drift check itself? "never run" and "ran, found nothing"
-// used to be the same observable state — silence — so the one message this emits
-// is written to tell them apart. A warning only: an unverified price still bills,
-// and a kernel that won't start because a maintenance job is overdue is worse than
-// the problem it reports.
-function warnOnStalePricingCheck(kernel: Kernel): void {
-  const freshness = evaluatePricingCheckFreshness(
-    getPricingCheckRecord(),
-    new Date(),
-  );
-  if (freshness.level === "ok") return; // verified and complete — nothing to say
-  kernel.log.log("warn", "system", freshness.message, {
-    metadata: {
-      level: freshness.level,
-      ...(freshness.ageDays !== undefined
-        ? { ageDays: freshness.ageDays }
-        : {}),
-      ...(freshness.missingColumns
-        ? { missingColumns: freshness.missingColumns }
-        : {}),
-    },
-  });
 }

@@ -10,7 +10,7 @@ type ResidentDocument = NonNullable<PromptOpts["residentDocuments"]>[number];
 
 const RESIDENT_DOCUMENTS_HEADING = "## Resident documents";
 
-// Format the Tier-2 working set (docs/document-store-plan.md §5) as a prompt section,
+// Format the Tier-2 working set (docs/archive/document-store-plan.md §5) as a prompt section,
 // mirroring the ## Active Skills framing. Returns "" when there are no resident docs.
 // The content is fed as SOURCE (not rendered — §12), one fenced block per document.
 // Shared with agent-loop/chat.ts so the system-prompt path (composePrompt) and the

@@ -60,6 +60,14 @@ export const OPEN_FILES: readonly string[] = [
   "scripts/test-shard.ts",
   "scripts/test-shard_test.ts",
   "scripts/test-timings.json",
+  // Behind deno.json's browser:* and cache:report tasks, which the export
+  // already ships. They import only open code.
+  "scripts/browser-support.ts",
+  "scripts/browser-support_test.ts",
+  "scripts/cache-composition-report.ts",
+  // A runnable LSP agent client: the recipe for driving `opentide lsp`.
+  "examples/lsp-agent-client.ts",
+  "examples/lsp-agent-client_test.ts",
   // `deno task db:generate` reads it.
   "drizzle.config.ts",
   // The one backend test that lives outside a layer folder. Everything else in

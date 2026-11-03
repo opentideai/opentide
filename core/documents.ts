@@ -845,7 +845,7 @@ export class DocumentStore {
     return { ok: true, data: { id, pinned: true } };
   }
 
-  // Generic backlink writer (docs/document-store-plan.md §8). Phase 2 uses it for the
+  // Generic backlink writer (docs/archive/document-store-plan.md §8). Phase 2 uses it for the
   // Tier-1 @-mention path (ref_type=message, role=mention); Phase 3 reuses it for
   // changeset/ledger/log refs. Records the exact version cited so provenance resolves
   // to fixed bytes (D2). Append-only — the right primitive for backlinks where a target

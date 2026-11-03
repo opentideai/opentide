@@ -1,5 +1,5 @@
 // @layer core — the mechanical tool-schema adapter (multi-model harness,
-// docs/multi-model-harness-plan.md §4 "The seam", Stage 2 Slice 1).
+// docs/archive/multi-model-harness-plan.md §4 "The seam", Stage 2 Slice 1).
 //
 // Maps our CustomToolDef (core/tools/definitions.ts) onto the two shapes a
 // provider needs: the NeutralTool contract (core/model-provider.ts, driven by

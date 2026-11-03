@@ -6,7 +6,7 @@ import {
   type TargetRouteResults,
 } from "./route-parity.ts";
 
-// Slice 4.4 (docs/production-output-hardening-plan.md → Milestone 4, Phase 8):
+// Slice 4.4 (docs/archive/production-output-hardening-plan.md → Milestone 4, Phase 8):
 // compareTargetParity is pure and never throws — given the per-route observations
 // each target smoke gate retained, it returns the FIRST cross-target mismatch
 // (naming the route, the field, and both target values) or null when every target

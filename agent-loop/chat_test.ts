@@ -38,6 +38,7 @@ import {
   setRecommendedModels,
 } from "../core/config.ts";
 import { TEST_TMP_DIR } from "../core/test-home_test.ts";
+import { withTestModelPrices } from "../core/test-model-prices.ts";
 
 Deno.test("buildUserContentBlocks surfaces image attachments as visual context", () => {
   const blocks = buildUserContentBlocks("What is happening on screen?", [{
@@ -738,80 +739,81 @@ function usageEvent(over: Partial<TurnUsage>): TurnUsage {
   };
 }
 
-Deno.test("runTurn emits model_request_usage before final turn_usage and records it", async () => {
-  const db = await Database.create({ driver: "pglite" });
-  const kernel = new Kernel(db, { composition: testStoreComposition() });
-  const session = await kernel.sessions.createSession("Usage Session");
-  const usage = usageEvent({
-    inputTokens: 100,
-    outputTokens: 20,
-    cacheCreationInputTokens: 30,
-    cacheReadInputTokens: 40,
-  });
-  const { internals } = localTurnHarness(kernel, [[
-    { type: "model_request_usage", usage },
-    { type: "turn_usage", usage },
-    { type: "text_delta", text: "done" },
-    { type: "message_complete", stopReason: "end_turn" },
-  ]]);
-
-  try {
-    internals.currentSessionId = session.id;
-    const events: ChatEvent[] = [];
-    const result = await internals.runTurn({
-      ...baseTurnOpts("hello"),
-      onEvent: (event) => events.push(event),
+Deno.test("runTurn emits model_request_usage before final turn_usage and records it", () =>
+  withTestModelPrices(async () => {
+    const db = await Database.create({ driver: "pglite" });
+    const kernel = new Kernel(db, { composition: testStoreComposition() });
+    const session = await kernel.sessions.createSession("Usage Session");
+    const usage = usageEvent({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheCreationInputTokens: 30,
+      cacheReadInputTokens: 40,
     });
+    const { internals } = localTurnHarness(kernel, [[
+      { type: "model_request_usage", usage },
+      { type: "turn_usage", usage },
+      { type: "text_delta", text: "done" },
+      { type: "message_complete", stopReason: "end_turn" },
+    ]]);
 
-    const requestIndex = events.findIndex((e) =>
-      e.type === "model_request_usage"
-    );
-    const turnIndex = events.findIndex((e) => e.type === "turn_usage");
-    assert(requestIndex >= 0);
-    assert(turnIndex > requestIndex);
+    try {
+      internals.currentSessionId = session.id;
+      const events: ChatEvent[] = [];
+      const result = await internals.runTurn({
+        ...baseTurnOpts("hello"),
+        onEvent: (event) => events.push(event),
+      });
 
-    const requestUsage = events[requestIndex]!.usage;
-    assert(requestUsage);
-    assertEquals(requestUsage.turnId, result.turnId);
-    assertEquals(requestUsage.sessionId, session.id);
-    assertEquals(requestUsage.inputTokens, 100);
-    assertEquals(requestUsage.outputTokens, 20);
-    assertEquals(requestUsage.cacheCreationInputTokens, 30);
-    assertEquals(requestUsage.cacheReadInputTokens, 40);
-    assertEquals(requestUsage.toolCallsCount, 0);
-    assert(requestUsage.costUsd > 0);
+      const requestIndex = events.findIndex((e) =>
+        e.type === "model_request_usage"
+      );
+      const turnIndex = events.findIndex((e) => e.type === "turn_usage");
+      assert(requestIndex >= 0);
+      assert(turnIndex > requestIndex);
 
-    const turnUsage = events[turnIndex]!.usage;
-    assert(turnUsage);
-    assertEquals(turnUsage.turnId, result.turnId);
-    assertEquals(turnUsage.inputTokens, 100);
-    assertEquals(turnUsage.outputTokens, 20);
-    assertEquals(turnUsage.cacheCreationInputTokens, 30);
-    assertEquals(turnUsage.cacheReadInputTokens, 40);
-    assert(turnUsage.costUsd > 0);
-    assertEquals(
-      (await kernel.sessions.getTurnUsage(result.turnId))?.inputTokens,
-      100,
-    );
-    const modelUsage = await kernel.sessions.getModelUsagesForTurn(
-      result.turnId,
-    );
-    assertEquals(modelUsage.length, 1);
-    assertEquals(modelUsage[0]!.sessionId, session.id);
-    assertEquals(modelUsage[0]!.provider, "anthropic");
-    assertEquals(modelUsage[0]!.model, TURN_MODEL);
-    assertEquals(modelUsage[0]!.role, "agent");
-    assertEquals(modelUsage[0]!.caller, "chat_turn");
-    assertEquals(modelUsage[0]!.inputTokens, 100);
-    assertEquals(modelUsage[0]!.outputTokens, 20);
-    assertEquals(modelUsage[0]!.cacheCreationInputTokens, 30);
-    assertEquals(modelUsage[0]!.cacheReadInputTokens, 40);
-    assert(modelUsage[0]!.costUsd !== null);
-    assertEquals(modelUsage[0]!.pricingStatus, "priced");
-  } finally {
-    await db.close();
-  }
-});
+      const requestUsage = events[requestIndex]!.usage;
+      assert(requestUsage);
+      assertEquals(requestUsage.turnId, result.turnId);
+      assertEquals(requestUsage.sessionId, session.id);
+      assertEquals(requestUsage.inputTokens, 100);
+      assertEquals(requestUsage.outputTokens, 20);
+      assertEquals(requestUsage.cacheCreationInputTokens, 30);
+      assertEquals(requestUsage.cacheReadInputTokens, 40);
+      assertEquals(requestUsage.toolCallsCount, 0);
+      assert(requestUsage.costUsd > 0);
+
+      const turnUsage = events[turnIndex]!.usage;
+      assert(turnUsage);
+      assertEquals(turnUsage.turnId, result.turnId);
+      assertEquals(turnUsage.inputTokens, 100);
+      assertEquals(turnUsage.outputTokens, 20);
+      assertEquals(turnUsage.cacheCreationInputTokens, 30);
+      assertEquals(turnUsage.cacheReadInputTokens, 40);
+      assert(turnUsage.costUsd > 0);
+      assertEquals(
+        (await kernel.sessions.getTurnUsage(result.turnId))?.inputTokens,
+        100,
+      );
+      const modelUsage = await kernel.sessions.getModelUsagesForTurn(
+        result.turnId,
+      );
+      assertEquals(modelUsage.length, 1);
+      assertEquals(modelUsage[0]!.sessionId, session.id);
+      assertEquals(modelUsage[0]!.provider, "anthropic");
+      assertEquals(modelUsage[0]!.model, TURN_MODEL);
+      assertEquals(modelUsage[0]!.role, "agent");
+      assertEquals(modelUsage[0]!.caller, "chat_turn");
+      assertEquals(modelUsage[0]!.inputTokens, 100);
+      assertEquals(modelUsage[0]!.outputTokens, 20);
+      assertEquals(modelUsage[0]!.cacheCreationInputTokens, 30);
+      assertEquals(modelUsage[0]!.cacheReadInputTokens, 40);
+      assert(modelUsage[0]!.costUsd !== null);
+      assertEquals(modelUsage[0]!.pricingStatus, "priced");
+    } finally {
+      await db.close();
+    }
+  }));
 
 Deno.test("runTurn records model usage with provider observed from provider events", async () => {
   const db = await Database.create({ driver: "pglite" });
@@ -1197,7 +1199,7 @@ function encodeBase64Utf8(text: string): string {
   return btoa(binary);
 }
 
-// --- Phase 2: document context tiers (docs/document-store-plan.md §5, §7) ---
+// --- Phase 2: document context tiers (docs/archive/document-store-plan.md §5, §7) ---
 
 // A brain that frames its base prompt through the real composePrompt seam, so the
 // getPromptOpts → composePrompt → residentDocuments path is exercised end-to-end

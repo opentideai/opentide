@@ -47,10 +47,6 @@ function usageRecord(input: RecordModelUsageInput): ModelUsageRecord {
     toolCallsCount: input.toolCallsCount ?? 0,
     costUsd: null,
     pricingStatus: "unpriced",
-    pricingProvider: null,
-    pricingModel: null,
-    pricingVerifiedAt: null,
-    pricingSource: null,
     metadata: input.metadata ?? {},
   };
 }
@@ -124,14 +120,13 @@ Deno.test("callUtilityModel records accounting metadata when supplied", async ()
   });
   try {
     const out = await callUtilityModel({
-      user: "price me",
+      user: "summarize",
       model: "gpt-unpriced-for-test",
       maxTokens: 8,
       accounting: {
-        role: "pricing",
-        caller: "pricing_research",
+        role: "utility",
+        caller: "session_summary",
         sessionId: "s1",
-        metadata: { sourceUrl: "https://example.test/pricing" },
       },
     });
 
@@ -139,8 +134,8 @@ Deno.test("callUtilityModel records accounting metadata when supplied", async ()
     assertEquals(seen.length, 1);
     assertEquals(seen[0]!.provider, "openai");
     assertEquals(seen[0]!.model, "gpt-unpriced-for-test");
-    assertEquals(seen[0]!.role, "pricing");
-    assertEquals(seen[0]!.caller, "pricing_research");
+    assertEquals(seen[0]!.role, "utility");
+    assertEquals(seen[0]!.caller, "session_summary");
     assertEquals(seen[0]!.sessionId, "s1");
   } finally {
     restoreRecorder();
@@ -166,7 +161,7 @@ Deno.test("callUtilityModel prefers per-call recorder over global recorder", asy
   });
   try {
     const out = await callUtilityModel({
-      user: "price me",
+      user: "summarize",
       model: "gpt-unpriced-for-test",
       maxTokens: 8,
       accounting: {

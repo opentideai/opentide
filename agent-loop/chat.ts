@@ -1145,7 +1145,7 @@ export class ChatOrchestrator implements ChatRuntime {
     };
   }
 
-  // The session's Tier-2 working set as prompt-ready blocks (docs/document-store-plan.md
+  // The session's Tier-2 working set as prompt-ready blocks (docs/archive/document-store-plan.md
   // §5): each pinned doc's head content + the exact version hash cited. Feeds both the
   // system-prompt path (getPromptOpts → composePrompt) and the per-turn user-message
   // path (withLocalConversationContext), so a doc pinned mid-session reaches the model
@@ -2344,7 +2344,6 @@ export class ChatOrchestrator implements ChatRuntime {
         outputTokens: accOutputTokens,
         cacheCreationInputTokens: accCacheCreationTokens,
         cacheReadInputTokens: accCacheReadTokens,
-        asOf: turnEndedAt,
       });
       const turnUsage: TurnUsage = {
         turnId,

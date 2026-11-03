@@ -14,7 +14,7 @@ import {
   verifyDependencyLock,
 } from "./production-lock.ts";
 
-// Milestone 6, Slice 6.1 (docs/production-output-hardening-plan.md): the
+// Milestone 6, Slice 6.1 (docs/archive/production-output-hardening-plan.md): the
 // dependency_lock gate proves a committed deno.lock is FROZEN-valid for the
 // exported app's exact dependency graph, validated OFFLINE. These tests exercise
 // the gate in isolation — a passing lock (generated to match the graph), a

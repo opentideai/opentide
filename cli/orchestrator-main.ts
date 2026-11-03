@@ -15,7 +15,6 @@
 // the bound port and still exits cleanly on SIGTERM.
 
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import {
   defaultSpawn,
   ProjectSupervisor,
@@ -33,20 +32,14 @@ import { getOrchestratorArgs } from "./assembly.ts";
 // does — not a core config value).
 const ORCHESTRATOR_UI_DIST_ENV = "ORCHESTRATOR_UI_DIST";
 
-// The repo's built IDE output (adapter-static; ide/svelte.config.js), resolved off
-// this module's URL so it works regardless of cwd. The default --ui-dist when
-// neither the flag nor the env override is given.
-const DEFAULT_UI_DIST = fileURLToPath(new URL("../ide/build", import.meta.url));
-
 // Resolve the built-IDE bundle dir threaded into every child (--ui-dist, §7):
-// flag → ORCHESTRATOR_UI_DIST env → the repo's ide/build. Returns null when the
-// resolved dir does not exist, so children fall back to their own dev server
-// rather than the orchestrator crashing on boot.
+// flag → ORCHESTRATOR_UI_DIST env. There is no default: the IDE is Tide's, and
+// open code doesn't guess where Tide built it. Returns null when neither is
+// given or the dir does not exist, so children fall back to their own dev
+// server rather than the orchestrator crashing on boot.
 export function resolveUiDist(flagValue: string | null): string | null {
-  const candidate = flagValue ??
-    Deno.env.get(ORCHESTRATOR_UI_DIST_ENV) ??
-    DEFAULT_UI_DIST;
-  return existsSync(candidate) ? candidate : null;
+  const candidate = flagValue ?? Deno.env.get(ORCHESTRATOR_UI_DIST_ENV);
+  return candidate && existsSync(candidate) ? candidate : null;
 }
 
 // A live orchestrator: the wired supervisor, the bound dashboard server, the uiDist

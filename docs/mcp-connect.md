@@ -982,9 +982,9 @@ versions are in play — don't conflate them:
 | --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- | -------------------- |
 | **MCP protocol version**                                        | the wire spec itself                                    | negotiated by the SDK at `connect()`          | the MCP spec / SDK   |
 | **Server version** (`MCP_SERVER_VERSION`, = `OPENTIDE_VERSION`) | the OpenTide **build**                                  | handshake `serverInfo` (`opentide` / version) | the OpenTide release |
-| **Tool-surface version** (`MCP_SURFACE_VERSION`, `6.4.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
+| **Tool-surface version** (`MCP_SURFACE_VERSION`, `8.0.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
 
-The surface can be at `6.x` while the build is at `0.x` — versioning it
+The surface can be at `7.x` while the build is at `0.x` — versioning it
 separately is what lets a pinned integration survive server churn.
 
 ### Reading the surface version and fingerprint
@@ -998,8 +998,8 @@ Every `tools/list` response carries a metadata block under the
   "tools": [/* … 121 tools … */],
   "_meta": {
     "opentide/surface": {
-      "version": "7.2.2", // MCP_SURFACE_VERSION — the contract handle you pin
-      "fingerprint": "f8d7-ea949677", // structural hash of names + input schemas
+      "version": "8.0.0", // MCP_SURFACE_VERSION — the contract handle you pin
+      "fingerprint": "f8cd-3eca76e1", // structural hash of names + input schemas
       "toolCount": 121
     }
   }
@@ -1029,8 +1029,8 @@ Every `tools/list` response carries a metadata block under the
 ### Compatibility guarantee for pinned clients
 
 Within a major version, the surface only ever **grows** (new verbs) or gains
-**advisory** metadata. A tool present at `6.0.0` is present, by the same name
-and with a compatible input schema, for the entire `6.x` line. No verb is
+**advisory** metadata. A tool present at `7.0.0` is present, by the same name
+and with a compatible input schema, for the entire `7.x` line. No verb is
 removed or renamed without first going through a deprecation window and a major
 bump.
 
@@ -1063,4 +1063,4 @@ gives pinned integrations at least one full major version to migrate. Removal
 itself is a MAJOR bump and is called out in the release notes for that version.
 
 **Nothing is deprecated today.** The deprecation registry (`MCP_DEPRECATIONS` in
-`mcp/mcp-projection.ts`) is empty. The surface is `6.4.0`, 110 verbs.
+`mcp/mcp-projection.ts`) is empty. The surface is `8.0.0`, 121 tools.

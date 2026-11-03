@@ -11,22 +11,6 @@ import type { ProviderModelPricing } from "./usage.ts";
 
 export const MODELS_DEV_API_URL = "https://models.dev/api.json";
 export const MODELS_DEV_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-export const MODELS_DEV_SOURCE_URL = MODELS_DEV_API_URL;
-
-// How long a models.dev snapshot is allowed to go on pricing anything. The
-// catalog carries no expiry of its own — every row is only "true as of the
-// fetch" — so an unbounded row silently outlives whatever it recorded. That is
-// the general shape of the Sonnet 5 intro-price bug (see usage.ts
-// shadowedByBuiltInAnthropicTier); the tier-collision fix only covers models the
-// built-in table already knows. Rows therefore get an effectiveThrough of
-// fetch-date + this window, past which rowActiveFor drops them and pricing
-// degrades to the built-in table — or to explicitly unpriced, for providers that
-// have no built-in rows.
-//
-// Much longer than MODELS_DEV_CACHE_TTL_MS on purpose: that TTL decides when to
-// re-fetch on a healthy machine, this one bounds a catalog nobody has refreshed
-// in a month.
-export const MODELS_DEV_ROW_MAX_AGE_DAYS = 30;
 
 export interface ModelsDevModel {
   id: string;
@@ -209,13 +193,10 @@ export function parseModelsDevCatalog(
   return { providers, fetchedAt: stableFetchedAt };
 }
 
-// The cache file is megabytes of JSON and this sits on the hot path of EVERY price
-// lookup: the kernel injects getProviderModelPricingRows as its overlay provider
-// and that provider is re-read per lookup by design, so a write lands immediately.
-// Re-parsing per lookup cost ~40ms of pure CPU and made the Slice-10 overlay audit
-// (one resolver call per row) take minutes. Memoized on the file's identity —
-// mtime + size — so writeModelsDevCache invalidates it for free and an in-memory
-// copy can never outlive a write.
+// The cache file is megabytes of JSON and this sits on the hot path of every
+// price lookup (core/model-prices.ts). Re-parsing per lookup cost ~40ms of CPU.
+// Memoized on the file's identity — mtime + size — so writeModelsDevCache
+// invalidates it for free and an in-memory copy can never outlive a write.
 let modelsDevCacheMemo:
   | { key: string; catalog: ModelsDevCatalog | null }
   | undefined;
@@ -299,17 +280,6 @@ export function modelFromModelsDev(
   return catalog?.providers[provider]?.models[model];
 }
 
-// The last calendar day (UTC) a snapshot taken at `fetchedAt` may price usage
-// for. Undefined when the timestamp is unreadable — a catalog we cannot date is
-// a catalog we cannot bound, so the caller drops it entirely rather than emit
-// another immortal row.
-function modelsDevRowEffectiveThrough(fetchedAt: string): string | undefined {
-  const ms = Date.parse(fetchedAt);
-  if (Number.isNaN(ms)) return undefined;
-  const expiry = ms + MODELS_DEV_ROW_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
-  return new Date(expiry).toISOString().slice(0, 10);
-}
-
 // Same story as the cache parse: 6,000+ row objects rebuilt per price lookup.
 // Keyed on catalog IDENTITY, which the memo above makes stable for an unchanged
 // file; a caller passing its own catalog object gets its own memo slot.
@@ -322,8 +292,6 @@ export function pricingRowsFromModelsDev(
 ): ProviderModelPricing[] {
   if (!catalog) return [];
   if (pricingRowsMemo?.catalog === catalog) return pricingRowsMemo.rows;
-  const effectiveThrough = modelsDevRowEffectiveThrough(catalog.fetchedAt);
-  if (!effectiveThrough) return [];
   const rows: ProviderModelPricing[] = [];
   for (const provider of Object.values(catalog.providers)) {
     for (const model of Object.values(provider.models)) {
@@ -339,12 +307,6 @@ export function pricingRowsFromModelsDev(
         output,
         ...(cacheCreation !== undefined ? { cacheCreation } : {}),
         ...(cacheRead !== undefined ? { cacheRead } : {}),
-        unit: "MTok",
-        currency: "USD",
-        source: "models_dev",
-        sourceUrl: MODELS_DEV_SOURCE_URL,
-        effectiveThrough,
-        ...(model.lastUpdated ? { verifiedAt: model.lastUpdated } : {}),
       });
     }
   }

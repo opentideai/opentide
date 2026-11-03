@@ -1,4 +1,4 @@
-// Layer manifest for the OpenTide layered separation (docs/opentide-separation-plan.md).
+// Layer manifest for the OpenTide layered separation (docs/archive/opentide-separation-plan.md).
 //
 // The one hard rule (§3.2): a module in layer N must not import from any layer > N.
 // This file is the single source of truth for which layer each backend module

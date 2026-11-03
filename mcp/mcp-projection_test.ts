@@ -1390,7 +1390,7 @@ Deno.test({
 // v7.2.0 adds get_changeset, link_session_message and the MCP-only
 // approve_changeset (118 -> 121), and optional fields on create/amend, the
 // document verbs and git_commit. Additive, so MINOR.
-const PINNED_SURFACE_FINGERPRINT = "f8d7-ea949677";
+const PINNED_SURFACE_FINGERPRINT = "f8cd-3eca76e1";
 const PINNED_SURFACE_TOOL_COUNT = 121;
 
 Deno.test({

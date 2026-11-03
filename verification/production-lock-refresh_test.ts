@@ -24,7 +24,7 @@ import {
   refreshNodeLock,
 } from "./production-lock-refresh.ts";
 
-// Milestone 7, Slice 7.1 (docs/production-output-hardening-plan.md): the lock
+// Milestone 7, Slice 7.1 (docs/archive/production-output-hardening-plan.md): the lock
 // REFRESH producer is the network-allowed mirror image of the 6.x lock gates. It
 // regenerates the committed deno.lock / package-lock.json OUTSIDE the build path
 // and proves each is frozen-valid. These tests exercise the producer↔gate

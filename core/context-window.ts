@@ -1,4 +1,4 @@
-// Per-model context-window source (Slice 1, docs/context-hardening-plan.md).
+// Per-model context-window source (Slice 1, docs/archive/context-hardening-plan.md).
 //
 // The client-side loop caps OUTPUT tokens (LOCAL_LOOP_MAX_OUTPUT_TOKENS) but has
 // no INPUT-side ceiling: the retained NeutralMessage[] grows until the model's own
@@ -21,7 +21,7 @@ import {
   resolvedWorkingBudget,
   TOKEN_ESTIMATE_CHARS_PER_TOKEN,
 } from "./config.ts";
-import { type PricingTier, resolvePricingTier } from "./usage.ts";
+import { type ClaudeTier, resolveClaudeTier } from "./claude-tiers.ts";
 import type {
   NeutralContentBlock,
   NeutralMessage,
@@ -39,26 +39,26 @@ function isOpenAiModel(model: string): boolean {
   return OPENAI_MODEL_ID.test(model);
 }
 
-// The coarse family a model id belongs to for window sizing. Reuses the pricing
-// tier resolver (usage.ts) as the Anthropic signal — every Claude tier carries a
+// The coarse family a model id belongs to for window sizing. Uses the Claude
+// tier resolver (claude-tiers.ts) as the Anthropic signal — every Claude tier carries a
 // 200K window — so the two can't disagree about which ids are Claude. A pre-tier
 // (deep-legacy) Claude id resolves to no tier and falls through to the
 // conservative default rather than being assumed 200K, which fails safe.
 function contextWindowFamily(model: string): ContextWindowFamily | undefined {
-  if (resolvePricingTier(model) !== undefined) return "anthropic";
+  if (resolveClaudeTier(model) !== undefined) return "anthropic";
   if (isOpenAiModel(model)) return "openai";
   return undefined;
 }
 
 // Curated per-tier context windows for Anthropic models — the accurate floor when
 // live discovery hasn't populated a per-model window (first run, offline, or a
-// provider whose /v1/models omits it). Keyed by the SAME pricing tier resolver used
-// for cost, so windows are maintained alongside pricing and the two can't disagree
-// about which id is which tier. Tiers omitted here fall through to the coarser
+// provider whose /v1/models omits it). Keyed by the Claude tier resolver, like
+// MAX_OUTPUT_BY_TIER, so the two can't disagree about which id is which tier.
+// Tiers omitted here fall through to the coarser
 // CONTEXT_WINDOW_BY_FAMILY (200K) — a deliberate fail-safe: when unsure, under-report
 // so the loop compacts early rather than hitting a hard context-length error. A live
 // discovered window always wins over this map.
-const CONTEXT_WINDOW_BY_TIER: Partial<Record<PricingTier, number>> = {
+const CONTEXT_WINDOW_BY_TIER: Partial<Record<ClaudeTier, number>> = {
   fable51: 1_000_000,
   fable5: 1_000_000,
   opus5: 1_000_000,
@@ -78,7 +78,7 @@ const OPENAI_WINDOW_BY_ID: ReadonlyArray<readonly [RegExp, number]> = [
 
 // The curated window for a model, or undefined to fall through to the family table.
 function curatedContextWindow(model: string): number | undefined {
-  const tier = resolvePricingTier(model);
+  const tier = resolveClaudeTier(model);
   if (tier) {
     const byTier = CONTEXT_WINDOW_BY_TIER[tier.tier];
     if (byTier !== undefined) return byTier;
@@ -105,12 +105,11 @@ export function contextWindowFor(model: string): number {
 }
 
 // Curated per-tier OUTPUT ceilings — what each Anthropic tier actually accepts as
-// max output tokens, keyed by the SAME pricing tier resolver used for cost and for
-// CONTEXT_WINDOW_BY_TIER, so the three can't disagree about which id is which tier.
+// max output tokens, keyed by the same resolver as CONTEXT_WINDOW_BY_TIER.
 // A tier omitted here falls through to MAX_OUTPUT_TOKENS_DEFAULT: an unknown model
 // keeps the conservative pre-hardening ceiling rather than being handed a limit its
 // API may reject.
-const MAX_OUTPUT_BY_TIER: Partial<Record<PricingTier, number>> = {
+const MAX_OUTPUT_BY_TIER: Partial<Record<ClaudeTier, number>> = {
   fable51: 128_000,
   fable5: 128_000,
   opus5: 128_000,
@@ -128,7 +127,7 @@ const OPENAI_MAX_OUTPUT_BY_ID: ReadonlyArray<readonly [RegExp, number]> = [
 
 // The model's own output ceiling, or undefined to fall through to the default.
 function curatedMaxOutputTokens(model: string): number | undefined {
-  const tier = resolvePricingTier(model);
+  const tier = resolveClaudeTier(model);
   if (tier) {
     const byTier = MAX_OUTPUT_BY_TIER[tier.tier];
     if (byTier !== undefined) return byTier;

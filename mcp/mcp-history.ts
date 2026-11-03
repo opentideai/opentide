@@ -43,7 +43,6 @@ const USAGE_ROLES: readonly ModelUsageRole[] = [
   "import",
   "utility",
   "verification",
-  "pricing",
 ];
 
 const str = (description: string) => ({ type: "string", description });

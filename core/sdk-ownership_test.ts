@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 
-// Stage 5/7 acceptance gate (docs/multi-model-harness-plan.md §5): the Anthropic
+// Stage 5/7 acceptance gate (docs/archive/multi-model-harness-plan.md §5): the Anthropic
 // SDK is owned in exactly one layer — providers/. No shipped module under core/,
 // agent/, or agent-loop/ may import "@anthropic-ai/sdk" (value OR type); they reach
 // the model through the neutral seams (core/model-provider.ts, core/utility-model.ts).

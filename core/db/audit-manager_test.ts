@@ -9,6 +9,8 @@ import {
 } from "./schema/index.ts";
 import type { AuditResult } from "../types.ts";
 import { SessionManager } from "../sessions.ts";
+import { setModelPriceRowsForTest } from "../model-prices.ts";
+import { withTestModelPrices } from "../test-model-prices.ts";
 
 const SESSIONS_DDL = `CREATE TABLE IF NOT EXISTS _genie_sessions (
   id TEXT PRIMARY KEY,
@@ -91,10 +93,6 @@ const MODEL_USAGE_DDL = `CREATE TABLE IF NOT EXISTS _genie_model_usage (
   tool_calls_count INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL,
   pricing_status TEXT NOT NULL,
-  pricing_provider TEXT,
-  pricing_model TEXT,
-  pricing_verified_at TEXT,
-  pricing_source TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 )`;
 
@@ -169,8 +167,6 @@ async function seedAuditModelUsage(
     toolCallsCount: 0,
     costUsd: 0.0028,
     pricingStatus: "priced",
-    pricingProvider: "anthropic",
-    pricingModel: "claude-haiku-4-5-20251001",
     metadata: {},
   });
 }
@@ -222,64 +218,71 @@ Deno.test("store records cost in _genie_turn_usage", async () => {
 });
 
 Deno.test("store infers unpriced status when metadata cost lacks status", async () => {
-  await withAuditManager(async (mgr, conn) => {
-    const result = makeResult({
-      metadata: {
-        model: "gpt-5",
-        inputTokens: 1000,
-        outputTokens: 500,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        durationMs: 5000,
-        costUsd: 0.02205,
-      },
+  // No prices at all, so the real models.dev cache can't price gpt-5.
+  setModelPriceRowsForTest([]);
+  try {
+    await withAuditManager(async (mgr, conn) => {
+      const result = makeResult({
+        metadata: {
+          model: "gpt-5",
+          inputTokens: 1000,
+          outputTokens: 500,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          durationMs: 5000,
+          costUsd: 0.02205,
+        },
+      });
+      await mgr.store(result);
+
+      const fetched = mgr.get(result.id);
+      assertExists(fetched);
+      assertEquals(fetched.metadata.pricingStatus, "unpriced");
+      assertEquals(fetched.metadata.costUsd, 0);
+
+      const usageRows = await conn.drizzle
+        .select()
+        .from(genieTurnUsageTable)
+        .where(eq(genieTurnUsageTable.turnId, `audit-${result.id}`));
+      assertEquals(usageRows[0]?.costUsd, 0);
+
+      const mgr2 = new AuditManager(conn.drizzle);
+      await mgr2.loadFromDb();
+      assertEquals(mgr2.get(result.id)?.metadata.pricingStatus, "unpriced");
+      assertEquals(mgr2.get(result.id)?.metadata.costUsd, 0);
     });
-    await mgr.store(result);
-
-    const fetched = mgr.get(result.id);
-    assertExists(fetched);
-    assertEquals(fetched.metadata.pricingStatus, "unpriced");
-    assertEquals(fetched.metadata.costUsd, 0);
-
-    const usageRows = await conn.drizzle
-      .select()
-      .from(genieTurnUsageTable)
-      .where(eq(genieTurnUsageTable.turnId, `audit-${result.id}`));
-    assertEquals(usageRows[0]?.costUsd, 0);
-
-    const mgr2 = new AuditManager(conn.drizzle);
-    await mgr2.loadFromDb();
-    assertEquals(mgr2.get(result.id)?.metadata.pricingStatus, "unpriced");
-    assertEquals(mgr2.get(result.id)?.metadata.costUsd, 0);
-  });
+  } finally {
+    setModelPriceRowsForTest(undefined);
+  }
 });
 
-Deno.test("store computes pricing status and cost when metadata cost is absent", async () => {
-  await withAuditManager(async (mgr, conn) => {
-    const result = makeResult({
-      metadata: {
-        model: "claude-haiku-4-5-20251001",
-        inputTokens: 1000,
-        outputTokens: 500,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-        durationMs: 5000,
-      },
+Deno.test("store computes pricing status and cost when metadata cost is absent", () =>
+  withTestModelPrices(async () => {
+    await withAuditManager(async (mgr, conn) => {
+      const result = makeResult({
+        metadata: {
+          model: "claude-haiku-4-5-20251001",
+          inputTokens: 1000,
+          outputTokens: 500,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+          durationMs: 5000,
+        },
+      });
+      await mgr.store(result);
+
+      const fetched = mgr.get(result.id);
+      assertExists(fetched);
+      assertEquals(fetched.metadata.pricingStatus, "priced");
+      assertEquals(Number(fetched.metadata.costUsd) > 0, true);
+
+      const usageRows = await conn.drizzle
+        .select()
+        .from(genieTurnUsageTable)
+        .where(eq(genieTurnUsageTable.turnId, `audit-${result.id}`));
+      assertEquals(Number(usageRows[0]?.costUsd) > 0, true);
     });
-    await mgr.store(result);
-
-    const fetched = mgr.get(result.id);
-    assertExists(fetched);
-    assertEquals(fetched.metadata.pricingStatus, "priced");
-    assertEquals(Number(fetched.metadata.costUsd) > 0, true);
-
-    const usageRows = await conn.drizzle
-      .select()
-      .from(genieTurnUsageTable)
-      .where(eq(genieTurnUsageTable.turnId, `audit-${result.id}`));
-    assertEquals(Number(usageRows[0]?.costUsd) > 0, true);
-  });
-});
+  }));
 
 Deno.test("store does not infer pricing from metadata cost alone", async () => {
   await withAuditManager(async (mgr) => {
@@ -486,23 +489,24 @@ Deno.test("error status results do not create usage rows", async () => {
   });
 });
 
-Deno.test("audit costs appear in project-wide usage aggregation", async () => {
-  await withAuditManager(async (mgr, conn) => {
-    const result = makeResult();
-    await mgr.store(result);
+Deno.test("audit costs appear in project-wide usage aggregation", () =>
+  withTestModelPrices(async () => {
+    await withAuditManager(async (mgr, conn) => {
+      const result = makeResult();
+      await mgr.store(result);
 
-    const [row] = await conn.drizzle
-      .select({
-        totalCost: genieTurnUsageTable.costUsd,
-        totalInput: genieTurnUsageTable.inputTokens,
-      })
-      .from(genieTurnUsageTable);
+      const [row] = await conn.drizzle
+        .select({
+          totalCost: genieTurnUsageTable.costUsd,
+          totalInput: genieTurnUsageTable.inputTokens,
+        })
+        .from(genieTurnUsageTable);
 
-    assertExists(row);
-    assertEquals(row.totalInput, 1000);
-    assertEquals(row.totalCost! > 0, true);
-  });
-});
+      assertExists(row);
+      assertEquals(row.totalInput, 1000);
+      assertEquals(row.totalCost! > 0, true);
+    });
+  }));
 
 Deno.test("audit model usage de-dupes legacy audit turn usage in project aggregation", async () => {
   await withAuditManager(async (mgr, conn) => {

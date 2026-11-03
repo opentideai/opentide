@@ -1204,7 +1204,7 @@ function getTypeDiagnostics(
  * Summary shape shared by the app-structure `list_*` verbs that used to dump
  * full source (`list_handlers`, `list_functions`, `list_types`). Source was the
  * single largest slice of tool-result bytes and a tool result is re-read on
- * every request for the rest of the turn — see docs/agent-cost-reduction.md
+ * every request for the rest of the turn — see docs/archive/agent-cost-reduction.md
  * §4.2. The list form carries only what the agent needs to pick what to open
  * (module, purpose) plus `sourceLines` to judge how big it is; `name` returns
  * the one full entry. One helper so the three can't drift apart.
@@ -1884,7 +1884,7 @@ export const MODIFICATION_TOOLS = new Set([
   // it delegates (define_template / upload_text_asset) and is listed here so the
   // changeset gate and rationale injection apply at the outer call too.
   "edit_entity_text",
-  // Document authoring (docs/document-store-plan.md §6). A mutation, but also
+  // Document authoring (docs/archive/document-store-plan.md §6). A mutation, but also
   // changeset-exempt (below) — authoring a session/global-scoped doc must not
   // require an active changeset, like set_config/set_env.
   "document_write",
@@ -5671,7 +5671,7 @@ async function dispatchToolCall(
       return { ok: true, data: { change: record, file: edit } };
     }
 
-    // --- Document store (docs/document-store-plan.md §6) ---
+    // --- Document store (docs/archive/document-store-plan.md §6) ---
 
     case "document_query": {
       const action = input.action as string;
@@ -5892,7 +5892,7 @@ async function dispatchToolCall(
       const changes = await kernel.changelog.listByChangeset(changeset.id);
       const includeSnapshots = input.include_snapshots === true;
       const vt = verificationTools(kernel.composition);
-      // Cost fix (docs/agent-cost-reduction.md §4.3): the raw `changeset` object is
+      // Cost fix (docs/archive/agent-cost-reduction.md §4.3): the raw `changeset` object is
       // NOT returned. It duplicated `context` — the whole plan, every attestation and
       // every evidence blob as JSON, alongside a rendering of the same thing. Unlike
       // the mutation verbs this result carries no `_changeset` side channel, so there
@@ -6356,7 +6356,7 @@ async function dispatchToolCall(
             }`,
           );
         }
-        // Cost fix (docs/agent-cost-reduction.md §4.3): the agent gets back what it
+        // Cost fix (docs/archive/agent-cost-reduction.md §4.3): the agent gets back what it
         // needs to decide the next move — the run's id, its per-claim verdicts, and
         // whether the gate would now pass — not the whole changeset with every prior
         // run's evidence re-serialized. The IDE keeps the full object on `_changeset`
@@ -6408,7 +6408,7 @@ async function dispatchToolCall(
           stepId,
           stepStatus,
         );
-        // Cost fix (docs/agent-cost-reduction.md §4.3): acknowledging a step status
+        // Cost fix (docs/archive/agent-cost-reduction.md §4.3): acknowledging a step status
         // flip does NOT need the whole changeset back — 374 calls averaging 26 KB was
         // 17.2% of all tool-result bytes. The agent needs to know which step is next;
         // it does not need the acceptance criteria, attestations or evidence re-read
@@ -6530,7 +6530,7 @@ async function dispatchToolCall(
         );
         // Landing commits it, last, so the commit holds the completed record.
         const commit = await commitLandedChangeset(kernel, cs);
-        // Cost fix (docs/agent-cost-reduction.md §4.3): success is an acknowledgement.
+        // Cost fix (docs/archive/agent-cost-reduction.md §4.3): success is an acknowledgement.
         // The aggregate is the FATTEST changeset payload there is — it folds in the
         // turn's tool calls, reasoning and usage — and the agent has no use for any of
         // it once the gate has passed. The failure branch above keeps `data: readiness`
@@ -7604,7 +7604,7 @@ async function dispatchToolCall(
       };
     }
 
-    // --- Tasks (docs/opentide-task-forks-plan.md) ---
+    // --- Tasks (docs/archive/opentide-task-forks-plan.md) ---
 
     case "start_task":
       return await startTask(kernel, {
@@ -8670,7 +8670,7 @@ function renameVacateKey(
 // GET /api/codebase and the framework overlay reflect on-disk edits. Best-effort:
 // a failed re-index is logged, never thrown (the file write already succeeded).
 // Returns the fresh summary, or null when there is no project or indexing failed.
-// A full re-index is acceptable for v1 (docs/project-import-strategy.md Slice 5).
+// A full re-index is acceptable for v1 (docs/archive/project-import-strategy.md Slice 5).
 export async function reindexSourceBackedCodebase(
   kernel: Kernel,
 ): Promise<CodebaseGraphSummary | null> {

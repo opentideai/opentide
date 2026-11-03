@@ -176,10 +176,6 @@ function rowToModelUsage(r: ModelUsageRow): ModelUsageRecord {
     toolCallsCount: r.toolCallsCount,
     costUsd: r.costUsd,
     pricingStatus: r.pricingStatus as ModelUsageRecord["pricingStatus"],
-    pricingProvider: r.pricingProvider as ModelUsageProvider | null,
-    pricingModel: r.pricingModel,
-    pricingVerifiedAt: r.pricingVerifiedAt,
-    pricingSource: r.pricingSource as ModelUsageRecord["pricingSource"],
     metadata: (r.metadata ?? {}) as Record<string, unknown>,
   };
 }
@@ -206,7 +202,6 @@ export function modelUsageFromInput(
     outputTokens: input.usage.outputTokens,
     cacheCreationInputTokens: input.usage.cacheCreationInputTokens,
     cacheReadInputTokens: input.usage.cacheReadInputTokens,
-    asOf: new Date(endedAt),
     // 1h cache writes bill at 2x input, not the table's 5m 1.25x.
     ...(input.usage.cacheTtl !== undefined
       ? { cacheTtl: input.usage.cacheTtl }
@@ -232,10 +227,6 @@ export function modelUsageFromInput(
     toolCallsCount: input.toolCallsCount ?? 0,
     costUsd: cost.costUsd,
     pricingStatus: cost.pricingStatus,
-    pricingProvider: cost.pricing?.provider ?? null,
-    pricingModel: cost.pricing?.model ?? null,
-    pricingVerifiedAt: cost.pricing?.verifiedAt ?? null,
-    pricingSource: cost.pricing?.source ?? null,
     metadata: input.metadata ?? {},
   };
 }
@@ -313,11 +304,7 @@ function aggregateCombinedUsageRows(
       filtered.reduce((sum, row) => sum + row.toolCallsCount, 0),
     ),
     totalCostUsd: filtered.reduce(
-      (sum, row) =>
-        row.pricingStatus === "unpriced" ||
-          row.pricingStatus === "estimated_legacy"
-          ? sum
-          : sum + row.costUsd,
+      (sum, row) => row.pricingStatus === "unpriced" ? sum : sum + row.costUsd,
       filteredModelRows.reduce(
         (sum, row) =>
           row.pricingStatus === "priced" ? sum + (row.costUsd ?? 0) : sum,
@@ -350,8 +337,6 @@ function turnUsageFromModelUsageRows(
         row.pricingStatus === "unpriced" || row.costUsd === null
       )
       ? "unpriced"
-      : sorted.some((row) => row.pricingStatus === "estimated_legacy")
-      ? "estimated_legacy"
       : "priced";
   return {
     turnId: first.turnId!,
@@ -1266,19 +1251,9 @@ class DbSessionStore implements SessionStore {
         "tool_calls_count" integer DEFAULT 0 NOT NULL,
         "cost_usd" real,
         "pricing_status" text NOT NULL,
-        "pricing_provider" text,
-        "pricing_model" text,
-        "pricing_verified_at" text,
-        "pricing_source" text,
         "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL
       )
     `);
-    // Added after the table shipped (Slice 8): existing ledgers get the column
-    // back-filled as NULL, which reads as "written before provenance was
-    // recorded" rather than as a known source.
-    await this.db.execute(
-      sql`ALTER TABLE "_genie_model_usage" ADD COLUMN IF NOT EXISTS "pricing_source" text`,
-    );
     await this.db.execute(sql`
       CREATE INDEX IF NOT EXISTS "model_usage_session_id_idx"
       ON "_genie_model_usage" ("session_id")
@@ -1899,10 +1874,6 @@ class DbSessionStore implements SessionStore {
       toolCallsCount: record.toolCallsCount,
       costUsd: record.costUsd,
       pricingStatus: record.pricingStatus,
-      pricingProvider: record.pricingProvider,
-      pricingModel: record.pricingModel,
-      pricingVerifiedAt: record.pricingVerifiedAt,
-      pricingSource: record.pricingSource,
       metadata: record.metadata,
     };
     const rows = await this.db

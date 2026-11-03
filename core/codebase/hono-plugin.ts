@@ -35,7 +35,7 @@ import type { TsJsSourceFile } from "./source-index.ts";
  * graph (higher `suggestedPriority` than `generic-tsjs`), so its route-level
  * nodes win merges while the rest of the project stays browsable source.
  *
- * Scope guards (see docs/project-import-strategy.md, Slice 4):
+ * Scope guards (see docs/archive/project-import-strategy.md, Slice 4):
  * - Graph nodes only — never touches kernel.routes / kernel.handlers.
  * - Best-effort, in-file analysis. Cross-file sub-apps are flagged as
  *   diagnostics, not silently dropped.

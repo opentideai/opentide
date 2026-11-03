@@ -1,5 +1,5 @@
 // @layer core — a deterministic, network-free ModelProvider for tests
-// (multi-model harness, docs/multi-model-harness-plan.md Stage 1).
+// (multi-model harness, docs/archive/multi-model-harness-plan.md Stage 1).
 //
 // FakeModelProvider replays a scripted sequence of turns: each turn is a
 // ProviderEvent[] that streamTurn yields in order. It records every TurnRequest

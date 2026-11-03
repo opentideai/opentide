@@ -13,7 +13,7 @@
 // NOTE what this order is NOT: specificity. `:` sorts below `n`, so `/items/:id` wins
 // over `/items/new` however they were registered. That is the export's long-standing
 // behaviour and changing it is a separate decision with its own blast radius — see
-// docs/framework-free-handler-abi-plan.md. What this buys is that both hosts get it
+// docs/archive/framework-free-handler-abi-plan.md. What this buys is that both hosts get it
 // wrong in the same way, which is the difference between a bug a user can see in the
 // preview and one that only appears after they ship.
 

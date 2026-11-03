@@ -2,7 +2,7 @@
 // NOTHING (nothing sits below L0). Consumed by both the Deno backend (relative
 // `.ts` import, re-exported from core/auth.ts for continuity) and the SvelteKit
 // IDE (`$shared` alias), so the REST/WS boundary is a real shared type, not a
-// hand-duplicated one on each side. See docs/opentide-separation-plan.md §5/§6
+// hand-duplicated one on each side. See docs/archive/opentide-separation-plan.md §5/§6
 // and docs/open-core-strategy.md (shared/ is OPEN).
 
 // The serialized user identity. This is the on-the-wire shape `/api/auth/me`

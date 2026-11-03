@@ -121,7 +121,11 @@ export async function serveHeadless(
       );
     }
   } else {
-    console.log("Launcher ready. Open http://localhost:5173/projects");
+    // With a built IDE, serve hosts it; otherwise the Vite dev server does.
+    const launcherUrl = uiDist
+      ? `http://localhost:${port}/projects`
+      : "http://localhost:5173/projects";
+    console.log(`Launcher ready. Open ${launcherUrl}`);
   }
 
   let shutdownPromise: Promise<void> | null = null;

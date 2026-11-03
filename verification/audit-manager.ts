@@ -78,10 +78,6 @@ export class AuditManager implements AuditStore {
     );
     const cacheRead = Number(result.metadata?.cacheReadInputTokens ?? 0);
     const durationMs = Number(result.metadata?.durationMs ?? 0);
-    // Re-cost against the audit's own recorded time (completion, else start), not
-    // report-time now: this store path can run on backfilled/replayed results, and
-    // a date-boxed intro price must be applied by when the usage happened.
-    const usageAt = new Date(result.completedAt ?? result.startedAt);
     const metadataCostUsd = result.metadata?.costUsd;
     const hasMetadataCost = typeof metadataCostUsd === "number" &&
       Number.isFinite(metadataCostUsd);
@@ -100,7 +96,6 @@ export class AuditManager implements AuditStore {
         outputTokens,
         cacheCreationInputTokens: cacheCreation,
         cacheReadInputTokens: cacheRead,
-        asOf: usageAt,
       })
       : null;
     const pricingStatus = result.metadata?.pricingStatus === "priced" ||

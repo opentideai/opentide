@@ -20,7 +20,7 @@ import {
 import type { ProductionTargetKey } from "../shared/production-build.ts";
 import { projectProductionBuildReport } from "./production-build-report.ts";
 
-// Slice 5.1 (docs/production-output-hardening-plan.md → Milestone 5):
+// Slice 5.1 (docs/archive/production-output-hardening-plan.md → Milestone 5):
 // projectProductionBuildReport is pure, total, never-throws, and deterministic —
 // it PROJECTS the orchestrator's ProductionBuildReport onto the serializable,
 // target-grouped ProductionBuildResult wire DTO without re-running a gate or

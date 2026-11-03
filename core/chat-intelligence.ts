@@ -28,7 +28,7 @@ export interface PromptOpts {
   customInstructions?: string;
   skills?: Array<{ name: string; prompt: string }>;
   secrets?: Array<{ key: string; description?: string; status: string }>;
-  // Tier-2 working-set documents (docs/document-store-plan.md §5): the docs the agent
+  // Tier-2 working-set documents (docs/archive/document-store-plan.md §5): the docs the agent
   // pinned via document_pin, injected into every turn's system prompt until unpinned.
   // Each carries the exact version hash cited so the prompt reflects a resolvable head.
   residentDocuments?: Array<{
@@ -105,7 +105,7 @@ export interface ChatIntelligence {
   // pin is returned verbatim; the DEFAULT_MODEL_ID sentinel delegates to the role's
   // catalog-driven recommendation. Returns `undefined` when the role is UNCONFIGURED
   // (keyless / empty catalog / no recommendation) — the loop must surface that state,
-  // never fabricate a model (D9, docs/multi-model-harness-plan.md).
+  // never fabricate a model (D9, docs/archive/multi-model-harness-plan.md).
   resolveModel(configured: string): string | undefined;
   // Tuned NL decision: is this message approving the pending changeset now?
   isApprovalMessage(

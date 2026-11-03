@@ -48,7 +48,6 @@ import {
   setVersion,
 } from "./build.ts";
 import { errorMessage, stripModelContextContent } from "./util.ts";
-import { PRICING_VERIFIED_AS_OF } from "./usage.ts";
 import { type RouteSchema, sortRoutes } from "./types.ts";
 import { DOCUMENT_SCOPES, type DocumentScope } from "./documents.ts";
 import { generateOpenAPISpec } from "./openapi.ts";
@@ -81,11 +80,6 @@ import {
   runtimeDependencies,
   runtimeDependencyNote,
 } from "./runtime-dependencies.ts";
-import {
-  getPricingStatusReport,
-  type PricingRefreshReport,
-  refreshPricingReport,
-} from "./pricing-workflow.ts";
 
 // RouteSchema for GET /api/codebase. The control server is plain Hono and does
 // not wire schemas into an OpenAPI surface (unlike user-app routes), so this
@@ -906,7 +900,6 @@ import {
   getOpenaiBaseUrl,
   getPlanningModel,
   getPlanningModelForRequest,
-  getPricingProvenance,
   getProviderKey,
   getProviderKeyStatuses,
   getRecommendedModels,
@@ -1059,7 +1052,7 @@ const SESSION_LIST_VERIFICATION_CHANGESET_LIMIT = 500;
 // app configs, package add/remove) are operator-initiated — a human acting
 // directly through the IDE, outside any agent turn. They do NOT flow through
 // dispatchTool's authorOrigin choke point, so each stamps its origin here as
-// "human". Shared, never mutated. See docs/stream-a-data-foundation-plan.md.
+// "human". Shared, never mutated. See docs/archive/stream-a-data-foundation-plan.md.
 // A human write from the IDE. A project has one writer at a time, so when a
 // changeset is open the write belongs to it.
 async function operatorChangeContext(kernel: Kernel): Promise<ChangeContext> {
@@ -4667,97 +4660,11 @@ export async function startControlServer(
     agentModel: getAgentModel(),
     codeModel: getUtilityModel(),
     defaults: { agent: DEFAULT_AGENT_MODEL, code: DEFAULT_CODE_MODEL },
-    // How fresh the prices in `available[].pricing` are. PRICING_VERIFIED_AS_OF is
-    // the GLOBAL fallback (seed tiers never agent-verified). Per-tier provenance
-    // from the D10 verification gate (agent-written tiers) is preferred where present
-    // — pricingProvenance carries sourceUrl/extractedAt/model/agreement per tier.
-    pricingVerifiedAsOf: PRICING_VERIFIED_AS_OF,
-    pricingProvenance: getPricingProvenance(),
   });
-
-  function logPricingRefreshReport(report: PricingRefreshReport): void {
-    if (!ctx) return;
-    const counts = {
-      updated: report.updated.length,
-      unchanged: report.unchanged.length,
-      missing: report.missing.length,
-      rejected: report.rejected.length,
-      errors: report.errors.length,
-      written: report.written.length,
-    };
-    const level = counts.errors > 0
-      ? "error"
-      : counts.missing > 0 || counts.rejected > 0
-      ? "warn"
-      : "info";
-    const provider = report.provider ? ` for ${report.provider}` : "";
-    const message = counts.errors > 0
-      ? `Pricing check failed${provider}: ${counts.errors} error${
-        counts.errors === 1 ? "" : "s"
-      }`
-      : `Pricing check completed${provider}: ${counts.updated} update${
-        counts.updated === 1 ? "" : "s"
-      }, ${counts.unchanged} unchanged, ${counts.missing} missing, ${counts.rejected} rejected`;
-    ctx.kernel.log.log(level, "system", message, {
-      metadata: {
-        pricing: true,
-        reportOnly: !report.apply,
-        applied: report.applied,
-        provider: report.provider ?? null,
-        sourceUrl: report.sourceUrl ?? null,
-        extractedAt: report.extractedAt ?? null,
-        counts,
-        errors: report.errors,
-        missing: report.missing,
-        rejected: report.rejected,
-        updated: report.updated,
-        unchanged: report.unchanged,
-        written: report.written,
-        gate: report.gate ?? null,
-      },
-    });
-  }
 
   // The model roles (Feature G).
   app.get("/api/config/models", (c) => {
     return c.json(modelsResponseBody());
-  });
-
-  app.get("/api/config/models/pricing/status", (c) => {
-    return c.json(getPricingStatusReport());
-  });
-
-  app.post("/api/config/models/pricing/refresh", async (c) => {
-    const body: {
-      provider?: ModelProviderId;
-      apply?: boolean;
-    } = await c.req.json<{
-      provider?: ModelProviderId;
-      apply?: boolean;
-    }>().catch(() => ({}));
-    const provider = body.provider;
-    if (provider !== undefined && !isKnownProviderId(provider)) {
-      return c.json({ error: "Invalid provider" }, 400);
-    }
-    try {
-      const result = await refreshPricingReport({
-        provider,
-        apply: body.apply === true,
-        recordUsage: ctx
-          ? (input) => ctx!.kernel.sessions.recordModelUsage(input)
-          : undefined,
-      });
-      if (!result.ok) {
-        return c.json({ error: result.error.message }, 500);
-      }
-      logPricingRefreshReport(result.data);
-      return c.json(result.data);
-    } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : String(err) },
-        500,
-      );
-    }
   });
 
   app.put("/api/config/models", async (c) => {
@@ -4926,7 +4833,7 @@ export async function startControlServer(
     return c.json(entitySurvivalRate(observations, Date.now()));
   });
 
-  // --- Task forks (docs/opentide-task-forks-plan.md) ---
+  // --- Task forks (docs/archive/opentide-task-forks-plan.md) ---
   // Contracts in the TASKS_*_ROUTE_SCHEMA consts above.
 
   function taskFailure(

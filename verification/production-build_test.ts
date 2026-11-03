@@ -58,7 +58,7 @@ import {
   PACKAGE_LOCKFILE_PATH,
 } from "./production-node-lock.ts";
 
-// Milestone 2 (docs/production-output-hardening-plan.md): the production-build
+// Milestone 2 (docs/archive/production-output-hardening-plan.md): the production-build
 // orchestrator assembles the pure gates into one ordered pipeline (manifest →
 // determinism → type check → app smoke) and wires the process-dependent gates —
 // the export type check and the app-start / `/_health` (+ `/openapi.json`) smoke,
@@ -1923,7 +1923,7 @@ Deno.test({
   },
 });
 
-// Stage 7 (docs/framework-free-handler-abi-plan.md): a fetch-ABI handler has to
+// Stage 7 (docs/archive/framework-free-handler-abi-plan.md): a fetch-ABI handler has to
 // survive the export end to end — type check, then a real boot with a real HTTP
 // probe. The Deno gate is the cheap one of the three (no npm ci, no deno compile),
 // and the ABI is target-independent, so it carries this on its own.
@@ -1951,7 +1951,7 @@ Deno.test({
   },
 });
 
-// Stage 8 (docs/framework-free-handler-abi-plan.md): the Node target needs no code
+// Stage 8 (docs/archive/framework-free-handler-abi-plan.md): the Node target needs no code
 // change for the fetch ABI, but "the ABI is target-independent" was an assumption,
 // not a measurement. It isn't obviously true: under Node the Request the adapter
 // closure passes to the handler is built by @hono/node-server from an

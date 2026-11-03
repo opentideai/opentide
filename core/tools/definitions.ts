@@ -2702,7 +2702,7 @@ export const CUSTOM_TOOLS: CustomToolDef[] = [
     },
   },
 
-  // --- Document store (docs/document-store-plan.md §6). Role-split verbs so each
+  // --- Document store (docs/archive/document-store-plan.md §6). Role-split verbs so each
   // classifies cleanly against the name-keyed allowlists (never one mixed
   // read+write verb): document_query (read), document_write (mutation),
   // document_pin (working-set membership). ---

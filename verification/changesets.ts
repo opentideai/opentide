@@ -962,7 +962,6 @@ async function computeTokenUsage(
   let unpricedCalls = 0;
   let unpricedInputTokens = 0;
   let unpricedOutputTokens = 0;
-  let sawEstimatedLegacy = false;
   let sawUsage = false;
   const countedModelUsageIds = new Set<string>();
 
@@ -983,7 +982,6 @@ async function computeTokenUsage(
     totalCacheReadInputTokens += row.cacheReadInputTokens ?? 0;
     totalOutputTokens += row.outputTokens ?? 0;
     if (row.pricingStatus === "priced") totalCostUsd += row.costUsd ?? 0;
-    if (row.pricingStatus === "estimated_legacy") sawEstimatedLegacy = true;
     if (row.pricingStatus === "unpriced" || row.costUsd === null) {
       unpricedCalls += 1;
       unpricedInputTokens += row.inputTokens ?? 0;
@@ -1009,12 +1007,11 @@ async function computeTokenUsage(
       totalCacheCreationInputTokens += usage.cacheCreationInputTokens ?? 0;
       totalCacheReadInputTokens += usage.cacheReadInputTokens ?? 0;
       totalOutputTokens += usage.outputTokens ?? 0;
-      if (usage.pricingStatus === "estimated_legacy") sawEstimatedLegacy = true;
       if (unpriced) {
         unpricedCalls += 1;
         unpricedInputTokens += usage.inputTokens ?? 0;
         unpricedOutputTokens += usage.outputTokens ?? 0;
-      } else if (usage.pricingStatus !== "estimated_legacy") {
+      } else {
         totalCostUsd += usage.costUsd ?? 0;
       }
       totalDurationMs += usage.durationMs ?? 0;
@@ -1035,11 +1032,7 @@ async function computeTokenUsage(
       cacheReadInputTokens: totalCacheReadInputTokens,
       outputTokens: totalOutputTokens,
       costUsd: totalCostUsd,
-      pricingStatus: unpricedCalls > 0
-        ? "unpriced"
-        : sawEstimatedLegacy
-        ? "estimated_legacy"
-        : "priced",
+      pricingStatus: unpricedCalls > 0 ? "unpriced" : "priced",
       unpricedCalls,
       unpricedInputTokens,
       unpricedOutputTokens,

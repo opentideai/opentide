@@ -77,7 +77,7 @@ export function stripChangeSnapshots(change: ChangeRecord): ChangeRecord {
 }
 
 // The plan detail this rendering is the SOLE carrier of. `get_changeset_context`
-// no longer returns the raw `changeset` object (docs/agent-cost-reduction.md §4.3 —
+// no longer returns the raw `changeset` object (docs/archive/agent-cost-reduction.md §4.3 —
 // it was the whole plan, every attestation, every evidence blob, re-sent on every
 // call), so anything an agent needs to act on has to survive here: step ids (to call
 // update_changeset_step), criterion ids + priority (to know what must be proven),

@@ -1,6 +1,6 @@
 // @layer core — source-backed file editing (project-import Slice 5).
 //
-// A source-backed project (docs/project-import-strategy.md) runs on its native
+// A source-backed project (docs/archive/project-import-strategy.md) runs on its native
 // runtime; its code lives in on-disk files, not kernel registry entities. This
 // module is the confined, whole-file mechanism that edits those files through the
 // same changeset/changelog rails registry entities use:

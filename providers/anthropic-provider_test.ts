@@ -28,6 +28,7 @@ import type {
   ProviderEvent,
   TurnRequest,
 } from "../core/model-provider.ts";
+import { withTestModelPrices } from "../core/test-model-prices.ts";
 
 // --- Low-level V4 stream-part builders (what a real provider's doStream emits) ---
 
@@ -452,31 +453,32 @@ Deno.test("mapFinishReason covers the stop table incl. null", () => {
   assertEquals(mapFinishReason(null), "end_turn");
 });
 
-Deno.test("toTurnUsage maps neutral usage incl. cache token details", () => {
-  const usage = {
-    inputTokens: 200,
-    inputTokenDetails: {
-      noCacheTokens: 150,
-      cacheReadTokens: 30,
-      cacheWriteTokens: 20,
-    },
-    outputTokens: 80,
-    outputTokenDetails: { textTokens: 80, reasoningTokens: 0 },
-    totalTokens: 280,
-  };
-  const started = new Date("2026-08-02T00:00:00.000Z");
-  const ended = new Date("2026-08-02T00:00:01.500Z");
-  const turn = toTurnUsage(usage, "claude-opus-4-8", started, ended);
-  assertEquals(turn.inputTokens, 150);
-  assertEquals(turn.outputTokens, 80);
-  assertEquals(turn.cacheReadInputTokens, 30);
-  assertEquals(turn.cacheCreationInputTokens, 20);
-  assertEquals(turn.durationMs, 1500);
-  assertEquals(turn.model, "claude-opus-4-8");
-  assertEquals(turn.toolCallsCount, 0);
-  assertEquals(turn.pricingStatus, "priced");
-  assert(turn.costUsd >= 0);
-});
+Deno.test("toTurnUsage maps neutral usage incl. cache token details", () =>
+  withTestModelPrices(() => {
+    const usage = {
+      inputTokens: 200,
+      inputTokenDetails: {
+        noCacheTokens: 150,
+        cacheReadTokens: 30,
+        cacheWriteTokens: 20,
+      },
+      outputTokens: 80,
+      outputTokenDetails: { textTokens: 80, reasoningTokens: 0 },
+      totalTokens: 280,
+    };
+    const started = new Date("2026-08-02T00:00:00.000Z");
+    const ended = new Date("2026-08-02T00:00:01.500Z");
+    const turn = toTurnUsage(usage, "claude-opus-4-8", started, ended);
+    assertEquals(turn.inputTokens, 150);
+    assertEquals(turn.outputTokens, 80);
+    assertEquals(turn.cacheReadInputTokens, 30);
+    assertEquals(turn.cacheCreationInputTokens, 20);
+    assertEquals(turn.durationMs, 1500);
+    assertEquals(turn.model, "claude-opus-4-8");
+    assertEquals(turn.toolCallsCount, 0);
+    assertEquals(turn.pricingStatus, "priced");
+    assert(turn.costUsd >= 0);
+  }));
 
 Deno.test("extractReasoning bundles assistant reasoning parts, [] when none", () => {
   const withReasoning = extractReasoning(

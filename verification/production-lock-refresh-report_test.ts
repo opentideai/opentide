@@ -7,7 +7,7 @@ import {
 import type { RefreshTargetKey } from "../shared/lock-refresh.ts";
 import { projectLockRefreshReport } from "./production-lock-refresh-report.ts";
 
-// Slice 7.2 (docs/production-output-hardening-plan.md → Milestone 7):
+// Slice 7.2 (docs/archive/production-output-hardening-plan.md → Milestone 7):
 // projectLockRefreshReport is pure, total, never-throws, and deterministic — it
 // PROJECTS the producer's LockRefreshReport onto the serializable LockRefreshResult
 // wire DTO without regenerating a lock or re-hashing a byte. The producer↔gate

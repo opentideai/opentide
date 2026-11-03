@@ -2,22 +2,13 @@ import { readEnv } from "./process-env.ts";
 import { userConfigDir } from "./user-config-dir.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  getModelPricing,
-  getProviderModelPricing,
-  isDeepLegacyModel,
-  type ModelPricing,
-  type PricingTier,
-  type ProviderModelPricing,
-} from "./usage.ts";
+import type { ModelPricing } from "./usage.ts";
+import { isDeepLegacyModel } from "./claude-tiers.ts";
+import { modelPrice } from "./model-prices.ts";
 import type {
-  PricingProvenance,
   ProportionalVerification,
   ReadinessEnforcement,
 } from "./types.ts";
-// Type-only (erased at runtime), so this does not create an import cycle:
-// pricing-refresh.ts is pure and imports nothing from config.ts.
-import type { PricingCheckRecord } from "./pricing-refresh.ts";
 import type { ChangeCategory } from "../shared/changelog.ts";
 import type { TelemetryConsent } from "../shared/telemetry.ts";
 import {
@@ -25,7 +16,6 @@ import {
   modelFromModelsDev,
   type ModelsDevCatalog,
   type ModelsDevProvider,
-  pricingRowsFromModelsDev,
   readModelsDevCatalogCache,
   refreshModelsDevCatalog,
 } from "./models-dev.ts";
@@ -56,7 +46,7 @@ export function getTideDir(): string {
 export const DEFAULT_MODEL_ID = "default";
 
 // The transport a model is served over — the disambiguator the multi-model harness
-// (docs/multi-model-harness-plan.md, Stage 2) hands to the AI SDK factory
+// (docs/archive/multi-model-harness-plan.md, Stage 2) hands to the AI SDK factory
 // (`anthropic(id)` vs `openai(id)`). It is a provider TAG, not an id namespace: ids
 // stay canonical (bare `claude-*` / `gpt-*`, which don't collide), so this field —
 // not a slash prefix — is what picks the backing provider. Mirrors the
@@ -114,7 +104,7 @@ export interface ModelOption {
 
 type ModelMetadata = Omit<ModelOption, "id">;
 
-// D7 (docs/multi-model-harness-plan.md §3): the model catalog is fully dynamic —
+// D7 (docs/archive/multi-model-harness-plan.md §3): the model catalog is fully dynamic —
 // zero hardcoded model ids. "Discover, don't enumerate." The catalog is whatever
 // per-provider discovery (refreshAvailableModels over PROVIDER_DESCRIPTORS) found and
 // cached; the only built-in entry is DEFAULT_MODEL_ID, injected by getAvailableModels.
@@ -149,7 +139,7 @@ export function getCachedContextWindow(modelId: ModelId): number | undefined {
 export const DEFAULT_AGENT_MODEL: ModelId = DEFAULT_MODEL_ID;
 export const DEFAULT_CODE_MODEL: ModelId = DEFAULT_MODEL_ID;
 
-// D9 (docs/multi-model-harness-plan.md §3): a role that can't be satisfied from the
+// D9 (docs/archive/multi-model-harness-plan.md §3): a role that can't be satisfied from the
 // discovered catalog (keyless / empty / target family absent / no recommendation yet)
 // resolves to `undefined` — an explicit UNCONFIGURED state, never a hardcoded id. This
 // is the user-facing message every caller surfaces instead of shipping a dead id to a
@@ -204,8 +194,6 @@ export const REGISTRY_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // (npm registry cache): the two concerns are unrelated even though both are 24h.
 export const MODELS_REFRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Max output tokens for the (non-streaming) audit-agent model call.
-export const AUDIT_AGENT_MAX_TOKENS = 4096;
 // Default number of independent adversarial refutation attempts per claim.
 export const REFUTE_ATTEMPTS_DEFAULT = 2;
 // Max changed entities whose source is inlined into a refutation prompt. The
@@ -272,7 +260,7 @@ export function appPreviewUrl(port: number, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.7";
+export const OPENTIDE_VERSION = "0.1.8";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
@@ -325,7 +313,7 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // folded into remove_entity({type,key}); analyze_complexity + find_dead_code folded
 // into analyze({kind}). All folded verbs stay reachable via direct dispatch. Two
 // new verbs added (remove_entity, analyze). Removed/renamed surface verbs = MAJOR.
-// 5.1.0 (document store Phase 1, docs/document-store-plan.md §6): added three
+// 5.1.0 (document store Phase 1, docs/archive/document-store-plan.md §6): added three
 // role-split document-store verbs — document_query (read), document_write
 // (additive mutation, changeset-exempt), document_pin (working-set membership).
 // Purely additive (surface 97 → 100), so MINOR.
@@ -350,7 +338,7 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // v5.7.0 (codebase import classifier): index_codebase gained optional
 // classification mode so imports can request shaping for Tide code. Optional input
 // schema expansion, backward-compatible -> MINOR.
-// v5.8.0 (agent cost reduction, docs/agent-cost-reduction.md §4.2): list_handlers,
+// v5.8.0 (agent cost reduction, docs/archive/agent-cost-reduction.md §4.2): list_handlers,
 // list_functions and list_types gained an optional `name` and now return a summary
 // (name/module/purpose/line count) instead of every entity's full source. The input
 // contract is only relaxed — an existing caller that passes nothing still gets a
@@ -465,7 +453,9 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // connection's session. PATCH: an annotation.
 // v7.2.2: list_current_project_pins is read-only, and listing or searching
 // sessions no longer starts the connection's session. PATCH: an annotation.
-export const MCP_SURFACE_VERSION = "7.2.2";
+// v8.0.0: record_model_usage's role no longer takes "pricing"; the pricing
+// research agent is gone. MAJOR: an enum value removed.
+export const MCP_SURFACE_VERSION = "8.0.0";
 
 // The per-call `_meta` key for turn context:
 // {turn_id, turn_index?, tool_call_id?, user_message?}.
@@ -557,7 +547,7 @@ export const PROJECT_TAKEOVER_POLL_MS = 100;
 export const MCP_BRIDGE_RECONNECT_DELAY_MS = 1_000;
 export const MCP_BRIDGE_RECONNECT_ATTEMPTS = 3;
 
-// Task forks (docs/opentide-task-forks-plan.md). Each open task is a full copy of
+// Task forks (docs/archive/opentide-task-forks-plan.md). Each open task is a full copy of
 // the project with its own serve process, so this caps disk and processes, not
 // just bookkeeping.
 export const MAX_OPEN_TASKS = 4;
@@ -594,7 +584,7 @@ export const MCP_SESSION_TAG_BYTES = 2;
 // killed without closing its connection.
 export const MCP_SESSION_IDLE_MS = 30 * 60_000;
 
-// --- Document store (docs/document-store-plan.md §3-§5) ---
+// --- Document store (docs/archive/document-store-plan.md §3-§5) ---
 
 // Id prefixes for the document store, mirroring the changeset ("cs") convention
 // (createTimestampedId appends the underscore → doc_<ts>_<rand>, dref_<ts>_<rand>).
@@ -623,7 +613,7 @@ export const DOCUMENT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 // Tier-2 working-set token budget (D3). Pinning past this fails
 // (WORKING_SET_BUDGET_EXCEEDED) and instructs the agent to release something first;
 // enforcement lives in DocumentStore.setPinned and prompt injection in
-// prompt-compose.ts (docs/document-store-plan.md §5, §11).
+// prompt-compose.ts (docs/archive/document-store-plan.md §5, §11).
 export const DOCUMENT_WORKING_SET_MAX_TOKENS = 20000;
 
 // The kernel-wide rough token estimator: ~4 bytes/chars per token. Shared so the
@@ -884,7 +874,7 @@ export const MAX_FILE_CONTENT_BYTES = 128 * 1024;
 // `untrackedCount`) are never capped, so the count stays honest either way.
 // Sized so the worst case stays around 10 KB on the wire — `git_status` was the
 // single largest tool result at 64.9 KB/call before the split (see
-// docs/agent-cost-reduction.md §4.4).
+// docs/archive/agent-cost-reduction.md §4.4).
 export const GIT_STATUS_FILE_LIMIT = 100;
 
 // Response header on GET /api/changelog/turns: how many changes the project
@@ -990,7 +980,7 @@ export const PROJECT_FILE_IGNORED_DIRS: readonly string[] = [
 // `module` (the closest existing kind) rather than adding a ChangeCategory, so the
 // shared/ wire contract and the MCP surface stay stable; a source-backed record is
 // told apart from a registry `module` record by context.sourceBacked === true.
-// See docs/project-import-strategy.md "Slice 5".
+// See docs/archive/project-import-strategy.md "Slice 5".
 export const SOURCE_EDIT_CHANGE_CATEGORY: ChangeCategory = "module";
 
 // --- Source-backed project commands (project import, Slice 6) ---
@@ -1620,7 +1610,7 @@ export const MAX_OUTPUT_TRUNCATED_MESSAGE =
   `${MAX_TURN_CONTINUATIONS} continuation attempts. Ask the agent to continue, ` +
   "or break the change into smaller steps.";
 
-// Context-window hardening (Slice 1, docs/context-hardening-plan.md). The
+// Context-window hardening (Slice 1, docs/archive/context-hardening-plan.md). The
 // per-model context ceiling the input-side budget measures against. No per-model
 // window is enumerated (MODELS is empty, D7), so it is resolved family-first with
 // a conservative default; a live per-model window discovered from the provider's
@@ -1640,7 +1630,7 @@ export const CONTEXT_SAFETY_MARGIN = 4_000;
 // families all carry a 200K window; OpenAI GPT families carry 128K. Keyed by a
 // coarse family (not a model id) so a freshly launched model in a known family is
 // covered without a hand edit — the same "resolve by family, default otherwise"
-// shape pricing uses (resolvePricingTier / DEFAULT_PRICING in usage.ts).
+// shape as resolveClaudeTier (claude-tiers.ts).
 export type ContextWindowFamily = "anthropic" | "openai";
 export const CONTEXT_WINDOW_BY_FAMILY: Record<ContextWindowFamily, number> = {
   anthropic: 200_000,
@@ -1820,30 +1810,6 @@ interface GenieConfig {
   // role is the explicit UNCONFIGURED state (D9), not a hardcoded seed. Updating this
   // flows to every "default" role and never touches an explicit pin (the G5 property).
   recommendedModels?: Partial<Record<ModelRole, string>>;
-  // Config overlay for the pricing table (Stage 2B Slice 1, D10). A per-tier entry
-  // overrides the built-in DEFAULT_PRICING seed in usage.ts WHOLESALE; absent tiers
-  // keep the seed. Reached by usage.ts only through the injected provider seam
-  // (setPricingTableProvider, wired in project-loader.ts) — usage.ts never imports
-  // config.ts. Written by setPricingTier (Slice 2's research agent uses it; the
-  // Slice 3 verification gate guards the write). Empty ⇒ prices identical to today.
-  pricingTable?: Partial<Record<PricingTier, ModelPricing>>;
-  // Exact provider/model pricing rows (model-pricing-accounting-fix-plan Stage B).
-  // These coexist with the legacy Anthropic tier table above: exact rows win for
-  // provider-aware lookups, while absent rows fall back to Anthropic built-ins only
-  // for provider === "anthropic". OpenAI is intentionally unpriced unless a row is
-  // present and verified/manual data has been written.
-  providerPricingTable?: ProviderModelPricing[];
-  // Per-tier provenance for agent-written prices (Stage 2B Slice 3, D10). Written
-  // ATOMICALLY with pricingTable by setVerifiedPricing, so a written price can never
-  // lack its provenance. Replaces the single hand-edited PRICING_VERIFIED_AS_OF for
-  // agent-verified tiers; seed tiers never agent-verified fall back to that global.
-  pricingProvenance?: Partial<Record<PricingTier, PricingProvenance>>;
-  // The last SUCCESSFUL pricing drift-check run (Slice 11, Part A). Deliberately
-  // NOT folded into pricingProvenance above: that records which agent wrote which
-  // PRICE, and a check that finds no drift writes no price — so a clean run would
-  // leave no trace there, which is the exact blind spot this closes. Absent means
-  // the check has never completed here, and startup says so out loud.
-  pricingCheckRun?: PricingCheckRecord;
   kernel?: KernelSettings;
   telemetry?: TelemetrySettings;
 }
@@ -2025,169 +1991,6 @@ export function setOpenaiBaseUrl(url: string): void {
 export function clearOpenaiBaseUrl(): void {
   const config = readConfig();
   delete config.openaiBaseUrl;
-  writeConfig(config);
-}
-
-// The config-side of the pricing overlay (Stage 2B Slice 1, D10). This is the value
-// usage.ts's provider seam reads — wired in project-loader.ts as
-// setPricingTableProvider(getPricingTableOverrides), re-read on each price lookup so
-// a setPricingTier write takes effect immediately. Empty ⇒ every price is the seed.
-export function getPricingTableOverrides(): Partial<
-  Record<PricingTier, ModelPricing>
-> {
-  return readConfig().pricingTable ?? {};
-}
-
-// Writer for one tier's price override (Stage 2B Slice 1). Prefer setVerifiedPricing
-// below in production — it couples the price with its provenance. Kept as the pure
-// price-only writer (used by the Slice 1 test). Same atomic 0o600 write path.
-export function setPricingTier(tier: PricingTier, pricing: ModelPricing): void {
-  const config = readConfig();
-  const table = config.pricingTable ?? {};
-  table[tier] = pricing;
-  config.pricingTable = table;
-  writeConfig(config);
-}
-
-function normalizeProviderModelPricing(
-  value: unknown,
-): ProviderModelPricing | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const row = value as Partial<ProviderModelPricing>;
-  const provider = normalizeProvider(row.provider);
-  const source = ["built_in", "verified", "manual", "provider_metadata"]
-      .includes(row.source ?? "")
-    ? row.source
-    : undefined;
-  const effectiveFrom = typeof row.effectiveFrom === "string"
-    ? row.effectiveFrom
-    : undefined;
-  const effectiveThrough = typeof row.effectiveThrough === "string"
-    ? row.effectiveThrough
-    : undefined;
-  if (
-    provider === undefined ||
-    typeof row.model !== "string" ||
-    row.model.trim() === "" ||
-    typeof row.input !== "number" ||
-    typeof row.output !== "number" ||
-    row.unit !== "MTok" ||
-    row.currency !== "USD" ||
-    source === undefined ||
-    (provider !== "anthropic" && source !== "manual" &&
-      source !== "verified") ||
-    (effectiveFrom !== undefined && !isIsoCalendarDate(effectiveFrom)) ||
-    (effectiveThrough !== undefined && !isIsoCalendarDate(effectiveThrough))
-  ) {
-    return undefined;
-  }
-  return {
-    provider,
-    model: row.model.trim(),
-    input: row.input,
-    output: row.output,
-    ...(typeof row.cacheCreation === "number"
-      ? { cacheCreation: row.cacheCreation }
-      : {}),
-    ...(typeof row.cacheRead === "number" ? { cacheRead: row.cacheRead } : {}),
-    unit: "MTok",
-    currency: "USD",
-    source,
-    ...(typeof row.verifiedAt === "string"
-      ? { verifiedAt: row.verifiedAt }
-      : {}),
-    ...(typeof row.sourceUrl === "string" ? { sourceUrl: row.sourceUrl } : {}),
-    ...(typeof row.notes === "string" ? { notes: row.notes } : {}),
-    ...(effectiveFrom ? { effectiveFrom } : {}),
-    ...(effectiveThrough ? { effectiveThrough } : {}),
-  };
-}
-
-function isIsoCalendarDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-export function getProviderModelPricingOverrides(): ProviderModelPricing[] {
-  return (readConfig().providerPricingTable ?? [])
-    .map(normalizeProviderModelPricing)
-    .filter((row): row is ProviderModelPricing => row !== undefined);
-}
-
-export function getProviderModelPricingRows(): ProviderModelPricing[] {
-  return [
-    ...getProviderModelPricingOverrides(),
-    ...pricingRowsFromModelsDev(
-      readModelsDevCatalogCache(Number.POSITIVE_INFINITY),
-    ),
-  ];
-}
-
-export function setProviderModelPricing(
-  row: ProviderModelPricing,
-  opts: { replaceProviderModel?: boolean } = {},
-): void {
-  const normalized = normalizeProviderModelPricing(row);
-  if (!normalized) {
-    throw new Error("Invalid provider model pricing row.");
-  }
-  const config = readConfig();
-  const existing = (config.providerPricingTable ?? [])
-    .map(normalizeProviderModelPricing)
-    .filter((r): r is ProviderModelPricing => r !== undefined)
-    .filter((r) =>
-      opts.replaceProviderModel
-        ? r.provider !== normalized.provider || r.model !== normalized.model
-        : r.provider !== normalized.provider ||
-          r.model !== normalized.model ||
-          r.effectiveFrom !== normalized.effectiveFrom ||
-          r.effectiveThrough !== normalized.effectiveThrough
-    );
-  config.providerPricingTable = [...existing, normalized];
-  writeConfig(config);
-}
-
-// The last successful drift-check run, or undefined if the check has never
-// completed on this machine. Consumed by the startup freshness warning
-// (project-loader.ts) through evaluatePricingCheckFreshness.
-export function getPricingCheckRecord(): PricingCheckRecord | undefined {
-  return readConfig().pricingCheckRun;
-}
-
-// Written by scripts/refresh-pricing.ts when a run actually compared prices —
-// including a run that FOUND drift. Only a run that could not fetch or parse the
-// docs leaves the record untouched, so staleness means "could not check", never
-// "checked and disliked the answer".
-export function recordPricingCheckRun(record: PricingCheckRecord): void {
-  const config = readConfig();
-  config.pricingCheckRun = record;
-  writeConfig(config);
-}
-
-// Per-tier provenance for agent-written prices (Stage 2B Slice 3). Empty ⇒ no tier
-// has been agent-verified yet (every price is still the seed / a Slice-1 write), so
-// consumers fall back to the global PRICING_VERIFIED_AS_OF.
-export function getPricingProvenance(): Partial<
-  Record<PricingTier, PricingProvenance>
-> {
-  return readConfig().pricingProvenance ?? {};
-}
-
-// The gated write behind D10: a tier's price AND its provenance land together in ONE
-// atomic 0o600 writeConfig, so a written price can NEVER exist without provenance.
-// This is the single production call site reached only through an accepted
-// PricingDecision in apply mode (agent/pricing-research-agent.ts researchAndApply).
-export function setVerifiedPricing(
-  tier: PricingTier,
-  pricing: ModelPricing,
-  provenance: PricingProvenance,
-): void {
-  const config = readConfig();
-  const table = config.pricingTable ?? {};
-  table[tier] = pricing;
-  config.pricingTable = table;
-  const prov = config.pricingProvenance ?? {};
-  prov[tier] = provenance;
-  config.pricingProvenance = prov;
   writeConfig(config);
 }
 
@@ -2466,10 +2269,7 @@ function readModelCache(): ModelCache | null {
             // strip it — the real gap that made providerFor undata-driven). An invalid
             // or absent tag validates to undefined, resolving to DEFAULT_MODEL_PROVIDER.
             provider,
-            // Provider-aware pricing wins over persisted cache pricing. Cached
-            // pricing is trusted only for legacy untagged rows, so a stale OpenAI
-            // cache entry cannot masquerade as priced without an exact provider row.
-            pricing: hydratedModelPricing(m.id, provider, m.pricing),
+            pricing: hydratedModelPricing(m.id, provider),
             // Slice 1: carry the persisted live context window through; validated,
             // so a corrupt value drops to the family table rather than mis-sizing.
             contextWindow: normalizeContextWindow(m.contextWindow),
@@ -2570,72 +2370,22 @@ function normalizeCapabilities(value: unknown): ModelOption["capabilities"] {
   return Object.keys(out).length ? out : undefined;
 }
 
-function providerModelPricingToModelPricing(
-  pricing: ProviderModelPricing,
-): ModelPricing | undefined {
-  return {
-    input: pricing.input,
-    output: pricing.output,
-    cacheCreation: pricing.cacheCreation ?? 0,
-    cacheRead: pricing.cacheRead ?? 0,
-    unit: pricing.unit,
-  };
-}
-
-function modelsDevProviderPricing(
-  provider: ModelProviderId,
-  id: string,
-): ProviderModelPricing | undefined {
-  return pricingRowsFromModelsDev(
-    readModelsDevCatalogCache(Number.POSITIVE_INFINITY),
-  ).find((row) => row.provider === provider && row.model === id);
-}
-
-function normalizeModelPricing(value: unknown): ModelPricing | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const pricing = value as Partial<ModelPricing>;
-  if (
-    typeof pricing.input !== "number" ||
-    typeof pricing.output !== "number" ||
-    typeof pricing.cacheCreation !== "number" ||
-    typeof pricing.cacheRead !== "number"
-  ) {
-    return undefined;
-  }
-  const fast = pricing.fast &&
-      typeof pricing.fast.input === "number" &&
-      typeof pricing.fast.output === "number"
-    ? { input: pricing.fast.input, output: pricing.fast.output }
-    : undefined;
-  return {
-    input: pricing.input,
-    output: pricing.output,
-    cacheCreation: pricing.cacheCreation,
-    cacheRead: pricing.cacheRead,
-    unit: "MTok",
-    ...(fast ? { fast } : {}),
-  };
-}
-
+// The picker's price label for a model: its models.dev price, or undefined
+// (shown "price unavailable"). An untagged legacy id is Anthropic. Prices
+// persisted in models-cache.json are never trusted.
 function hydratedModelPricing(
   id: string,
   provider: ModelProviderId | undefined,
-  cachedPricing?: unknown,
 ): ModelPricing | undefined {
-  if (provider) {
-    const providerPricing = getProviderModelPricing(provider, id);
-    const catalogPricing = modelsDevProviderPricing(provider, id);
-    if (!providerPricing && !catalogPricing) return undefined;
-    if (
-      provider === "anthropic" && providerPricing?.source === "built_in"
-    ) {
-      return getModelPricing(id);
-    }
-    return providerModelPricingToModelPricing(
-      providerPricing ?? catalogPricing!,
-    );
-  }
-  return getModelPricing(id) ?? normalizeModelPricing(cachedPricing);
+  const row = modelPrice(provider ?? DEFAULT_MODEL_PROVIDER, id);
+  if (!row) return undefined;
+  return {
+    input: row.input,
+    output: row.output,
+    cacheCreation: row.cacheCreation ?? 0,
+    cacheRead: row.cacheRead ?? 0,
+    unit: "MTok",
+  };
 }
 
 function catalogEnrichedModel(
@@ -2712,7 +2462,7 @@ function dedupeModels(models: ModelOption[]): ModelOption[] {
       id,
       label: model.label.trim() || id,
       family: model.family ?? modelFamily(id),
-      pricing: hydratedModelPricing(id, model.provider, model.pricing),
+      pricing: hydratedModelPricing(id, model.provider),
       // D8: preserve the provider tag so it survives the cache round-trip and
       // getAvailableModels union — the linchpin that lets providerFor read it.
       provider: model.provider,

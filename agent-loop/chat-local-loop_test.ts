@@ -2,7 +2,7 @@
 // ChatOrchestrator.runTurn / sendMessage with the deterministic, network-free
 // FakeModelProvider and assert the EXACT emitted ChatEvent stream, the tool round-trip
 // through the unchanged dispatchTool, and the approval pause=stop+retain (no rebuild).
-// See docs/multi-model-harness-plan.md §5.
+// See docs/archive/multi-model-harness-plan.md §5.
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { ChatOrchestrator, toNeutralContentBlocks } from "./chat.ts";
 import { inProcessChatBackend } from "./chat-backend.ts";
@@ -3007,7 +3007,7 @@ Deno.test('sendMessage — proportionalVerification "never" restores the approva
   }
 });
 
-// Cost fix (docs/agent-cost-reduction.md §4.1): a changeset mutation returns the whole
+// Cost fix (docs/archive/agent-cost-reduction.md §4.1): a changeset mutation returns the whole
 // changeset twice — once as `data`, once as `_changeset` — plus a `_changesetEvent`
 // routing tag. The IDE needs both side channels; the model needs neither, and the
 // duplicate was 19.5% of every tool-result byte in the measured corpus.

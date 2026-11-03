@@ -130,7 +130,7 @@ export interface HandlerEntry {
   source: string;
   fn: HandlerFn;
   registeredAt: string;
-  // Stable identity (Stream A / A2, docs/stream-a-data-foundation-plan.md §3.2):
+  // Stable identity (Stream A / A2, docs/archive/stream-a-data-foundation-plan.md §3.2):
   // minted once at creation via createTimestampedId("ent"), preserved verbatim
   // across every update, and threaded into each change record's context so an
   // entity's whole lifecycle (create → update → …) shares one id. Survives a
@@ -549,12 +549,8 @@ export type ModelUsageRole =
   | "planning"
   | "import"
   | "utility"
-  | "verification"
-  | "pricing";
-export type ModelUsagePricingStatus =
-  | "priced"
-  | "unpriced"
-  | "estimated_legacy";
+  | "verification";
+export type ModelUsagePricingStatus = "priced" | "unpriced";
 export type ModelUsageProvider = string;
 
 export interface ModelUsageRecord {
@@ -577,16 +573,6 @@ export interface ModelUsageRecord {
   toolCallsCount: number;
   costUsd: number | null;
   pricingStatus: ModelUsagePricingStatus;
-  pricingProvider: ModelUsageProvider | null;
-  pricingModel: string | null;
-  pricingVerifiedAt: string | null;
-  // WHICH table priced this row — built_in, models_dev, manual, verified. The
-  // other three provenance fields say what was priced and when the source last
-  // claimed to be current; only this one says where the number came from, which
-  // is what makes a bad pricing window findable in the ledger after the fact
-  // (docs/agent-cost-reduction.md §4.10). Null on unpriced rows and on rows
-  // written before the column existed.
-  pricingSource: PricingSource | null;
   metadata: Record<string, unknown>;
 }
 
@@ -610,7 +596,7 @@ export interface RecordModelUsageInput {
     cacheReadInputTokens: number;
     // TTL the cache writes were made at, when the provider set an explicit one.
     // Absent = the 5m default; the ledger's cost calc reads it so a 1h write is
-    // priced at 2x input rather than 1.25x (docs/agent-cost-reduction.md §4.9).
+    // priced at 2x input rather than 1.25x (docs/archive/agent-cost-reduction.md §4.9).
     cacheTtl?: CacheTtl;
   };
   toolCallsCount?: number;
@@ -774,154 +760,10 @@ export type {
   RefreshTargetStatus,
 } from "../shared/lock-refresh.ts";
 
-// --- Pricing research (Stage 2B Slice 2, D10) ---
-// The extraction half of agent-driven pricing: a model reads a moving/reshaped
-// source and reports per-model rates. These vocabulary types live here (core) so
-// the agent module never imports upward and a future tool-capability handler can
-// type the researcher without reaching into agent/ — the same §3.2 reason the
-// refutation types above were relocated. PricingTier is imported type-only from
-// usage.ts (no cycle: usage.ts imports nothing from here).
-import type {
-  CacheTtl,
-  ModelPricing,
-  PricingSource,
-  PricingTier,
-  ProviderModelPricing,
-} from "./usage.ts";
+import type { CacheTtl } from "./usage.ts";
 // Re-exported so ledger callers shaping a RecordModelUsageInput can name the TTL
 // without reaching into usage.ts directly.
 export type { CacheTtl } from "./usage.ts";
-import type { ModelProviderId } from "./config.ts";
-
-// One extracted pricing row — what the model READ, verbatim-ish. Currency/unit are
-// captured AS READ (never normalized) so the Slice 3 verification gate can reject a
-// non-USD/non-MTok row before it is ever written. `tier` is set by mapping `apiId`
-// through resolvePricingTier (the shared id→tier map), absent when the id maps to no
-// tier or only a flagged in-family fallthrough. Cache rates are deliberately NOT
-// here: a candidate materializes to ModelPricing via deriveCacheRates, so an
-// extracted cache number can never enter the table.
-export interface PricingCandidate {
-  apiId: string;
-  provider?: ModelProviderId;
-  model?: string;
-  tier?: PricingTier; // from resolvePricingTier; absent ⇒ unmapped
-  input: number;
-  output: number;
-  currency: string; // as read, e.g. "USD"
-  unit: string; // as read, e.g. "MTok"
-  source: string; // the source URL this row was extracted from
-  quote?: string; // the snippet the price was read from
-}
-
-// The result of one research run: the tier-mapped candidate table plus provenance.
-// Surfaced for review — Slice 2 writes NOTHING to config. `unmapped` collects the
-// apiIds that resolved to no tier (or only a flagged fallthrough), so a mispriced
-// id is never silently tiered. `extractedAt` is the completion timestamp threaded
-// into cost attribution (like the refute/audit agents), not a report-time default.
-export interface PricingExtraction {
-  candidates: PricingCandidate[];
-  // The per-attempt tier-assigned lists (one array per independent extraction
-  // attempt), kept alongside the merged `candidates` surface view so the Slice 3
-  // verification gate can adjudicate agreement ACROSS attempts (mergeCandidates
-  // collapses them first-wins, which the gate can't use). Untiered rows are kept
-  // in each attempt list — adjudicatePricing routes them to `unmapped`.
-  attempts: PricingCandidate[][];
-  sourceUrl: string;
-  extractedAt: string;
-  model: string;
-  costUsd: number;
-  pricingStatus?: "priced" | "unpriced";
-  unmapped: string[];
-  notes?: string;
-}
-
-export interface PricingModelAccounting {
-  role: ModelUsageRole;
-  caller: string;
-  sessionId?: string | null;
-  turnId?: string | null;
-  auditResultId?: string | null;
-  changesetId?: string | null;
-  metadata?: Record<string, unknown>;
-  recordUsage?: (input: RecordModelUsageInput) => Promise<ModelUsageRecord>;
-}
-
-export interface PricingModelCall {
-  (prompt: {
-    system: string;
-    user: string;
-    accounting?: PricingModelAccounting;
-  }): Promise<{
-    text: string;
-    inputTokens: number;
-    outputTokens: number;
-    cacheCreationInputTokens: number;
-    cacheReadInputTokens: number;
-    modelUsage?: ModelUsageRecord;
-  }>;
-}
-
-export interface PricingDocFetch {
-  (url: string): Promise<Result<string>>;
-}
-
-export interface RunPricingResearchOpts {
-  attempts?: number;
-  provider?: ModelProviderId;
-  model?: string;
-  sourceUrls?: string[];
-  callModel?: PricingModelCall;
-  fetchDoc?: PricingDocFetch;
-  recordUsage?: (
-    input: RecordModelUsageInput,
-  ) => Promise<ModelUsageRecord>;
-}
-
-// --- Verification gate (Stage 2B Slice 3, D10 write half) ---
-// The gate turns extracted candidates into a WRITE only when independent attempts
-// agree and the row passes deterministic sanity bounds. These vocabulary types live
-// here (core) for the same §3.2 reason as PricingCandidate: the L3 agent flow that
-// runs the gate never imports upward, and the pure adjudicator (core/pricing-verify)
-// shares them with it.
-
-// Per-tier provenance stamped at write time, replacing the single hand-edited global
-// PRICING_VERIFIED_AS_OF for agent-written tiers. `agreement` = how many independent
-// extractors concurred (agent attempts + an optional corroborating scrape voter). A
-// written price can never lack this: setVerifiedPricing writes both atomically.
-export interface PricingProvenance {
-  sourceUrl: string;
-  extractedAt: string;
-  model: string;
-  provider?: ModelProviderId;
-  targetModel?: string;
-  agreement: number;
-}
-
-// One adjudicated tier. `accepted` is true only when `reasons` is empty; otherwise
-// `reasons` explains the rejection ("disagreement", "output<input", "out-of-bounds",
-// "non-usd", "non-mtok", "no-prior"). `proposed` is always materialized (for the
-// report) but written only when accepted AND apply mode is on.
-export interface PricingDecision {
-  tier?: PricingTier;
-  apiId: string;
-  provider?: ModelProviderId;
-  model?: string;
-  proposed: ModelPricing;
-  proposedProviderPricing?: ProviderModelPricing;
-  accepted: boolean;
-  agreement: number;
-  reasons: string[];
-  provenance: PricingProvenance;
-}
-
-// The full verdict of one adjudication pass. `accepted`/`rejected` partition
-// `decisions`; `unmapped` collects apiIds that resolved to no tier (never written).
-export interface PricingGateReport {
-  decisions: PricingDecision[];
-  accepted: PricingDecision[];
-  rejected: PricingDecision[];
-  unmapped: string[];
-}
 
 // --- Store contracts (Kernel-manager inversion) ---
 // The Kernel exposes changesets/audits typed as these interfaces; the concrete

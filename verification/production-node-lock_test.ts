@@ -14,7 +14,7 @@ import {
   verifyNodeDependencyLock,
 } from "./production-node-lock.ts";
 
-// Milestone 6, Slice 6.2 (docs/production-output-hardening-plan.md): the
+// Milestone 6, Slice 6.2 (docs/archive/production-output-hardening-plan.md): the
 // node_dependency_lock gate proves a committed package-lock.json is FROZEN-valid
 // for the exported Node artifact's generated package.json, validated OFFLINE with
 // npm's dry-run frozen-install semantics. These tests exercise the gate in

@@ -2,7 +2,7 @@
 // (base), the fork now, and main now. Pure: the caller loads all three. What only
 // the fork changed is applied; what both changed differently is a conflict; what
 // only main changed is ignored. Things a merge never carries (rows, documents,
-// secret values, schema drops) are reported instead (docs/opentide-task-forks-plan.md
+// secret values, schema drops) are reported instead (docs/archive/opentide-task-forks-plan.md
 // Slice 4).
 import { canonicalizeJson } from "../fingerprint.ts";
 import type { PersistedState } from "../persistence.ts";

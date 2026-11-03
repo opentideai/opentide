@@ -11,6 +11,7 @@ import { assert, assertEquals } from "@std/assert";
 import { MockLanguageModelV4, simulateReadableStream } from "ai/test";
 import type { LanguageModel } from "ai";
 import { OpenAiModelProvider } from "./openai-provider.ts";
+import { setModelPriceRowsForTest } from "../core/model-prices.ts";
 import type {
   NeutralTool,
   ProviderEvent,
@@ -180,15 +181,22 @@ Deno.test("openai streamTurn surfaces a finalized tool-call and stops requires_a
 });
 
 Deno.test("openai streamTurn emits model_request_usage + turn_usage with cache tokens", async () => {
-  const events = await collect(makeProvider([
-    { type: "stream-start", warnings: [] },
-    { type: "text-start", id: "t0" },
-    { type: "text-delta", id: "t0", delta: "ok" },
-    { type: "text-end", id: "t0" },
-    // OpenAI caches server-side; when the API reports cache reads they still surface
-    // separately from uncached input tokens (70 uncached + 30 cache-read here).
-    v4Finish("stop", v4Usage(100, 40, 30, 0)),
-  ]));
+  // No prices at all, so the real models.dev cache can't price gpt-5.
+  setModelPriceRowsForTest([]);
+  let events: Awaited<ReturnType<typeof collect>>;
+  try {
+    events = await collect(makeProvider([
+      { type: "stream-start", warnings: [] },
+      { type: "text-start", id: "t0" },
+      { type: "text-delta", id: "t0", delta: "ok" },
+      { type: "text-end", id: "t0" },
+      // OpenAI caches server-side; when the API reports cache reads they still surface
+      // separately from uncached input tokens (70 uncached + 30 cache-read here).
+      v4Finish("stop", v4Usage(100, 40, 30, 0)),
+    ]));
+  } finally {
+    setModelPriceRowsForTest(undefined);
+  }
 
   const reqUsage = events.find((e) => e.type === "model_request_usage");
   assert(reqUsage && reqUsage.type === "model_request_usage");

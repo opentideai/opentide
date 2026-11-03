@@ -46,7 +46,7 @@ export interface ChangeContext {
   sessionId?: string;
   manualEdit?: boolean;
   // --- Stream A additions (ride in the existing jsonb `context` column — no
-  // DB migration). See docs/stream-a-data-foundation-plan.md. ---
+  // DB migration). See docs/archive/stream-a-data-foundation-plan.md. ---
   // A1 — binary authorship of THIS change. "mixed" is never stamped; it is
   // derived at the entity level from history (see entityAuthorship in
   // core/changelog.ts). A missing value means "unknown" and must never be
@@ -68,7 +68,7 @@ export interface ChangeContext {
   // stay stable) and is distinguished only by this flag: `key` is the project-
   // root-relative POSIX path and the before/after snapshots are whole-file
   // { path, content } records. Absent ⇒ a normal registry change. See
-  // docs/project-import-strategy.md "Slice 5" and core/codebase/source-edit.ts.
+  // docs/archive/project-import-strategy.md "Slice 5" and core/codebase/source-edit.ts.
   sourceBacked?: boolean;
   // Project text-file authoring uses the same whole-file snapshot undo path as
   // source-backed edits, but is available to registry-native projects too.

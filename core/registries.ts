@@ -1195,7 +1195,7 @@ export class Kernel {
   // dir, so this stays null and episode emission no-ops gracefully.
   readonly episodeLog: EpisodeLog | null;
   readonly skills: SkillManager;
-  // Document store (docs/document-store-plan.md). Derives its blob root from the
+  // Document store (docs/archive/document-store-plan.md). Derives its blob root from the
   // active projectDir at call time (resolver below), so it works before/after
   // loadProject; global docs live under the user config root.
   readonly documents: DocumentStore;
@@ -1257,7 +1257,7 @@ export class Kernel {
     this.envVars = new EnvVarStore(this.env);
     // A2 (Stream A): let the changelog stamp each change with its entity's stable
     // uid, resolved from the record's (category, key). One wire-up covers every
-    // record() writer — no per-site edits. See docs/stream-a-data-foundation-plan.md.
+    // record() writer — no per-site edits. See docs/archive/stream-a-data-foundation-plan.md.
     this.changelog.setEntityUidResolver((category, key) =>
       this.entityUidFor(category, key)
     );

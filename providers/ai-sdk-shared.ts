@@ -1,6 +1,6 @@
 // @layer providers — the provider-neutral AI-SDK mapping helpers shared by every
 // concrete ModelProvider that speaks the Vercel AI SDK (multi-model harness,
-// docs/multi-model-harness-plan.md §5 Stage 4). Both anthropic-provider.ts and
+// docs/archive/multi-model-harness-plan.md §5 Stage 4). Both anthropic-provider.ts and
 // openai-provider.ts drive `streamText().fullStream`; the request mapping (neutral
 // TurnRequest → SDK call params) and the stream mapping (SDK parts → neutral
 // ProviderEvent pieces) are identical across them, so they live here once and each
@@ -42,17 +42,16 @@ import type {
   ProviderEvent,
   ProviderStopReason,
 } from "../core/model-provider.ts";
-import type { ModelProviderId } from "../core/config.ts";
+import {
+  DEFAULT_MODEL_PROVIDER,
+  type ModelProviderId,
+} from "../core/config.ts";
 import {
   PROVIDER_ERROR_CODES,
   wireVisibleToolOutput,
 } from "../core/model-provider.ts";
 import type { TurnUsage } from "../core/types.ts";
-import {
-  type CacheTtl,
-  computeCostUsdWithStatus,
-  computeProviderModelCost,
-} from "../core/usage.ts";
+import { type CacheTtl, computeProviderModelCost } from "../core/usage.ts";
 import { errorMessage } from "../core/util.ts";
 
 // The SDK's reasoning content part, derived from AssistantContent (the `ai` package
@@ -305,27 +304,15 @@ export function toTurnUsage(
     cacheCreationInputTokens,
     cacheReadInputTokens,
   } = usageTokenBreakdown(usage);
-  const provider = toKnownProviderId(providerId);
-  const cost = provider
-    ? computeProviderModelCost({
-      provider,
-      model,
-      inputTokens,
-      outputTokens,
-      cacheCreationInputTokens,
-      cacheReadInputTokens,
-      asOf: endedAt,
-      ...(cacheTtl !== undefined ? { cacheTtl } : {}),
-    })
-    : computeCostUsdWithStatus(
-      model,
-      inputTokens,
-      outputTokens,
-      cacheCreationInputTokens,
-      cacheReadInputTokens,
-      endedAt,
-      cacheTtl,
-    );
+  const cost = computeProviderModelCost({
+    provider: toKnownProviderId(providerId) ?? DEFAULT_MODEL_PROVIDER,
+    model,
+    inputTokens,
+    outputTokens,
+    cacheCreationInputTokens,
+    cacheReadInputTokens,
+    ...(cacheTtl !== undefined ? { cacheTtl } : {}),
+  });
   return {
     turnId: "",
     sessionId: "",

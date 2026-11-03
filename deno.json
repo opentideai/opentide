@@ -1,5 +1,5 @@
 {
-  "version": "0.1.7",
+  "version": "0.1.8",
   "license": "Apache-2.0",
   "tasks": {
     "mcp": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/mcp-main.ts",
@@ -8,6 +8,7 @@
     "opentide": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/cli.ts",
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys",
     "test:shard": "deno run --allow-read --allow-run scripts/test-shard.ts",
+    "cache:report": "deno run --allow-read --allow-env --allow-sys scripts/cache-composition-report.ts",
     "lint": "deno lint",
     "export:opentide": "deno run --allow-read --allow-write --allow-run --allow-env scripts/export-opentide.ts",
     "smoke:install": "deno run --allow-net --allow-read --allow-write --allow-run --allow-env --allow-sys scripts/install-smoke.ts",
@@ -18,7 +19,9 @@
     "plugin:generate": "deno run --allow-read --allow-write --allow-env scripts/claude-plugin.ts",
     "validation:generate": "deno run --allow-read --allow-write --allow-run scripts/generate-export-validation.ts",
     "db:generate": "deno run --allow-read --allow-write --allow-env --allow-net --allow-sys npm:drizzle-kit@0 generate",
-    "docs:generate": "deno run --allow-read --allow-write core/docs/generate.ts"
+    "docs:generate": "deno run --allow-read --allow-write core/docs/generate.ts",
+    "browser:install": "deno run --allow-run --allow-read --allow-env --allow-sys scripts/browser-support.ts install",
+    "browser:check": "deno run --allow-run --allow-read --allow-write --allow-env --allow-sys scripts/browser-support.ts check"
   },
   "imports": {
     "hono": "npm:hono@4",

@@ -24,7 +24,7 @@ interface TokenUsage {
   cacheReadInputTokens?: number;
   outputTokens: number;
   costUsd: number | null;
-  pricingStatus?: "priced" | "unpriced" | "estimated_legacy";
+  pricingStatus?: "priced" | "unpriced";
   unpricedCalls?: number;
   unpricedInputTokens?: number;
   unpricedOutputTokens?: number;

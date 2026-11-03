@@ -2,7 +2,7 @@
 // usage surface. Type-only; imports NOTHING. Consumed by the Deno backend
 // (re-exported from core/types.ts) and the IDE (`$shared` alias). Sessions and
 // usage tracking are core (served regardless of whether an agent is configured),
-// so these shapes are open. See docs/opentide-separation-plan.md §5/§6.
+// so these shapes are open. See docs/archive/opentide-separation-plan.md §5/§6.
 
 // A chat/build session. The serialized shape `/api/sessions/:id` and
 // `/api/sessions/current` return. ownerUserId/visibility are the multi-user authz
@@ -49,7 +49,7 @@ export interface TurnUsage {
   cacheCreationInputTokens: number;
   cacheReadInputTokens: number;
   toolCallsCount: number;
-  pricingStatus?: "priced" | "unpriced" | "estimated_legacy";
+  pricingStatus?: "priced" | "unpriced";
   provider?: string;
   costUsd: number;
 }

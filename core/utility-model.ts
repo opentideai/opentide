@@ -1,5 +1,5 @@
 // @layer core — the neutral utility-role model seam (multi-model harness,
-// docs/multi-model-harness-plan.md §5 Stage 5).
+// docs/archive/multi-model-harness-plan.md §5 Stage 5).
 //
 // This is the one-shot, non-streaming sibling of core/model-provider.ts's
 // streaming ModelProvider seam. Where streamTurn drives the interactive chat
@@ -42,7 +42,7 @@ export interface UtilityModelAccounting {
 export interface UtilityModelRequest {
   system?: string;
   // A large, byte-stable block that PRECEDES `user` in the prompt and is offered to
-  // the provider as a cache breakpoint (docs/agent-cost-reduction.md §4.5). Callers
+  // the provider as a cache breakpoint (docs/archive/agent-cost-reduction.md §4.5). Callers
   // that repeat the same bulk context across many calls — refutation sends the same
   // code to every claim in a gate run — put it here and keep only the varying part
   // in `user`. Providers without prompt caching concatenate it onto `user`, so the

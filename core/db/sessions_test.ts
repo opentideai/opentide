@@ -6,6 +6,7 @@ import {
   setUtilityModelCallForTest,
   setUtilityModelUsageRecorderForTest,
 } from "../utility-model.ts";
+import { withTestModelPrices } from "../test-model-prices.ts";
 
 const SESSIONS_DDL = `CREATE TABLE IF NOT EXISTS _genie_sessions (
   id TEXT PRIMARY KEY,
@@ -66,10 +67,6 @@ const MODEL_USAGE_DDL = `CREATE TABLE IF NOT EXISTS _genie_model_usage (
   tool_calls_count INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL,
   pricing_status TEXT NOT NULL,
-  pricing_provider TEXT,
-  pricing_model TEXT,
-  pricing_verified_at TEXT,
-  pricing_source TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 )`;
 
@@ -748,49 +745,48 @@ Deno.test("getTurnUsagesForSession returns ordered list", async () => {
   });
 });
 
-Deno.test("recordModelUsage writes priced provider-aware ledger row", async () => {
-  await withSessions(async (mgr) => {
-    const s = await mgr.createSession();
-    const record = await mgr.recordModelUsage({
-      id: "mu_priced",
-      sessionId: s.id,
-      turnId: "turn_priced",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      role: "agent",
-      caller: "chat_turn",
-      startedAt: "2026-09-01T00:00:00.000Z",
-      endedAt: "2026-09-01T00:00:01.000Z",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-      },
-      toolCallsCount: 2,
-      metadata: { source: "test" },
+Deno.test("recordModelUsage writes priced provider-aware ledger row", () =>
+  withTestModelPrices(async () => {
+    await withSessions(async (mgr) => {
+      const s = await mgr.createSession();
+      const record = await mgr.recordModelUsage({
+        id: "mu_priced",
+        sessionId: s.id,
+        turnId: "turn_priced",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        role: "agent",
+        caller: "chat_turn",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        endedAt: "2026-09-01T00:00:01.000Z",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+        toolCallsCount: 2,
+        metadata: { source: "test" },
+      });
+
+      assertEquals(record.id, "mu_priced");
+      assertEquals(record.sessionId, s.id);
+      assertEquals(record.turnId, "turn_priced");
+      assertEquals(record.provider, "anthropic");
+      assertEquals(record.model, "claude-sonnet-5");
+      assertEquals(record.role, "agent");
+      assertEquals(record.caller, "chat_turn");
+      assertEquals(record.inputTokens, 1_000_000);
+      assertEquals(record.outputTokens, 1_000_000);
+      assertEquals(record.toolCallsCount, 2);
+      assertEquals(record.pricingStatus, "priced");
+      assertEquals(record.costUsd, 12);
+      assertEquals(record.metadata, { source: "test" });
+
+      assertEquals(await mgr.getModelUsage("mu_priced"), record);
+      assertEquals((await mgr.getModelUsagesForTurn("turn_priced")).length, 1);
     });
-
-    assertEquals(record.id, "mu_priced");
-    assertEquals(record.sessionId, s.id);
-    assertEquals(record.turnId, "turn_priced");
-    assertEquals(record.provider, "anthropic");
-    assertEquals(record.model, "claude-sonnet-5");
-    assertEquals(record.role, "agent");
-    assertEquals(record.caller, "chat_turn");
-    assertEquals(record.inputTokens, 1_000_000);
-    assertEquals(record.outputTokens, 1_000_000);
-    assertEquals(record.toolCallsCount, 2);
-    assertEquals(record.pricingStatus, "priced");
-    assertEquals(record.costUsd, 12);
-    assertEquals(record.pricingProvider, "anthropic");
-    assertEquals(record.pricingModel, "claude-sonnet-5");
-    assertEquals(record.metadata, { source: "test" });
-
-    assertEquals(await mgr.getModelUsage("mu_priced"), record);
-    assertEquals((await mgr.getModelUsagesForTurn("turn_priced")).length, 1);
-  });
-});
+  }));
 
 Deno.test("recordModelUsage stores unpriced calls with nullable cost", async () => {
   await withSessions(async (mgr) => {
@@ -814,135 +810,135 @@ Deno.test("recordModelUsage stores unpriced calls with nullable cost", async () 
 
     assertEquals(record.costUsd, null);
     assertEquals(record.pricingStatus, "unpriced");
-    assertEquals(record.pricingProvider, null);
-    assertEquals(record.pricingModel, null);
   });
 });
 
-Deno.test("usage summaries separate priced and unpriced ledger rows", async () => {
-  await withSessions(async (mgr) => {
-    const s = await mgr.createSession();
-    await mgr.recordModelUsage({
-      id: "mu_summary_priced",
-      sessionId: s.id,
-      turnId: "turn_summary_priced",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      role: "agent",
-      caller: "chat_turn",
-      startedAt: "2026-09-01T00:00:00.000Z",
-      endedAt: "2026-09-01T00:00:01.000Z",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-      },
-    });
-    await mgr.recordModelUsage({
-      id: "mu_summary_unpriced",
-      sessionId: s.id,
-      provider: "openai",
-      model: "gpt-unpriced-for-test",
-      role: "utility",
-      caller: "session_name",
-      startedAt: "2026-09-01T00:00:02.000Z",
-      endedAt: "2026-09-01T00:00:03.000Z",
-      usage: {
-        inputTokens: 100,
-        outputTokens: 25,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-      },
-    });
+Deno.test("usage summaries separate priced and unpriced ledger rows", () =>
+  withTestModelPrices(async () => {
+    await withSessions(async (mgr) => {
+      const s = await mgr.createSession();
+      await mgr.recordModelUsage({
+        id: "mu_summary_priced",
+        sessionId: s.id,
+        turnId: "turn_summary_priced",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        role: "agent",
+        caller: "chat_turn",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        endedAt: "2026-09-01T00:00:01.000Z",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      await mgr.recordModelUsage({
+        id: "mu_summary_unpriced",
+        sessionId: s.id,
+        provider: "openai",
+        model: "gpt-unpriced-for-test",
+        role: "utility",
+        caller: "session_name",
+        startedAt: "2026-09-01T00:00:02.000Z",
+        endedAt: "2026-09-01T00:00:03.000Z",
+        usage: {
+          inputTokens: 100,
+          outputTokens: 25,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
 
-    const usage = await mgr.getSessionUsage(s.id);
-    assertEquals(usage.turns, 1);
-    assertEquals(usage.totalInputTokens, 1_000_100);
-    assertEquals(usage.totalOutputTokens, 1_000_025);
-    assertEquals(usage.totalCostUsd, 12);
-    assertEquals(usage.unpricedCalls, 1);
-    assertEquals(usage.unpricedInputTokens, 100);
-    assertEquals(usage.unpricedOutputTokens, 25);
-  });
-});
+      const usage = await mgr.getSessionUsage(s.id);
+      assertEquals(usage.turns, 1);
+      assertEquals(usage.totalInputTokens, 1_000_100);
+      assertEquals(usage.totalOutputTokens, 1_000_025);
+      assertEquals(usage.totalCostUsd, 12);
+      assertEquals(usage.unpricedCalls, 1);
+      assertEquals(usage.unpricedInputTokens, 100);
+      assertEquals(usage.unpricedOutputTokens, 25);
+    });
+  }));
 
-Deno.test("usage summaries merge legacy turns not replaced by ledger rows", async () => {
-  await withSessions(async (mgr) => {
-    const s = await mgr.createSession();
-    await mgr.recordTurnUsage({
-      turnId: "legacy_only",
-      sessionId: s.id,
-      model: "claude-sonnet-5",
-      startedAt: "2026-09-01T00:00:00.000Z",
-      endedAt: "2026-09-01T00:00:01.000Z",
-      durationMs: 100,
-      inputTokens: 10,
-      outputTokens: 20,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 0,
-      toolCallsCount: 1,
-      costUsd: 0.01,
-    });
-    await mgr.recordTurnUsage({
-      turnId: "replaced",
-      sessionId: s.id,
-      model: "claude-sonnet-5",
-      startedAt: "2026-09-01T00:00:02.000Z",
-      endedAt: "2026-09-01T00:00:03.000Z",
-      durationMs: 200,
-      inputTokens: 1000,
-      outputTokens: 2000,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 0,
-      toolCallsCount: 9,
-      costUsd: 99,
-    });
-    await mgr.recordModelUsage({
-      id: "mu_replaced",
-      sessionId: s.id,
-      turnId: "replaced",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      role: "agent",
-      caller: "chat_turn",
-      startedAt: "2026-09-01T00:00:02.000Z",
-      endedAt: "2026-09-01T00:00:03.000Z",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
+Deno.test("usage summaries merge legacy turns not replaced by ledger rows", () =>
+  withTestModelPrices(async () => {
+    await withSessions(async (mgr) => {
+      const s = await mgr.createSession();
+      await mgr.recordTurnUsage({
+        turnId: "legacy_only",
+        sessionId: s.id,
+        model: "claude-sonnet-5",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        endedAt: "2026-09-01T00:00:01.000Z",
+        durationMs: 100,
+        inputTokens: 10,
+        outputTokens: 20,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0,
-      },
-    });
-    await mgr.recordModelUsage({
-      id: "mu_utility",
-      sessionId: s.id,
-      provider: "openai",
-      model: "gpt-unpriced-for-test",
-      role: "utility",
-      caller: "session_summary",
-      startedAt: "2026-09-01T00:00:04.000Z",
-      endedAt: "2026-09-01T00:00:05.000Z",
-      usage: {
-        inputTokens: 30,
-        outputTokens: 40,
+        toolCallsCount: 1,
+        costUsd: 0.01,
+      });
+      await mgr.recordTurnUsage({
+        turnId: "replaced",
+        sessionId: s.id,
+        model: "claude-sonnet-5",
+        startedAt: "2026-09-01T00:00:02.000Z",
+        endedAt: "2026-09-01T00:00:03.000Z",
+        durationMs: 200,
+        inputTokens: 1000,
+        outputTokens: 2000,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0,
-      },
-    });
+        toolCallsCount: 9,
+        costUsd: 99,
+      });
+      await mgr.recordModelUsage({
+        id: "mu_replaced",
+        sessionId: s.id,
+        turnId: "replaced",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        role: "agent",
+        caller: "chat_turn",
+        startedAt: "2026-09-01T00:00:02.000Z",
+        endedAt: "2026-09-01T00:00:03.000Z",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      await mgr.recordModelUsage({
+        id: "mu_utility",
+        sessionId: s.id,
+        provider: "openai",
+        model: "gpt-unpriced-for-test",
+        role: "utility",
+        caller: "session_summary",
+        startedAt: "2026-09-01T00:00:04.000Z",
+        endedAt: "2026-09-01T00:00:05.000Z",
+        usage: {
+          inputTokens: 30,
+          outputTokens: 40,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
 
-    const usage = await mgr.getSessionUsage(s.id);
-    assertEquals(usage.turns, 2);
-    assertEquals(usage.totalInputTokens, 1_000_040);
-    assertEquals(usage.totalOutputTokens, 1_000_060);
-    assertEquals(usage.totalToolCalls, 1);
-    assertEquals(usage.totalCostUsd, 12.01);
-    assertEquals(usage.unpricedCalls, 1);
-    assertEquals(usage.unpricedInputTokens, 30);
-    assertEquals(usage.unpricedOutputTokens, 40);
-  });
-});
+      const usage = await mgr.getSessionUsage(s.id);
+      assertEquals(usage.turns, 2);
+      assertEquals(usage.totalInputTokens, 1_000_040);
+      assertEquals(usage.totalOutputTokens, 1_000_060);
+      assertEquals(usage.totalToolCalls, 1);
+      assertEquals(usage.totalCostUsd, 12.01);
+      assertEquals(usage.unpricedCalls, 1);
+      assertEquals(usage.unpricedInputTokens, 30);
+      assertEquals(usage.unpricedOutputTokens, 40);
+    });
+  }));
 
 // --- Static helpers ---
 

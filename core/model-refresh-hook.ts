@@ -71,15 +71,9 @@ export async function runModelRefresh(kernel: Kernel): Promise<void> {
     await refreshAvailableModels();
   }
 
-  // E2 price-refresh seam — deliberately still a no-op (decision, Feature E2 §4).
-  // The E2 drift check parses the published docs table, and a docs scrape is
-  // format-fragile: wiring it into every project load would let a docs-format
-  // change slow or destabilize startup, and E2 never writes PRICING anyway (the
-  // fix is a human edit). So price refresh runs OUT OF BAND — `deno task
-  // pricing:check` (a weekly cron or manual run), not here. The deterministic
-  // recommend already tolerates absent prices (they're only a same-version
-  // tiebreak), so nothing here depends on it. Do NOT add price ranking here.
-  // See core/pricing-refresh.ts and scripts/refresh-pricing.ts.
+  // Prices come from the models.dev catalog (core/model-prices.ts); the
+  // recommend engine only uses them as a same-version tiebreak and tolerates
+  // their absence. Do NOT add price ranking here.
 
   // Re-run the deterministic engine over the (possibly refreshed) catalog and
   // persist via setRecommendedModels — which by construction writes only the

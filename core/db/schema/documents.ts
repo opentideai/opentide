@@ -7,7 +7,7 @@ import {
   text,
 } from "drizzle-orm/pg-core";
 
-// Document store (docs/document-store-plan.md §3). Three tables:
+// Document store (docs/archive/document-store-plan.md §3). Three tables:
 //   _genie_documents          — logical entity, mutable head pointer
 //   _genie_document_versions  — immutable, content-addressed payload metadata
 //   _genie_document_refs      — polymorphic backlinks ("used in")

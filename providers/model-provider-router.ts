@@ -1,5 +1,5 @@
 // @layer providers — the routing ModelProvider (multi-model harness,
-// docs/multi-model-harness-plan.md §5 Stage 4). This is the single ModelProvider the
+// docs/archive/multi-model-harness-plan.md §5 Stage 4). This is the single ModelProvider the
 // composition roots inject into the loop; per streamTurn it reads which provider backs
 // the requested model (providerFor) and delegates to the matching concrete impl
 // (Anthropic or OpenAI), constructed lazily and reused across turns. This is what lets

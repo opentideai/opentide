@@ -4303,7 +4303,7 @@ Deno.test({
   },
 });
 
-// --- Document store (docs/document-store-plan.md §6) — tool-surface wiring ---
+// --- Document store (docs/archive/document-store-plan.md §6) — tool-surface wiring ---
 
 Deno.test({
   ...testOpts,
@@ -4633,7 +4633,7 @@ Deno.test({
   },
 });
 
-// --- Phase 3 Slice C-minimal: ledger evidence refs (docs/document-store-plan.md §8/§11) ---
+// --- Phase 3 Slice C-minimal: ledger evidence refs (docs/archive/document-store-plan.md §8/§11) ---
 // A minted attestation is captured as a versioned agent document + a single ledger/evidence
 // ref citing the head — ADDITIVE provenance beside the authoritative ledger row. Mirrors
 // Slice B's plan-capture tests shape-for-shape.

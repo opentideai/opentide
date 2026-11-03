@@ -110,7 +110,7 @@ export function runtimeDependencies(): RuntimeDependency[] {
 // which web framework an app's handlers use. That distinction is what keeps it on
 // the right side of the stack-choice rule — "no kernel, verification, or export code
 // may read or branch on which web framework an app's handlers use"
-// (docs/framework-free-handler-abi-plan.md, "Stack choice"; gated by
+// (docs/archive/framework-free-handler-abi-plan.md, "Stack choice"; gated by
 // core/framework-neutrality_test.ts). Special-casing the literal "hono" anywhere in
 // the emitters would not be.
 

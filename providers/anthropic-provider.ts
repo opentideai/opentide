@@ -1,5 +1,5 @@
 // @layer providers — the concrete Anthropic ModelProvider (multi-model harness,
-// docs/multi-model-harness-plan.md §5 Stage 3b, decisions D1/D3). This is the real
+// docs/archive/multi-model-harness-plan.md §5 Stage 3b, decisions D1/D3). This is the real
 // AI-SDK-backed transport the whole ModelProvider seam (core/model-provider.ts) was
 // built for: its streamTurn drives @ai-sdk/anthropic via streamText().fullStream and
 // translates (a) a neutral TurnRequest into SDK call params and (b) the SDK fullStream

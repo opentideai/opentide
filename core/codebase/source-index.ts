@@ -36,7 +36,7 @@ export interface TsJsSourceIndexOptions {
 const DEFAULT_MAX_FILES = 2000;
 // The per-file byte cap. Exported so the document store (core/documents.ts) reuses
 // the same convention rather than forking a parallel `512 * 1024` constant
-// (docs/document-store-plan.md §4/§13 — align conventions across the two file
+// (docs/archive/document-store-plan.md §4/§13 — align conventions across the two file
 // subsystems).
 export const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 

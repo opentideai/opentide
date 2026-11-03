@@ -5,8 +5,14 @@
 // and nothing catches drift; if someone re-adds a framework's handler contract
 // here, the auditors quietly start flagging correct code as a smell. Hence a
 // lint sweep with named bans rather than a review checklist.
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { BUILTIN_AUDIT_CONFIGS } from "./audit-configs.ts";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  ACCESSIBILITY_AUDIT_CONFIG,
+  BUILTIN_AUDIT_CONFIGS,
+  PERFORMANCE_AUDIT_CONFIG,
+  SECURITY_AUDIT_CONFIG,
+  SEO_AUDIT_CONFIG,
+} from "./audit-configs.ts";
 
 /**
  * Framework-context teaching, spelled out. Each entry is something an auditor
@@ -93,4 +99,39 @@ Deno.test("CORS guidance still attributes the global policy to something real", 
     prompt,
     "enabled globally by the kernel gateway by design",
   );
+});
+
+Deno.test("all audit configs have valid categories", () => {
+  assertEquals(SECURITY_AUDIT_CONFIG.category, "security");
+  assertEquals(PERFORMANCE_AUDIT_CONFIG.category, "performance");
+  assertEquals(SEO_AUDIT_CONFIG.category, "seo");
+  assertEquals(ACCESSIBILITY_AUDIT_CONFIG.category, "accessibility");
+});
+
+Deno.test("all audit configs have response format instructions", () => {
+  for (
+    const config of [
+      SECURITY_AUDIT_CONFIG,
+      PERFORMANCE_AUDIT_CONFIG,
+      SEO_AUDIT_CONFIG,
+      ACCESSIBILITY_AUDIT_CONFIG,
+    ]
+  ) {
+    assert(
+      config.systemPrompt.includes("JSON array"),
+      `${config.category} missing JSON format instructions`,
+    );
+    assert(
+      config.systemPrompt.includes("severity"),
+      `${config.category} missing severity field`,
+    );
+    assert(
+      config.systemPrompt.includes("rule"),
+      `${config.category} missing rule field`,
+    );
+    assert(
+      config.systemPrompt.includes("message"),
+      `${config.category} missing message field`,
+    );
+  }
 });

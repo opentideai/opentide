@@ -1,4 +1,4 @@
-// @layer shared — L0, the wire contract for task forks (docs/opentide-task-forks-plan.md):
+// @layer shared — L0, the wire contract for task forks (docs/archive/opentide-task-forks-plan.md):
 // the bodies of GET/POST /api/tasks, GET /api/tasks/:id/diff and
 // POST /api/tasks/:id/merge. Type-only; imports NOTHING. The backend re-exports
 // these from core/tasks/; the IDE reads them through `$shared`.

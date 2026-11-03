@@ -8,7 +8,7 @@ import {
 } from "./export.ts";
 import { Kernel } from "./registries.ts";
 
-// Stage 10 of docs/framework-free-handler-abi-plan.md: the exported shell routes on
+// Stage 10 of docs/archive/framework-free-handler-abi-plan.md: the exported shell routes on
 // URLPattern instead of Hono. These tests cover the preconditions the swap needs and
 // the matcher it emits.
 

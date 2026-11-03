@@ -1,7 +1,7 @@
 import { assertEquals } from "@std/assert";
 
-// Stage 9 acceptance gate (docs/framework-free-handler-abi-plan.md; D5 amendment
-// 2026-09 in docs/opentide-separation-plan.md §1.1). The decision record states an
+// Stage 9 acceptance gate (docs/archive/framework-free-handler-abi-plan.md; D5 amendment
+// 2026-09 in docs/archive/opentide-separation-plan.md §1.1). The decision record states an
 // enforceable rule — "no kernel, verification, or export code may read or branch on
 // which web framework an app's handlers use" — and calls it testable by grep. This
 // is that grep, so the rule is a gate rather than a sentence someone wrote once.

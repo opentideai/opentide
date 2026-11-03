@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import {
   type OrchestratorHandle,
   resolveUiDist,
@@ -129,8 +129,14 @@ Deno.test("runOrchestrator: shutdown calls shutdownAll exactly once (idempotent)
 Deno.test("resolveUiDist: real dir passes through, absent dir yields null", () => {
   assertEquals(resolveUiDist(Deno.cwd()), Deno.cwd());
   assertEquals(resolveUiDist("/definitely/not/a/real/dir"), null);
-  // Default (no flag): falls back to the repo's ide/build when it has been
-  // built, and to null where it has not (or, in the open repo, does not exist).
-  const dflt = resolveUiDist(null);
-  assert(dflt === null || dflt.endsWith("ide/build"));
+});
+
+Deno.test("resolveUiDist: no flag and no env means no bundle", () => {
+  const saved = Deno.env.get("ORCHESTRATOR_UI_DIST");
+  Deno.env.delete("ORCHESTRATOR_UI_DIST");
+  try {
+    assertEquals(resolveUiDist(null), null);
+  } finally {
+    if (saved !== undefined) Deno.env.set("ORCHESTRATOR_UI_DIST", saved);
+  }
 });

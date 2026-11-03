@@ -1,5 +1,5 @@
 // @layer providers — the concrete Anthropic utility-role model call (multi-model
-// harness, docs/multi-model-harness-plan.md §5 Stage 5). This is the one-shot,
+// harness, docs/archive/multi-model-harness-plan.md §5 Stage 5). This is the one-shot,
 // non-streaming analogue of anthropic-provider.ts's streamTurn: it owns
 // `new Anthropic()` + `messages.create` for the kernel's many small "ask once,
 // parse the reply" jobs, so the SDK is imported in exactly one layer (providers/).

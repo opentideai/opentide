@@ -1,15 +1,8 @@
-import { assertEquals, assertNotEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertNotEquals } from "@std/assert";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  getModelPricing,
-  getProviderModelPricing,
-  type ModelPricing,
-  type ProviderModelPricing,
-  resolvePricingTier,
-  setPricingTableProvider,
-  setProviderModelPricingTableProvider,
-} from "./usage.ts";
+import { modelPrice } from "./model-prices.ts";
+import { resolveClaudeTier } from "./claude-tiers.ts";
 import {
   APP_HOST_ENV,
   appPreviewUrl,
@@ -85,8 +78,7 @@ async function withFreshConfigCache(
 Deno.test("default model selection resolves via recommendation, else unconfigured (D9)", async () => {
   // With the seed floor gone (D9), a "default" role resolves ONLY through a stored
   // recommendation over the discovered catalog. Seed the cache the way discovery
-  // would (pricing is still stamped from the PRICING table, not the cache) and write
-  // a recommendation so the "default" role has something to resolve to.
+  // would and write a recommendation so the "default" role has something to resolve to.
   await withFreshConfigCache(
     "genie-config-test-",
     ["claude-opus-4-6"],
@@ -101,14 +93,6 @@ Deno.test("default model selection resolves via recommendation, else unconfigure
       assertEquals(config.getPlanningModelForRequest(), undefined);
       assertEquals(config.getImportModelForRequest(), undefined);
       assertEquals(config.getCodeModelForRequest(), undefined);
-
-      const models = config.getAvailableModels();
-      const opus = models.find((m: (typeof models)[number]) =>
-        m.id === "claude-opus-4-6"
-      );
-      assertEquals(opus?.pricing?.input, 5);
-      assertEquals(opus?.pricing?.output, 25);
-      assertEquals(opus?.pricing?.fast, { input: 30, output: 150 });
 
       // A written recommendation is what a "default" role resolves to now.
       config.setRecommendedModels({
@@ -740,7 +724,7 @@ Deno.test("E4 hygiene: the 'default' sentinel is preserved exactly once and stay
   );
 });
 
-Deno.test("E4 hygiene is display-only: hiding a model never changes its pricing or tier", async () => {
+Deno.test("E4 hygiene is display-only: hiding a model never changes its tier", async () => {
   await withFreshConfigCache(
     "genie-config-e4-pricing-",
     [DEEP_LEGACY_OPUS_ID],
@@ -750,11 +734,8 @@ Deno.test("E4 hygiene is display-only: hiding a model never changes its pricing 
         config.getAvailableModels().some((m) => m.id === DEEP_LEGACY_OPUS_ID),
         false,
       );
-      // ...but still prices + resolves exactly as before (legacy $15/$75).
-      assertEquals(resolvePricingTier(DEEP_LEGACY_OPUS_ID)?.tier, "opusLegacy");
-      const pricing = getModelPricing(DEEP_LEGACY_OPUS_ID);
-      assertEquals(pricing?.input, 15);
-      assertEquals(pricing?.output, 75);
+      // ...but still resolves exactly as before.
+      assertEquals(resolveClaudeTier(DEEP_LEGACY_OPUS_ID)?.tier, "opusLegacy");
     },
   );
 });
@@ -1327,119 +1308,7 @@ Deno.test("kernel settings: autoCompactEnabled env override + invalid fallback",
   }
 });
 
-// Stage 2B Slice 1: the writer + the config-reading provider seam, end-to-end. Wire
-// usage.ts's provider to the fresh config's overrides (as project-loader.ts does at
-// runtime), write one tier, and confirm getModelPricing reflects it while the rest
-// stay on the seed. Always restore the no-op provider so the singleton never leaks.
-Deno.test("setPricingTier: a written tier overrides getModelPricing; others keep the seed", async () => {
-  await withFreshConfig("genie-config-pricing-", (config) => {
-    setPricingTableProvider(config.getPricingTableOverrides);
-    try {
-      // Empty config ⇒ every price is the seed.
-      assertEquals(config.getPricingTableOverrides(), {});
-      assertEquals(getModelPricing("claude-sonnet-5")?.input, 2);
-
-      const override: ModelPricing = {
-        input: 4,
-        output: 20,
-        cacheCreation: 5,
-        cacheRead: 0.4,
-        unit: "MTok",
-      };
-      config.setPricingTier("sonnet", override);
-
-      // The write is durable (round-trips through config.json) and the provider
-      // reads it fresh, so getModelPricing returns the override...
-      assertEquals(config.getPricingTableOverrides().sonnet, override);
-      assertEquals(getModelPricing("claude-sonnet-5"), override);
-      // ...while a tier that was never written still resolves to the seed.
-      assertEquals(getModelPricing("claude-opus-5")?.input, 5);
-    } finally {
-      setPricingTableProvider(() => ({}));
-    }
-  });
-});
-
-Deno.test("setProviderModelPricing: provider-aware override round-trips through config", async () => {
-  await withFreshConfig("genie-config-provider-pricing-", (config) => {
-    setProviderModelPricingTableProvider(
-      config.getProviderModelPricingOverrides,
-    );
-    try {
-      assertEquals(config.getProviderModelPricingOverrides(), []);
-      assertEquals(getProviderModelPricing("openai", "gpt-5"), undefined);
-
-      const row: ProviderModelPricing = {
-        provider: "openai",
-        model: "gpt-5",
-        input: 1.25,
-        output: 10,
-        unit: "MTok",
-        currency: "USD",
-        source: "manual",
-        verifiedAt: "2026-09-10T00:00:00Z",
-        sourceUrl: "https://example.invalid/openai-pricing",
-        notes: "test row",
-      };
-      config.setProviderModelPricing(row);
-
-      assertEquals(config.getProviderModelPricingOverrides(), [row]);
-      assertEquals(getProviderModelPricing("openai", "gpt-5"), row);
-    } finally {
-      setProviderModelPricingTableProvider(() => []);
-    }
-  });
-});
-
-Deno.test("setProviderModelPricing: OpenAI rejects non-manual/non-verified row sources", async () => {
-  await withFreshConfig("genie-config-provider-pricing-source-", (config) => {
-    assertThrows(
-      () =>
-        config.setProviderModelPricing({
-          provider: "openai",
-          model: "gpt-5",
-          input: 1,
-          output: 8,
-          unit: "MTok",
-          currency: "USD",
-          source: "provider_metadata",
-        }),
-      Error,
-      "Invalid provider model pricing row.",
-    );
-    assertEquals(config.getProviderModelPricingOverrides(), []);
-  });
-});
-
-Deno.test("model cache: provider-aware OpenAI row hydrates display pricing without cache rates", async () => {
-  await withFreshConfigCache(
-    "genie-config-display-provider-pricing-",
-    [{ id: "gpt-5", provider: "openai" }],
-    (config) => {
-      setProviderModelPricingTableProvider(
-        config.getProviderModelPricingOverrides,
-      );
-      try {
-        config.setProviderModelPricing({
-          provider: "openai",
-          model: "gpt-5",
-          input: 1.25,
-          output: 10,
-          unit: "MTok",
-          currency: "USD",
-          source: "manual",
-        });
-        const model = config.getAvailableModels().find((m) => m.id === "gpt-5");
-        assertEquals(model?.pricing?.input, 1.25);
-        assertEquals(model?.pricing?.output, 10);
-      } finally {
-        setProviderModelPricingTableProvider(() => []);
-      }
-    },
-  );
-});
-
-Deno.test("model cache: stale provider-tagged pricing cannot price OpenAI without provider row", async () => {
+Deno.test("model cache: a price persisted in the model cache is never trusted", async () => {
   await withFreshConfigCache(
     "genie-config-stale-provider-pricing-",
     [{
@@ -1493,64 +1362,16 @@ Deno.test("models.dev enrichment hydrates exact provider/model metadata and pric
           },
         },
       });
-      setProviderModelPricingTableProvider(config.getProviderModelPricingRows);
-      try {
-        const model = config.getAvailableModels().find((m) => m.id === "gpt-5");
-        assertEquals(model?.label, "GPT-5");
-        assertEquals(model?.family, "gpt-5");
-        assertEquals(model?.contextWindow, 400000);
-        assertEquals(model?.metadataSource, "models.dev");
-        assertEquals(model?.capabilities?.toolCall, true);
-        assertEquals(model?.modalities?.input, ["text", "image"]);
-        assertEquals(model?.pricing?.input, 1.25);
-        assertEquals(
-          getProviderModelPricing("openai", "gpt-5")?.source,
-          "models_dev",
-        );
-      } finally {
-        setProviderModelPricingTableProvider(() => []);
-      }
-    },
-  );
-});
-
-Deno.test("models.dev pricing is lower priority than manual provider pricing", async () => {
-  await withFreshConfigCache(
-    "genie-config-models-dev-precedence-",
-    [{ id: "gpt-5", provider: "openai" }],
-    (config) => {
-      seedModelsDevCache(Deno.env.get("HOME")!, {
-        openai: {
-          id: "openai",
-          name: "OpenAI",
-          env: ["OPENAI_API_KEY"],
-          npm: "@ai-sdk/openai",
-          models: {
-            "gpt-5": {
-              id: "gpt-5",
-              cost: { input: 1.25, output: 10 },
-            },
-          },
-        },
-      });
-      const manual: ProviderModelPricing = {
-        provider: "openai",
-        model: "gpt-5",
-        input: 9,
-        output: 18,
-        cacheCreation: 11.25,
-        cacheRead: 0.9,
-        unit: "MTok",
-        currency: "USD",
-        source: "manual",
-      };
-      config.setProviderModelPricing(manual);
-      setProviderModelPricingTableProvider(config.getProviderModelPricingRows);
-      try {
-        assertEquals(getProviderModelPricing("openai", "gpt-5"), manual);
-      } finally {
-        setProviderModelPricingTableProvider(() => []);
-      }
+      const model = config.getAvailableModels().find((m) => m.id === "gpt-5");
+      assertEquals(model?.label, "GPT-5");
+      assertEquals(model?.family, "gpt-5");
+      assertEquals(model?.contextWindow, 400000);
+      assertEquals(model?.metadataSource, "models.dev");
+      assertEquals(model?.capabilities?.toolCall, true);
+      assertEquals(model?.modalities?.input, ["text", "image"]);
+      assertEquals(model?.pricing?.input, 1.25);
+      assertEquals(model?.pricing?.cacheRead, 0.125);
+      assertEquals(modelPrice("openai", "gpt-5")?.input, 1.25);
     },
   );
 });
@@ -1607,28 +1428,21 @@ Deno.test("models.dev OpenAI-compatible providers keep their own provider id and
             },
           },
         });
-        setProviderModelPricingTableProvider(
-          config.getProviderModelPricingRows,
+        assertEquals(config.providerFor("glm-4.5"), "zai");
+        assertEquals(config.hasAnyProviderKey(), true);
+        assertEquals(
+          config.providerDescriptorFor("zai")?.modelsUrl(),
+          "https://api.z.ai/api/paas/v4/models",
         );
-        try {
-          assertEquals(config.providerFor("glm-4.5"), "zai");
-          assertEquals(config.hasAnyProviderKey(), true);
-          assertEquals(
-            config.providerDescriptorFor("zai")?.modelsUrl(),
-            "https://api.z.ai/api/paas/v4/models",
-          );
-          assertEquals(
-            config.openAiCompatibleBaseUrlFor("zai"),
-            "https://api.z.ai/api/paas/v4",
-          );
-          const pricing = getProviderModelPricing("zai", "glm-4.5");
-          assertEquals(pricing?.input, 0.6);
-          assertEquals(pricing?.cacheCreation, undefined);
-          assertEquals(pricing?.cacheRead, undefined);
-          assertEquals(getProviderModelPricing("openai", "glm-4.5"), undefined);
-        } finally {
-          setProviderModelPricingTableProvider(() => []);
-        }
+        assertEquals(
+          config.openAiCompatibleBaseUrlFor("zai"),
+          "https://api.z.ai/api/paas/v4",
+        );
+        const pricing = modelPrice("zai", "glm-4.5");
+        assertEquals(pricing?.input, 0.6);
+        assertEquals(pricing?.cacheCreation, undefined);
+        assertEquals(pricing?.cacheRead, undefined);
+        assertEquals(modelPrice("openai", "glm-4.5"), undefined);
       },
     );
   } finally {

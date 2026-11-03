@@ -89,10 +89,6 @@ export const genieModelUsageTable = pgTable("_genie_model_usage", {
   toolCallsCount: integer("tool_calls_count").notNull().default(0),
   costUsd: real("cost_usd"),
   pricingStatus: text("pricing_status").notNull(),
-  pricingProvider: text("pricing_provider"),
-  pricingModel: text("pricing_model"),
-  pricingVerifiedAt: text("pricing_verified_at"),
-  pricingSource: text("pricing_source"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull()
     .default({}),
 }, (table) => [

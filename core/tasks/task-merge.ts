@@ -1,4 +1,4 @@
-// @layer core — merging a task fork back into main (docs/opentide-task-forks-plan.md
+// @layer core — merging a task fork back into main (docs/archive/opentide-task-forks-plan.md
 // Slice 5). Runs in main's serve. The fork's serve is stopped, the 3-way diff is
 // taken, and what only the fork changed is replayed onto main through dispatchTool
 // under one main changeset, so QC, the gate and the changelog all see it. Main's

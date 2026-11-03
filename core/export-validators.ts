@@ -14,7 +14,7 @@
 //
 // The alternative was shipping ajv as a dependency of every exported app and compiling at
 // boot. Cheaper to write, and rejected: it puts a third-party runtime back in the user-app
-// request path that stage 10 of docs/framework-free-handler-abi-plan.md just cleared, and
+// request path that stage 10 of docs/archive/framework-free-handler-abi-plan.md just cleared, and
 // it means a pinned npm dep in core/runtime-dependencies.ts for all three export targets.
 
 import _Ajv from "ajv";

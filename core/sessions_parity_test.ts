@@ -9,6 +9,7 @@ import type {
   TurnUsage,
 } from "./types.ts";
 import { TEST_TMP_DIR } from "./test-home_test.ts";
+import { withTestModelPrices } from "./test-model-prices.ts";
 
 // Parity tests run the SAME sequence of operations against a file-backed and a
 // DB-backed SessionManager and assert observable results match. Volatile fields
@@ -73,10 +74,6 @@ const MODEL_USAGE_DDL = `CREATE TABLE IF NOT EXISTS _genie_model_usage (
   tool_calls_count INTEGER NOT NULL DEFAULT 0,
   cost_usd REAL,
   pricing_status TEXT NOT NULL,
-  pricing_provider TEXT,
-  pricing_model TEXT,
-  pricing_verified_at TEXT,
-  pricing_source TEXT,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 )`;
 
@@ -448,167 +445,170 @@ Deno.test("parity: usage record/get/aggregate", async () => {
   assertEquals(both.file.projectSinceSecondTurn.totalCostUsd, 0.02);
 });
 
-Deno.test("parity: model usage record/get/list", async () => {
-  const both = await onBoth(async (mgr) => {
-    const s = await mgr.createSession();
-    const record = await mgr.recordModelUsage({
-      id: "mu_parity",
-      sessionId: s.id,
-      turnId: "turn_parity",
-      changesetId: "cs_parity",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      role: "agent",
-      caller: "chat_turn",
-      startedAt: "2026-09-01T00:00:00.000Z",
-      endedAt: "2026-09-01T00:00:01.000Z",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-      },
+Deno.test("parity: model usage record/get/list", () =>
+  withTestModelPrices(async () => {
+    const both = await onBoth(async (mgr) => {
+      const s = await mgr.createSession();
+      const record = await mgr.recordModelUsage({
+        id: "mu_parity",
+        sessionId: s.id,
+        turnId: "turn_parity",
+        changesetId: "cs_parity",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        role: "agent",
+        caller: "chat_turn",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        endedAt: "2026-09-01T00:00:01.000Z",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      return {
+        record: {
+          ...record,
+          sessionId: "SESSION",
+        },
+        fetched: {
+          ...(await mgr.getModelUsage("mu_parity"))!,
+          sessionId: "SESSION",
+        },
+        turnCount: (await mgr.getModelUsagesForTurn("turn_parity")).length,
+        changesetCount: (await mgr.getModelUsagesForChangeset("cs_parity"))
+          .length,
+      };
     });
-    return {
-      record: {
-        ...record,
-        sessionId: "SESSION",
-      },
-      fetched: {
-        ...(await mgr.getModelUsage("mu_parity"))!,
-        sessionId: "SESSION",
-      },
-      turnCount: (await mgr.getModelUsagesForTurn("turn_parity")).length,
-      changesetCount: (await mgr.getModelUsagesForChangeset("cs_parity"))
-        .length,
-    };
-  });
-  assertParity("model usage", both);
-  assertEquals(both.file.record.costUsd, 12);
-  assertEquals(both.file.record.pricingStatus, "priced");
-  assertEquals(both.file.turnCount, 1);
-  assertEquals(both.file.changesetCount, 1);
-});
+    assertParity("model usage", both);
+    assertEquals(both.file.record.costUsd, 12);
+    assertEquals(both.file.record.pricingStatus, "priced");
+    assertEquals(both.file.turnCount, 1);
+    assertEquals(both.file.changesetCount, 1);
+  }));
 
-Deno.test("parity: usage summaries prefer priced/unpriced model ledger", async () => {
-  const both = await onBoth(async (mgr) => {
-    const s = await mgr.createSession();
-    await mgr.recordModelUsage({
-      id: "mu_summary_priced",
-      sessionId: s.id,
-      turnId: "turn_summary_priced",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      role: "agent",
-      caller: "chat_turn",
-      startedAt: "2026-09-01T00:00:00.000Z",
-      endedAt: "2026-09-01T00:00:01.000Z",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-      },
+Deno.test("parity: usage summaries prefer priced/unpriced model ledger", () =>
+  withTestModelPrices(async () => {
+    const both = await onBoth(async (mgr) => {
+      const s = await mgr.createSession();
+      await mgr.recordModelUsage({
+        id: "mu_summary_priced",
+        sessionId: s.id,
+        turnId: "turn_summary_priced",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        role: "agent",
+        caller: "chat_turn",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        endedAt: "2026-09-01T00:00:01.000Z",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      await mgr.recordModelUsage({
+        id: "mu_summary_unpriced",
+        sessionId: s.id,
+        provider: "openai",
+        model: "gpt-unpriced-for-test",
+        role: "utility",
+        caller: "session_name",
+        startedAt: "2026-09-01T00:00:02.000Z",
+        endedAt: "2026-09-01T00:00:03.000Z",
+        usage: {
+          inputTokens: 100,
+          outputTokens: 25,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      return await mgr.getSessionUsage(s.id);
     });
-    await mgr.recordModelUsage({
-      id: "mu_summary_unpriced",
-      sessionId: s.id,
-      provider: "openai",
-      model: "gpt-unpriced-for-test",
-      role: "utility",
-      caller: "session_name",
-      startedAt: "2026-09-01T00:00:02.000Z",
-      endedAt: "2026-09-01T00:00:03.000Z",
-      usage: {
-        inputTokens: 100,
-        outputTokens: 25,
-        cacheCreationInputTokens: 0,
-        cacheReadInputTokens: 0,
-      },
-    });
-    return await mgr.getSessionUsage(s.id);
-  });
-  assertParity("model usage summary", both);
-  assertEquals(both.file.turns, 1);
-  assertEquals(both.file.totalCostUsd, 12);
-  assertEquals(both.file.unpricedCalls, 1);
-  assertEquals(both.file.unpricedInputTokens, 100);
-  assertEquals(both.file.unpricedOutputTokens, 25);
-});
+    assertParity("model usage summary", both);
+    assertEquals(both.file.turns, 1);
+    assertEquals(both.file.totalCostUsd, 12);
+    assertEquals(both.file.unpricedCalls, 1);
+    assertEquals(both.file.unpricedInputTokens, 100);
+    assertEquals(both.file.unpricedOutputTokens, 25);
+  }));
 
-Deno.test("parity: usage summaries include unreplaced legacy turns", async () => {
-  const both = await onBoth(async (mgr) => {
-    const s = await mgr.createSession();
-    await mgr.recordTurnUsage({
-      turnId: "legacy_only",
-      sessionId: s.id,
-      model: "claude-sonnet-5",
-      startedAt: "2026-09-01T00:00:00.000Z",
-      endedAt: "2026-09-01T00:00:01.000Z",
-      durationMs: 100,
-      inputTokens: 10,
-      outputTokens: 20,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 0,
-      toolCallsCount: 1,
-      costUsd: 0.01,
-    });
-    await mgr.recordTurnUsage({
-      turnId: "replaced",
-      sessionId: s.id,
-      model: "claude-sonnet-5",
-      startedAt: "2026-09-01T00:00:02.000Z",
-      endedAt: "2026-09-01T00:00:03.000Z",
-      durationMs: 200,
-      inputTokens: 1000,
-      outputTokens: 2000,
-      cacheCreationInputTokens: 0,
-      cacheReadInputTokens: 0,
-      toolCallsCount: 9,
-      costUsd: 99,
-    });
-    await mgr.recordModelUsage({
-      id: "mu_replaced",
-      sessionId: s.id,
-      turnId: "replaced",
-      provider: "anthropic",
-      model: "claude-sonnet-5",
-      role: "agent",
-      caller: "chat_turn",
-      startedAt: "2026-09-01T00:00:02.000Z",
-      endedAt: "2026-09-01T00:00:03.000Z",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
+Deno.test("parity: usage summaries include unreplaced legacy turns", () =>
+  withTestModelPrices(async () => {
+    const both = await onBoth(async (mgr) => {
+      const s = await mgr.createSession();
+      await mgr.recordTurnUsage({
+        turnId: "legacy_only",
+        sessionId: s.id,
+        model: "claude-sonnet-5",
+        startedAt: "2026-09-01T00:00:00.000Z",
+        endedAt: "2026-09-01T00:00:01.000Z",
+        durationMs: 100,
+        inputTokens: 10,
+        outputTokens: 20,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0,
-      },
-    });
-    await mgr.recordModelUsage({
-      id: "mu_utility",
-      sessionId: s.id,
-      provider: "openai",
-      model: "gpt-unpriced-for-test",
-      role: "utility",
-      caller: "session_summary",
-      startedAt: "2026-09-01T00:00:04.000Z",
-      endedAt: "2026-09-01T00:00:05.000Z",
-      usage: {
-        inputTokens: 30,
-        outputTokens: 40,
+        toolCallsCount: 1,
+        costUsd: 0.01,
+      });
+      await mgr.recordTurnUsage({
+        turnId: "replaced",
+        sessionId: s.id,
+        model: "claude-sonnet-5",
+        startedAt: "2026-09-01T00:00:02.000Z",
+        endedAt: "2026-09-01T00:00:03.000Z",
+        durationMs: 200,
+        inputTokens: 1000,
+        outputTokens: 2000,
         cacheCreationInputTokens: 0,
         cacheReadInputTokens: 0,
-      },
+        toolCallsCount: 9,
+        costUsd: 99,
+      });
+      await mgr.recordModelUsage({
+        id: "mu_replaced",
+        sessionId: s.id,
+        turnId: "replaced",
+        provider: "anthropic",
+        model: "claude-sonnet-5",
+        role: "agent",
+        caller: "chat_turn",
+        startedAt: "2026-09-01T00:00:02.000Z",
+        endedAt: "2026-09-01T00:00:03.000Z",
+        usage: {
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      await mgr.recordModelUsage({
+        id: "mu_utility",
+        sessionId: s.id,
+        provider: "openai",
+        model: "gpt-unpriced-for-test",
+        role: "utility",
+        caller: "session_summary",
+        startedAt: "2026-09-01T00:00:04.000Z",
+        endedAt: "2026-09-01T00:00:05.000Z",
+        usage: {
+          inputTokens: 30,
+          outputTokens: 40,
+          cacheCreationInputTokens: 0,
+          cacheReadInputTokens: 0,
+        },
+      });
+      return await mgr.getSessionUsage(s.id);
     });
-    return await mgr.getSessionUsage(s.id);
-  });
-  assertParity("mixed legacy/model usage summary", both);
-  assertEquals(both.file.turns, 2);
-  assertEquals(both.file.totalInputTokens, 1_000_040);
-  assertEquals(both.file.totalOutputTokens, 1_000_060);
-  assertEquals(both.file.totalCostUsd, 12.01);
-  assertEquals(both.file.unpricedCalls, 1);
-});
+    assertParity("mixed legacy/model usage summary", both);
+    assertEquals(both.file.turns, 2);
+    assertEquals(both.file.totalInputTokens, 1_000_040);
+    assertEquals(both.file.totalOutputTokens, 1_000_060);
+    assertEquals(both.file.totalCostUsd, 12.01);
+    assertEquals(both.file.unpricedCalls, 1);
+  }));
 
 // --- rename / updateSummary / updateFocus ---
 

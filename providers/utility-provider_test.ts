@@ -83,7 +83,7 @@ Deno.test("toMessageParams sends system/temperature only when provided", () => {
   });
 });
 
-// docs/agent-cost-reduction.md §4.5: a cachePrefix splits the user turn into two
+// docs/archive/agent-cost-reduction.md §4.5: a cachePrefix splits the user turn into two
 // text blocks with the cache breakpoint on the FIRST one only, so callers repeating
 // the same bulk context (refutation's code block) read it back at 0.1x. Absent, the
 // params must stay the plain string every other utility caller sends today.

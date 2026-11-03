@@ -17,7 +17,7 @@ import {
   verifyManifest,
 } from "./production-manifest.ts";
 
-// Milestone 2, first slice (docs/production-output-hardening-plan.md): the
+// Milestone 2, first slice (docs/archive/production-output-hardening-plan.md): the
 // manifest hashes and export determinism are independently re-verifiable via two
 // pure gate functions. These tests assert the verifier accepts exactly what the
 // generator produces (round-trip / no drift) and rejects every tamper.

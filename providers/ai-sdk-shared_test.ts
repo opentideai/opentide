@@ -13,10 +13,9 @@ import {
   toTurnUsage,
 } from "./ai-sdk-shared.ts";
 import { PROVIDER_ERROR_CODES } from "../core/model-provider.ts";
-import {
-  type ProviderModelPricing,
-  setProviderModelPricingTableProvider,
-} from "../core/usage.ts";
+import type { ProviderModelPricing } from "../core/usage.ts";
+import { setModelPriceRowsForTest } from "../core/model-prices.ts";
+import { withTestModelPrices } from "../core/test-model-prices.ts";
 
 const started = new Date("2026-08-02T00:00:00.000Z");
 const ended = new Date("2026-08-02T00:00:01.500Z");
@@ -77,11 +76,8 @@ Deno.test("toTurnUsage uses provider-aware pricing when provider id is supplied"
     model: "gpt-5",
     input: 1.25,
     output: 10,
-    unit: "MTok",
-    currency: "USD",
-    source: "manual",
   };
-  setProviderModelPricingTableProvider(() => [row]);
+  setModelPriceRowsForTest([row]);
   try {
     const usage = {
       inputTokens: 2_000_000,
@@ -92,7 +88,7 @@ Deno.test("toTurnUsage uses provider-aware pricing when provider id is supplied"
     assertEquals(turn.pricingStatus, "priced");
     assertEquals(turn.costUsd, 7.5);
   } finally {
-    setProviderModelPricingTableProvider(() => []);
+    setModelPriceRowsForTest(undefined);
   }
 });
 
@@ -104,11 +100,8 @@ Deno.test("toTurnUsage preserves custom provider ids for provider-aware pricing"
     output: 2.2,
     cacheCreation: 0.75,
     cacheRead: 0.06,
-    unit: "MTok",
-    currency: "USD",
-    source: "models_dev",
   };
-  setProviderModelPricingTableProvider(() => [row]);
+  setModelPriceRowsForTest([row]);
   try {
     const usage = {
       inputTokens: 1_000_000,
@@ -119,47 +112,54 @@ Deno.test("toTurnUsage preserves custom provider ids for provider-aware pricing"
     assertEquals(turn.pricingStatus, "priced");
     assertAlmostEquals(turn.costUsd, 2.8);
   } finally {
-    setProviderModelPricingTableProvider(() => []);
+    setModelPriceRowsForTest(undefined);
   }
 });
 
-// docs/agent-cost-reduction.md §4.9: a 1h cache write bills at 2x input, not the
+// docs/archive/agent-cost-reduction.md §4.9: a 1h cache write bills at 2x input, not the
 // table's 5m 1.25x. Opus 5 is $5 in / $6.25 cache-write 5m / $10 cache-write 1h.
-Deno.test("toTurnUsage prices cache writes by the TTL the provider used", () => {
-  const usage = {
-    inputTokens: 1_000_000,
-    inputTokenDetails: {
-      noCacheTokens: 0,
-      cacheReadTokens: 0,
-      cacheWriteTokens: 1_000_000,
-    },
-    outputTokens: 0,
-    totalTokens: 1_000_000,
-  } as unknown as LanguageModelUsage;
+Deno.test("toTurnUsage prices cache writes by the TTL the provider used", () =>
+  withTestModelPrices(() => {
+    const usage = {
+      inputTokens: 1_000_000,
+      inputTokenDetails: {
+        noCacheTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 1_000_000,
+      },
+      outputTokens: 0,
+      totalTokens: 1_000_000,
+    } as unknown as LanguageModelUsage;
 
-  const dflt = toTurnUsage(usage, "claude-opus-5", started, ended, "anthropic");
-  assertEquals(dflt.cacheCreationInputTokens, 1_000_000);
-  assertEquals(dflt.costUsd, 6.25);
+    const dflt = toTurnUsage(
+      usage,
+      "claude-opus-5",
+      started,
+      ended,
+      "anthropic",
+    );
+    assertEquals(dflt.cacheCreationInputTokens, 1_000_000);
+    assertEquals(dflt.costUsd, 6.25);
 
-  // Omitting the TTL and asking for 5m must agree — the streaming path passes
-  // nothing and must stay byte-identical.
-  assertEquals(
-    toTurnUsage(usage, "claude-opus-5", started, ended, "anthropic", "5m")
-      .costUsd,
-    6.25,
-  );
-  assertEquals(
-    toTurnUsage(usage, "claude-opus-5", started, ended, "anthropic", "1h")
-      .costUsd,
-    10,
-  );
-  // The legacy Anthropic-only path (no provider id) must scale identically.
-  assertEquals(
-    toTurnUsage(usage, "claude-opus-5", started, ended, undefined, "1h")
-      .costUsd,
-    10,
-  );
-});
+    // Omitting the TTL and asking for 5m must agree — the streaming path passes
+    // nothing and must stay byte-identical.
+    assertEquals(
+      toTurnUsage(usage, "claude-opus-5", started, ended, "anthropic", "5m")
+        .costUsd,
+      6.25,
+    );
+    assertEquals(
+      toTurnUsage(usage, "claude-opus-5", started, ended, "anthropic", "1h")
+        .costUsd,
+      10,
+    );
+    // The legacy Anthropic-only path (no provider id) must scale identically.
+    assertEquals(
+      toTurnUsage(usage, "claude-opus-5", started, ended, undefined, "1h")
+        .costUsd,
+      10,
+    );
+  }));
 
 Deno.test("toModelMessages strips private loop side-channels from tool results", () => {
   const messages = toModelMessages(
@@ -182,7 +182,7 @@ Deno.test("toModelMessages strips private loop side-channels from tool results",
             ok: true,
             data: { id: "cs_1", steps: [{ id: "s1", status: "done" }] },
             _images: [{ png: new Uint8Array([1, 2, 3]) }],
-            // The duplicate copy of `data` (docs/agent-cost-reduction.md §2.2) and the
+            // The duplicate copy of `data` (docs/archive/agent-cost-reduction.md §2.2) and the
             // loop's routing tag: both are IDE-facing and must never reach the model.
             _changeset: { id: "cs_1", steps: [{ id: "s1", status: "done" }] },
             _changesetEvent: { type: "changeset_updated" },

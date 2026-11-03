@@ -1,5 +1,5 @@
 // @layer core — the neutral model-provider transport seam (multi-model harness,
-// docs/multi-model-harness-plan.md §4, Stage 1).
+// docs/archive/multi-model-harness-plan.md §4, Stage 1).
 //
 // This is the transport sibling of core/chat-intelligence.ts's ChatIntelligence:
 // where the brain seam swaps *intelligence*, ModelProvider swaps the *provider /
@@ -83,7 +83,7 @@ export function modelVisibleToolOutput(output: unknown): unknown {
 
 // Loop-private side channels that reach the IDE but must never reach the model.
 // `_changeset` duplicates `data` verbatim — 19.5% of every tool-result byte in a
-// measured corpus was this second copy (docs/agent-cost-reduction.md §2.2) — and
+// measured corpus was this second copy (docs/archive/agent-cost-reduction.md §2.2) — and
 // `_changesetEvent` is a loop routing tag the model has no use for. Used by the wire
 // (chat.ts resultBlocks, ai-sdk-shared toJsonValue) and by the context-window estimator
 // so the estimate measures what is actually sent. The key list is deliberately fixed:

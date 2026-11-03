@@ -12,7 +12,7 @@ import {
   MATCHER_MARKER,
 } from "../scripts/generate-export-router.ts";
 
-/* The differential gate for stage 10 of docs/framework-free-handler-abi-plan.md.
+/* The differential gate for stage 10 of docs/archive/framework-free-handler-abi-plan.md.
 
    The exported shell used to be a Hono app. It now matches routes itself, on
    URLPattern, and the only defensible standard for "correct" is: the same answer Hono

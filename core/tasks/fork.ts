@@ -1,7 +1,7 @@
 // @layer core — creating, running and discarding task forks. A fork is a copy of
 // the project directory (files, state, DB) that runs as its own project under its
 // own `opentide serve`, so two agents can work at once and merge back later
-// (docs/opentide-task-forks-plan.md). This runs in main's serve, the only process
+// (docs/archive/opentide-task-forks-plan.md). This runs in main's serve, the only process
 // that can snapshot main's database.
 import { readEnv } from "../process-env.ts";
 import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
