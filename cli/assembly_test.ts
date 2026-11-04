@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import {
   getBuildArgs,
   getExportArgs,
-  getOrchestratorArgs,
   getServeArgs,
   invocationCwd,
   resolveProjectPath,
@@ -78,19 +77,6 @@ Deno.test("getServeArgs: --app-port defaults to auto and pins when given", () =>
   const both = getServeArgs(DEFAULT, ["--port", "3013", "--app-port", "3011"]);
   assertEquals(both.port, 3013);
   assertEquals(both.appPort, 3011);
-});
-
-Deno.test("getOrchestratorArgs: --ui-dist is captured; absent yields null", () => {
-  assertEquals(getOrchestratorArgs([]).uiDist, null);
-  assertEquals(
-    getOrchestratorArgs(["--ui-dist", "/build/ide"]).uiDist,
-    "/build/ide",
-  );
-  // Positionals / unrelated flags don't interfere with the one flag it parses.
-  assertEquals(
-    getOrchestratorArgs(["--ui-dist=/dist", "extra"]).uiDist,
-    "/dist",
-  );
 });
 
 Deno.test("getServeArgs: --ui-dist is captured; absent yields null", () => {

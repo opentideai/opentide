@@ -134,10 +134,6 @@ export const MODULE_LAYERS: Record<string, Layer> = {
   "cli/main.ts": "composition",
   "cli/mcp-main.ts": "composition",
   "cli/lsp-main.ts": "composition",
-  // The orchestrator apex (Feature B / B1c): lives in cli/ but supervises the
-  // per-project stacks above it (imports core/orchestrator + the composition
-  // helper), so it takes the composition override like the other roots.
-  "cli/orchestrator-main.ts": "composition",
   "cli/cli.ts": "composition",
   "cli/assembly.ts": "composition",
   "cli/test-composition.ts": "composition",

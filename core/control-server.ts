@@ -915,7 +915,6 @@ import {
   MODEL_UNCONFIGURED_LABEL,
   type ModelProviderId,
   obfuscateKey,
-  ORCHESTRATOR_DASHBOARD_PORT,
   PROJECT_FILE_IGNORED_DIRS,
   PROJECT_FILE_IGNORED_FILES,
   providerFor,
@@ -941,7 +940,6 @@ import {
   messageWindowFrom,
   pageMessages,
 } from "./message-page.ts";
-import { isOrchestratedChild } from "./orchestrator/handshake.ts";
 import { callUtilityModel } from "./utility-model.ts";
 import { recommendModelsFromCatalog } from "./model-recommend.ts";
 import { TelemetryManager } from "./telemetry.ts";
@@ -1812,16 +1810,11 @@ export async function startControlServer(
 
   app.get("/api/project", (c) => {
     if (!ctx) return c.json({ project: null });
-    const orchestrated = isOrchestratedChild();
     return c.json({
       project: {
         path: ctx.entry.path,
         name: ctx.entry.name,
         mode: readProjectMode(ctx.entry.path),
-        orchestrated,
-        orchestratorDashboardUrl: orchestrated
-          ? `http://${DEV_SERVER_HOST}:${ORCHESTRATOR_DASHBOARD_PORT}/projects`
-          : null,
       },
     });
   });
@@ -2162,13 +2155,6 @@ export async function startControlServer(
 
   app.post("/api/projects/close", async (c) => {
     if (!ctx) return c.json({ error: "No project is open" }, 400);
-    if (isOrchestratedChild()) {
-      return c.json({
-        error:
-          "This project is managed by the orchestrator. Stop it from the project dashboard.",
-      }, 409);
-    }
-
     try {
       await closeCurrentProject();
       return c.json({ ok: true });

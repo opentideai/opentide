@@ -327,30 +327,6 @@ export function getLspArgs(argv: string[] = Deno.args): LspArgs {
   };
 }
 
-// The orchestrator composition root's args (Feature B / B1c). The orchestrator
-// supervises `opentide serve` children; the one flag it needs is --ui-dist DIR:
-// the prebuilt IDE bundle it threads into every child (--ui-dist) so each child
-// self-serves its own IDE (decision #4). Mirrors the desktop/serve --ui-dist
-// spelling; defaults null (the root then falls back to the repo's ide/build, and
-// finally to a dev child with no static UI). Pure argv parser (no core-config or
-// kernel dependency), unit-testable like getServeArgs/getLspArgs.
-export interface OrchestratorArgs {
-  uiDist: string | null;
-}
-
-export function getOrchestratorArgs(
-  argv: string[] = Deno.args,
-): OrchestratorArgs {
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      "ui-dist": { type: "string" },
-    },
-    allowPositionals: true,
-  });
-  return { uiDist: values["ui-dist"] ?? null };
-}
-
 // The OpenTide composition — core + verification, no agent: stores, changeset
 // governance, and the ledger hook are present. Audits and the other reviews run
 // on the client's model (request_review); Tide's agent is one such client.

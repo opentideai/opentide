@@ -18,11 +18,6 @@ import {
   SERVER_SHUTDOWN_GRACE_MS,
 } from "../core/config.ts";
 import { createActivityMonitor, watchIdle } from "../core/idle-exit.ts";
-import {
-  type ChildReadyLine,
-  formatReadyLine,
-  isOrchestratedChild,
-} from "../core/orchestrator/handshake.ts";
 
 // Run the headless REST core: assemble the stack and serve the control server
 // for one project. Reused verbatim by the direct entry (below), the `opentide
@@ -87,8 +82,8 @@ export async function serveHeadless(
         }
         : {}),
       projectAppPort: appPort,
-      // Serve a prebuilt IDE bundle when the orchestrator (or desktop) passes
-      // one, so a child is a self-contained stack (Feature B, decision #4).
+      // Serve a prebuilt IDE bundle when the caller (the desktop app) passes
+      // one.
       staticUiDir: uiDist ?? undefined,
       ...assembly.serverOptions(),
     },
@@ -99,27 +94,6 @@ export async function serveHeadless(
     console.log(
       `Kernel running (${projectCtx.entry.name}). Press Ctrl+C to stop.`,
     );
-    // Orchestrator handshake (Feature B / B1a): when spawned by the supervisor
-    // (OPENTIDE_ORCHESTRATED set), emit exactly one machine-readable ready line to
-    // stdout — post-bind AND post-loadProject — so the supervisor learns the
-    // child is up. A direct run emits nothing (see core/orchestrator/handshake.ts).
-    // Launcher mode never emits it: the orchestrator only spawns project-mode
-    // children.
-    if (isOrchestratedChild()) {
-      const readyLine: ChildReadyLine = {
-        genie: "ready",
-        controlPort: port,
-        // Late-bound: an empty project has no app server yet. Best-effort only.
-        appPort: projectCtx.appServer.listening
-          ? projectCtx.appServer.port
-          : null,
-        pid: Deno.pid,
-        project: projectCtx.entry.path,
-      };
-      await Deno.stdout.write(
-        new TextEncoder().encode(formatReadyLine(readyLine)),
-      );
-    }
   } else {
     // With a built IDE, serve hosts it; otherwise the Vite dev server does.
     const launcherUrl = uiDist

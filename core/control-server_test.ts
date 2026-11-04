@@ -1665,10 +1665,6 @@ Deno.test({
 
     try {
       const base = `http://127.0.0.1:${control.server.addr.port}`;
-      const projectBefore = await (await fetch(`${base}/api/project`)).json();
-      assertEquals(projectBefore.project.orchestrated, false);
-      assertEquals(projectBefore.project.orchestratorDashboardUrl, null);
-
       const res = await fetch(`${base}/api/projects/close`, { method: "POST" });
       assertEquals(res.status, 200);
       assertEquals(await res.json(), { ok: true });

@@ -4,7 +4,6 @@
   "tasks": {
     "mcp": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/mcp-main.ts",
     "lsp": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/lsp-main.ts",
-    "orchestrator": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/orchestrator-main.ts",
     "opentide": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/cli.ts",
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys",
     "test:shard": "deno run --allow-read --allow-run scripts/test-shard.ts",

@@ -16,6 +16,7 @@ import {
   denoToolchainFailure,
   resolveDenoToolchain,
 } from "./deno-toolchain.ts";
+import { OPENTIDE_DB_URL_ENV } from "./config.ts";
 
 function decodeVLQ(encoded: string): number[] {
   const CHARS =
@@ -938,7 +939,7 @@ export class DebugManager {
   // closing. Restoring it into a directory and closing that leaves an ordinary
   // data dir, so the subprocess contract is unchanged.
   private async buildDebugDbConfig(): Promise<DbConfig> {
-    const pgUrl = readEnv("OPENTIDE_DB_URL");
+    const pgUrl = readEnv(OPENTIDE_DB_URL_ENV);
     if (pgUrl) {
       return { driver: "postgres", connectionString: pgUrl };
     }

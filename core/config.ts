@@ -1007,81 +1007,9 @@ export const SOURCE_COMMAND_MAX_OUTPUT_CHARS = 80_000;
 // (surfaced by GET /api/commands/status), independent of the captured transcript.
 export const SOURCE_COMMAND_LOG_TAIL_LINES = 200;
 
-// --- Orchestrator (Feature B) ---
-// The multi-project orchestrator supervises one `opentide serve --project X`
-// child per running project (docs/orchestrator-design.md §6.4). These are the
-// supervisor's tunables — no magic numbers in the reconciler.
-
-// The orchestrator's own dashboard port (§6.4). B1c serves NO HTTP, so nothing
-// binds this yet — it is defined ready for B3's dashboard + repurposed /projects
-// picker. Deliberately BELOW the child port base (3101) so it is memorable, and
-// distinct from CONTROL_SERVER_PORT (3003) so a standalone kernel and the
-// orchestrator can run side by side without colliding.
-export const ORCHESTRATOR_DASHBOARD_PORT = 3100;
-
-// Base of the control-port pool handed to spawned children. Walks upward from
-// here to the next free port, skipping ports already assigned to live children.
-// Kept clear of the orchestrator's own dashboard (CONTROL_SERVER_PORT = 3003)
-// and a stray app-preview server (APP_SERVER_PORT = 3001) so nothing collides.
-export const ORCHESTRATOR_CHILD_PORT_BASE = 3101;
-
-// How many ports above the base the allocator will probe before giving up (a
-// child then moves to actualState="failed"). Bounds the transient test-bind scan.
-export const ORCHESTRATOR_CHILD_PORT_RANGE = 200;
-
-// How long the supervisor waits for a spawned child's ready line before treating
-// the start as failed (SIGTERM + retry per §3.4). Generous: a cold child compiles
-// its project and loads PGlite before it binds.
-export const ORCHESTRATOR_READY_TIMEOUT_MS = 30_000;
-
-// Grace period after SIGTERM before the supervisor escalates to SIGKILL on stop
-// (and on shutdownAll). A child flushes its DB and unloads the project in between.
-export const ORCHESTRATOR_STOP_TIMEOUT_MS = 10_000;
-
-// Max spawn attempts for a single start before actualState="failed" (§3.4). Each
-// exit-before-ready reallocates a fresh port and respawns, up to this many times.
-export const ORCHESTRATOR_MAX_START_RETRIES = 3;
-
-// Max automatic crash restarts within a backoff window before actualState="failed"
-// (§6.3). restartCount resets once a child stays running past the stability window.
-export const ORCHESTRATOR_MAX_RESTARTS = 5;
-
-// Interval between child health polls (GET /api/status). A child whose process is
-// alive but whose status endpoint fails repeatedly is treated as hung → restart.
-export const ORCHESTRATOR_HEALTH_INTERVAL_MS = 5_000;
-
-// Consecutive failed health polls that mark an alive-but-unresponsive child hung.
-export const ORCHESTRATOR_HEALTH_MAX_FAILURES = 3;
-
-// Exponential-backoff schedule for start-retry and crash-restart: delay =
-// min(cap, base * 2^(attempt-1)) plus jitter, so a crash-looping child backs off
-// instead of hammering the port pool.
-export const ORCHESTRATOR_BACKOFF_BASE_MS = 1_000;
-export const ORCHESTRATOR_BACKOFF_CAP_MS = 30_000;
-
-// A child that stays running this long has its restartCount reset to 0, so a
-// stable child that crashes much later gets a fresh restart budget (§6.3).
-export const ORCHESTRATOR_STABILITY_WINDOW_MS = 60_000;
-
-// Max stdout/stderr lines the supervisor retains per child in its bounded ring
-// buffer (Feature B / B4b). Older lines are dropped once the cap is hit, so a
-// chatty or long-lived child can't grow memory without bound. The buffer is kept
-// across a crash/exit (so a dead child's crash tail stays readable) and cleared
-// only on a fresh manual start. Surfaced by GET /api/orchestrator/logs.
-export const ORCHESTRATOR_LOG_BUFFER_LINES = 500;
-
-// Env var passed through to every spawned child when set on the orchestrator, so
-// children share the parent's Postgres data source (plan line 549). Read via
-// Deno.env; named here so the supervisor doesn't inline the literal.
+// Env var that points serve at a Postgres database instead of the project's
+// own PGlite. Task forks refuse to start while it is set.
 export const OPENTIDE_DB_URL_ENV = "OPENTIDE_DB_URL";
-
-// Read-side override for the orchestrator state-file location. When set, it wins
-// over getTideDir()/orchestrator.json — the clean seam an integration test (or a
-// side-by-side orchestrator) uses to point at a temp state file without touching
-// the real ~/.config/opentide/orchestrator.json. Read via Deno.env in
-// getOrchestratorStatePath(); named here so state.ts doesn't inline the literal.
-export const OPENTIDE_ORCHESTRATOR_STATE_PATH_ENV =
-  "OPENTIDE_ORCHESTRATOR_STATE_PATH";
 
 // Kernel log persistence is coalesced on this debounce: persisting the full
 // ring buffer on every log() call would block the event loop under request

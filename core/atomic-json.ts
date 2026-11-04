@@ -4,9 +4,8 @@
 // JSON file on disk, and a corrupt file (crash mid-write, manual edit) must never
 // brick the operation that reads it. Both concerns had three hand-rolled copies
 // across the tree (project-manager.ts's writeRegistryFileAtomic / readRegistryFile
-// and writeManifestAtomic); the orchestrator state store (Feature B) would have
-// been a fourth. Per CLAUDE.md DRY this extracts the one pattern the callers now
-// share. See docs/orchestrator-design.md §5.
+// and writeManifestAtomic). Per CLAUDE.md DRY this extracts the one pattern the
+// callers now share.
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 

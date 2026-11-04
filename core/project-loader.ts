@@ -23,7 +23,11 @@ import {
 } from "./persistence.ts";
 import { createBackup, saveBackup } from "./backup.ts";
 import { forgetBackupClock } from "./backup-cadence.ts";
-import { APP_SERVER_PORT, getKernelSettings } from "./config.ts";
+import {
+  APP_SERVER_PORT,
+  getKernelSettings,
+  OPENTIDE_DB_URL_ENV,
+} from "./config.ts";
 import { setUnpricedModelWarnHandler } from "./usage.ts";
 import { type DoctorIssue, doctorProject } from "./project-doctor.ts";
 import { runProjectInitHooks } from "./project-hooks.ts";
@@ -47,7 +51,6 @@ function projectLockProcessName(): string {
   const main = Deno.mainModule;
   if (main.includes("mcp-main")) return "the MCP server";
   if (main.includes("lsp-main")) return "the LSP server";
-  if (main.includes("orchestrator-main")) return "the orchestrator";
   if (main.includes("cli.ts")) return "the opentide CLI";
   return "the kernel";
 }
@@ -98,7 +101,7 @@ export async function loadProject(
   // files and destroy them — refusing here is the only thing standing between a
   // double-open and a corrupt project. Skipped for an external Postgres, which
   // does its own concurrency control and is not a directory we own.
-  const dbUrl = readEnv("OPENTIDE_DB_URL");
+  const dbUrl = readEnv(OPENTIDE_DB_URL_ENV);
   const lock = dbUrl ? null : (() => {
     const acquired = acquireProjectLock(entry.path, projectLockProcessName());
     if (!acquired.ok) throw new ProjectLockedError(acquired.error);
