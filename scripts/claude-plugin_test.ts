@@ -8,11 +8,11 @@ import {
   MCP_CONFIG_PATH,
   PLUGIN_DIR,
   PLUGIN_NAME,
-  pluginBase,
+  REPO_ROOT,
 } from "./claude-plugin.ts";
 import { MCP_PROMPTS } from "../mcp/mcp-prompts.ts";
 
-const base = pluginBase();
+const base = REPO_ROOT;
 
 Deno.test("claude plugin: the generated files are current (deno task plugin:generate)", async () => {
   for (const [path, expected] of Object.entries(generatedFiles())) {

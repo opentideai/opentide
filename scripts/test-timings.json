@@ -165,7 +165,6 @@
   "providers/utility-provider_test.ts": 1,
   "scripts/claude-desktop-extension_test.ts": 1,
   "scripts/claude-plugin_test.ts": 1,
-  "scripts/export-opentide_test.ts": 1,
   "scripts/package-opentide_test.ts": 1,
   "tests/layer-subsets_test.ts": 3,
   "verification/audit-configs_test.ts": 1,

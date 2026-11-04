@@ -1,15 +1,13 @@
-// Packages the public OpenTide tree (scripts/export-opentide.ts) as the release
-// tarball install.sh downloads:
+// Packages the repo at HEAD as the release tarball install.sh downloads:
 //
 //   deno task package:opentide [--out <dir>]
 //
 // writes <out>/opentide-<version>.tar.gz and its .sha256, and the Claude Desktop
 // extension <out>/opentide.mcpb (default out: dist/).
-// The tarball unpacks to opentide-<version>/ and holds exactly what the public
-// repo does at the same commit. It is cut from HEAD, so commit first.
+// The tarball unpacks to opentide-<version>/ and holds exactly the files git
+// tracks at HEAD, so commit first.
 import { dirname, join, normalize } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
-import { warnIfDirty, writeOpenTree } from "./export-opentide.ts";
 import { buildExtension, EXTENSION_DIR } from "./claude-desktop-extension.ts";
 
 const REPO_ROOT = normalize(
@@ -21,10 +19,10 @@ export function tarballName(version: string = OPENTIDE_VERSION): string {
   return `opentide-${version}.tar.gz`;
 }
 
-async function run(command: string, args: string[]): Promise<void> {
+async function run(command: string, args: string[]): Promise<string> {
   const out = await new Deno.Command(command, {
     args,
-    stdout: "null",
+    stdout: "piped",
     stderr: "piped",
   }).output();
   if (!out.success) {
@@ -33,6 +31,30 @@ async function run(command: string, args: string[]): Promise<void> {
         new TextDecoder().decode(out.stderr)
       }`,
     );
+  }
+  return new TextDecoder().decode(out.stdout);
+}
+
+// HEAD's tracked files, unpacked into dest.
+async function writeHeadTree(dest: string, top: string): Promise<void> {
+  const archive = join(dest, `${top}.tar`);
+  await run("git", [
+    "-C",
+    REPO_ROOT,
+    "archive",
+    `--prefix=${top}/`,
+    `--output=${archive}`,
+    "HEAD",
+  ]);
+  await run("tar", ["-xf", archive, "-C", dest]);
+  await Deno.remove(archive);
+}
+
+async function warnIfDirty(): Promise<void> {
+  const dirty = (await run("git", ["-C", REPO_ROOT, "status", "--porcelain"]))
+    .trim();
+  if (dirty) {
+    console.warn(`Uncommitted changes are NOT packaged (HEAD is):\n${dirty}\n`);
   }
 }
 
@@ -55,7 +77,7 @@ export async function packageOpenTide(outDir: string): Promise<ReleaseFiles> {
   const staging = await Deno.makeTempDir({ prefix: "opentide-package-" });
   try {
     const top = `opentide-${OPENTIDE_VERSION}`;
-    await writeOpenTree(join(staging, top));
+    await writeHeadTree(staging, top);
     await Deno.mkdir(outDir, { recursive: true });
     const name = tarballName();
     const tarball = join(outDir, name);

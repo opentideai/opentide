@@ -12,8 +12,18 @@ async function tarList(tarball: string): Promise<string[]> {
   return new TextDecoder().decode(out.stdout).split("\n").filter(Boolean);
 }
 
-// Packaging cuts from HEAD, so it needs a git checkout; the open-standalone
-// gate runs the open tests in a plain copy.
+async function trackedFiles(): Promise<string[]> {
+  const out = await new Deno.Command("git", {
+    args: ["ls-tree", "-r", "--name-only", "HEAD"],
+    cwd: new URL("..", import.meta.url),
+    stdout: "piped",
+  }).output();
+  return new TextDecoder().decode(out.stdout).split("\n").filter(Boolean)
+    .sort();
+}
+
+// Packaging cuts from HEAD, so it needs a git checkout; an unpacked release
+// tarball has none.
 const inGitCheckout = new Deno.Command("git", {
   args: ["rev-parse", "--is-inside-work-tree"],
   cwd: new URL(".", import.meta.url),
@@ -23,7 +33,7 @@ const inGitCheckout = new Deno.Command("git", {
 
 Deno.test({
   name:
-    "packageOpenTide: the tarball is the open set under opentide-<version>/",
+    "packageOpenTide: the tarball is HEAD's tracked files under opentide-<version>/",
   ignore: !inGitCheckout,
 }, async () => {
   const out = await Deno.makeTempDir({ prefix: "opentide-package-" });
@@ -31,15 +41,12 @@ Deno.test({
     const { tarball, extension } = await packageOpenTide(out);
     assertEquals(extension, join(out, EXTENSION_FILE));
     assertEquals(tarball, join(out, tarballName()));
-    const entries = await tarList(tarball);
     const prefix = `opentide-${OPENTIDE_VERSION}/`;
+    const entries = await tarList(tarball);
     assert(entries.every((e) => e.startsWith(prefix)));
-    for (const path of ["install.sh", "deno.json", "deno.lock", "cli/cli.ts"]) {
-      assert(entries.includes(prefix + path), `missing ${path}`);
-    }
-    for (const closed of ["agent/", "tide/", "auth/", "ide/", "desktop/"]) {
-      assert(!entries.some((e) => e.startsWith(prefix + closed)), closed);
-    }
+    const files = entries.filter((e) => !e.endsWith("/"))
+      .map((e) => e.slice(prefix.length)).sort();
+    assertEquals(files, await trackedFiles());
     const [sum, name] = (await Deno.readTextFile(`${tarball}.sha256`)).trim()
       .split(/\s+/);
     assertEquals(name, tarballName());

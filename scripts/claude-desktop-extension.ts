@@ -4,9 +4,7 @@
 // user picks in the extension's settings.
 //
 // scripts/package-opentide.ts builds it next to the release tarball, from the
-// exported tree, so it carries OPENTIDE_VERSION. In this repo the sources live
-// under mirror/, which the export copies over the public root.
-import { existsSync } from "node:fs";
+// packaged tree, so it carries OPENTIDE_VERSION.
 import { dirname, join, normalize, resolve } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
 
@@ -24,11 +22,7 @@ const REPO_ROOT = normalize(
   join(dirname(new URL(import.meta.url).pathname), ".."),
 );
 
-// mirror/claude-desktop here, claude-desktop at the root of the public tree.
-export function extensionSourceDir(repoRoot = REPO_ROOT): string {
-  const mirror = join(repoRoot, "mirror", EXTENSION_DIR);
-  return existsSync(mirror) ? mirror : join(repoRoot, EXTENSION_DIR);
-}
+export const EXTENSION_SOURCE_DIR = join(REPO_ROOT, EXTENSION_DIR);
 
 export function renderExtensionManifest(
   version: string = OPENTIDE_VERSION,

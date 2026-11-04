@@ -4,14 +4,14 @@ import { OPENTIDE_VERSION } from "../core/config.ts";
 import {
   buildExtension,
   EXTENSION_FILE,
-  extensionSourceDir,
+  EXTENSION_SOURCE_DIR,
   ICON_PATH,
   PROJECT_FIELD,
   renderExtensionManifest,
   SHIM_PATH,
 } from "./claude-desktop-extension.ts";
 
-const source = extensionSourceDir();
+const source = EXTENSION_SOURCE_DIR;
 const shim = join(source, SHIM_PATH);
 
 function available(command: string): boolean {

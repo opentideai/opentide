@@ -11,10 +11,6 @@
 //     deno task plugin:generate
 //
 // scripts/claude-plugin_test.ts fails when the files on disk drift.
-//
-// In this repo the plugin lives under mirror/, which the export copies over the
-// public root; in the public repo (and in check:open's copy) it is at the root.
-import { existsSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
 import { coreOnlyComposition } from "../core/composition.ts";
@@ -31,15 +27,10 @@ export const LAUNCHER_PATH = `${PLUGIN_DIR}/bin/opentide-mcp`;
 const PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}";
 const ARGUMENTS_VAR = "$ARGUMENTS";
 
-const REPO_ROOT = normalize(
+// The plugin and the marketplace file sit under the repo root.
+export const REPO_ROOT = normalize(
   join(dirname(new URL(import.meta.url).pathname), ".."),
 );
-
-// Where the plugin and the marketplace file sit: mirror/ here, the root elsewhere.
-export function pluginBase(repoRoot = REPO_ROOT): string {
-  const mirror = join(repoRoot, "mirror");
-  return existsSync(join(mirror, PLUGIN_DIR)) ? mirror : repoRoot;
-}
 
 export function commandPath(prompt: McpPromptDefinition): string {
   return `${PLUGIN_DIR}/commands/${prompt.name}.md`;
@@ -110,7 +101,7 @@ export function renderMcpConfig(): string {
   ) + "\n";
 }
 
-// Every generated file, by path under pluginBase().
+// Every generated file, by path under REPO_ROOT.
 export function generatedFiles(): Record<string, string> {
   const files: Record<string, string> = {
     [MANIFEST_PATH]: renderManifest(),
@@ -123,9 +114,8 @@ export function generatedFiles(): Record<string, string> {
 }
 
 if (import.meta.main) {
-  const base = pluginBase();
   for (const [path, content] of Object.entries(generatedFiles())) {
-    const target = join(base, path);
+    const target = join(REPO_ROOT, path);
     await Deno.mkdir(dirname(target), { recursive: true });
     await Deno.writeTextFile(target, content);
     console.log(`wrote ${target}`);
