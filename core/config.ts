@@ -466,10 +466,8 @@ export const MCP_TURN_META_KEY = "opentide/turn";
 // runs over several lines.
 export const MCP_SUGGESTION_PREFIX = "Suggestion: ";
 
-// Whether complete_changeset commits when opentide.json doesn't say. Off for
-// the release that moves existing private sessions into history/private/: a
-// bad move must not be committed in the same release. Flip to true after it.
-export const COMMIT_ON_COMPLETE_DEFAULT = false;
+// Whether complete_changeset commits when opentide.json doesn't say.
+export const COMMIT_ON_COMPLETE_DEFAULT = true;
 
 // Default loopback port for the outbound MCP HTTP/SSE transport (mcp-http.ts,
 // `deno task mcp --http`). Distinct from the control server (:3003) and the app

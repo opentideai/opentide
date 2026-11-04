@@ -651,10 +651,10 @@ in it still check out on a clone.
 
 ### Completing a changeset commits it
 
-**Off unless `opentide.json` turns it on** in this release:
+**On unless `opentide.json` turns it off:**
 
 ```json
-{ "name": "notes", "commitOnComplete": true }
+{ "name": "notes", "commitOnComplete": false }
 ```
 
 When it's on and `complete_changeset` passes the gate, it commits the work. The
@@ -664,7 +664,7 @@ result carries `commit`:
 | ----------------------------------------------------- | ----------------------------------------------------------------- |
 | `{"committed": true, "sha": "…"}`                     | Committed.                                                        |
 | `{"committed": false, "reason": "nothing_to_commit"}` | Nothing of OpenTide's changed.                                    |
-| `{"committed": false, "reason": "off"}`               | `commitOnComplete` isn't `true`.                                  |
+| `{"committed": false, "reason": "off"}`               | `commitOnComplete` is `false`.                                    |
 | `{"committed": false, "reason": "no_project"}`        | No project loaded.                                                |
 | `{"committed": false, "reason": "failed", "message"}` | Git refused. The changeset is still complete. `message` says why. |
 
@@ -922,7 +922,7 @@ Two things close that gap:
 - **`complete_changeset` flushes.** It is best-effort: the returned
   `stateFlushed` boolean tells you whether the write happened, and a failure
   logs at `warn`/`system` rather than failing the completion.
-- **`complete_changeset` commits, when `commitOnComplete` is on.** See
+- **`complete_changeset` commits, unless `commitOnComplete` is off.** See
   [Completing a changeset commits it](#completing-a-changeset-commits-it).
 - **`flush_project_state`** is the explicit verb for work outside a changeset,
   or before ending a long session. It writes only the project's state directory

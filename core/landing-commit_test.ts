@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Database } from "./db.ts";
 import { Kernel } from "./registries.ts";
-import { COMMIT_ON_COMPLETE_DEFAULT, PROJECT_GITIGNORE } from "./config.ts";
+import { PROJECT_GITIGNORE } from "./config.ts";
 import { commitLandedChangeset, commitManagedPaths } from "./landing-commit.ts";
 import { getProjectPaths } from "./project-manager.ts";
 import type { Changeset } from "./types.ts";
@@ -258,7 +258,7 @@ Deno.test({
 
 Deno.test({
   ...testOpts,
-  name: "without commitOnComplete, landing commits follow the default",
+  name: "without commitOnComplete, a completed changeset is committed",
   fn: async () => {
     await withProject(async (dir, kernel) => {
       git(dir, "init", "-q");
@@ -268,11 +268,7 @@ Deno.test({
         kernel,
         changeset("cs1", "Default"),
       );
-      if (COMMIT_ON_COMPLETE_DEFAULT) {
-        assert(result.committed, JSON.stringify(result));
-      } else {
-        assertEquals(result, { committed: false, reason: "off" });
-      }
+      assert(result.committed, JSON.stringify(result));
     });
   },
 });
