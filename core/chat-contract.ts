@@ -66,7 +66,13 @@ export interface ChatEvent {
     // Reuses sessionId/sessionName (the NEW session) so the IDE switches to it, plus
     // `text` for the inline "compacted" copy. A transient stream event only — it does
     // NOT extend the durable session/usage shapes.
-    | "session_compacted";
+    | "session_compacted"
+    // The turn waits for the user to allow or deny a call to an external MCP
+    // server's tool (tool_approval_requested), and the answer
+    // (tool_approval_resolved). Carry approvalId, plus toolName, toolInput,
+    // mcpServer and mcpTool on the request and decision on the answer.
+    | "tool_approval_requested"
+    | "tool_approval_resolved";
   text?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -93,6 +99,22 @@ export interface ChatEvent {
   totalSteps?: number;
   stepId?: string;
   stepDescription?: string;
+  approvalId?: string;
+  mcpServer?: string;
+  mcpTool?: string;
+  decision?: ToolApprovalDecision;
+}
+
+export type ToolApprovalDecision = "allow" | "deny";
+
+// A call to an external MCP server's tool, waiting on the user.
+export interface ToolApprovalRequest {
+  approvalId: string;
+  // The qualified name the model called (mcp__<server>__<tool>).
+  toolName: string;
+  toolInput: unknown;
+  mcpServer: string;
+  mcpTool: string;
 }
 
 export type ChatEventHandler = (event: ChatEvent) => void;
@@ -115,6 +137,8 @@ export interface InProgressState {
   // message_stored event, so reloading does not replay text already in the database.
   segmentText?: string;
   segmentToolCalls?: InProgressToolCall[];
+  // The MCP call the turn is waiting on the user for, if any.
+  pendingToolApproval?: ToolApprovalRequest;
 }
 
 // The agent-provider seam: everything the control server needs from a registered
@@ -127,6 +151,12 @@ export interface ChatRuntime {
   reloadModel(): Promise<void>;
   getInProgressState(detail?: InProgressDetail): InProgressState | null;
   abort(): void;
+  // The user's answer to a tool_approval_requested. False when nothing is
+  // waiting under that id.
+  answerToolApproval(
+    approvalId: string,
+    decision: ToolApprovalDecision,
+  ): boolean;
   sendMessage(
     content: string,
     onEvent?: ChatEventHandler,

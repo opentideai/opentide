@@ -275,3 +275,33 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  ...testOpts,
+  name: "MCP allowlist changes keep the connection; connection changes don't",
+  fn: async () => {
+    const mgr = new MCPManager();
+    const { transport, close } = await inMemoryServer(["search", "delete"]);
+    const config = baseConfig("fx");
+    await mgr.connect(config, transport);
+    assertEquals(mgr.isToolAllowed("mcp__fx__search"), false);
+
+    // Reconnecting would dial example.invalid and fail.
+    const allowed = await mgr.sync([{ ...config, allowedTools: ["search"] }]);
+    assertEquals(allowed.errors, []);
+    assertEquals(mgr.getStatus("fx").status, "connected");
+    assertEquals(mgr.isToolAllowed("mcp__fx__search"), true);
+    assertEquals(mgr.isToolAllowed("mcp__fx__delete"), false);
+    assertEquals(mgr.isToolAllowed("mcp__other__search"), false);
+
+    const moved = await mgr.sync([{
+      ...config,
+      url: "http://moved.invalid",
+      allowedTools: ["search"],
+    }]);
+    assertEquals(moved.errors.length, 1);
+
+    await mgr.closeAll();
+    await close().catch(() => {});
+  },
+});

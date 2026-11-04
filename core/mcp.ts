@@ -27,6 +27,15 @@ export interface MCPServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  // Tools the user said always run without asking, by the server's own name
+  // for them.
+  allowedTools?: string[];
+}
+
+// Everything but the allowlist: what the connection is made from.
+function connectionOf(config: MCPServerConfig): string {
+  const { allowedTools: _allowedTools, ...connection } = config;
+  return JSON.stringify(connection);
 }
 
 // Identity this manager advertises to external servers during the SDK handshake.
@@ -151,7 +160,7 @@ export class MCPManager {
   // Resolve a qualified name back to its server+tool by exact-matching the
   // registered tools, rather than splitting on "__" (which is ambiguous when a
   // server or tool name itself contains "__").
-  private resolveQualifiedTool(
+  resolveQualifiedTool(
     qualifiedName: string,
   ): { server: string; tool: string } | null {
     for (const [serverName, { tools }] of this.servers) {
@@ -208,6 +217,14 @@ export class MCPManager {
     );
   }
 
+  // Whether the user allowed this tool to run without asking.
+  isToolAllowed(qualifiedName: string): boolean {
+    const resolved = this.resolveQualifiedTool(qualifiedName);
+    if (!resolved) return false;
+    const allowed = this.servers.get(resolved.server)?.config.allowedTools;
+    return allowed?.includes(resolved.tool) ?? false;
+  }
+
   isMcpTool(name: string): boolean {
     return name.startsWith("mcp__");
   }
@@ -231,12 +248,15 @@ export class MCPManager {
       if (!allNames.has(name)) this.statuses.delete(name);
     }
 
-    // Connect new servers (skip already connected with same config)
+    // Connect new servers. One already connected the same way keeps its
+    // connection and takes the new allowlist, so allowing a tool mid-turn
+    // doesn't drop the server.
     for (const [name, config] of wanted) {
       const existing = this.servers.get(name);
-      if (
-        existing && JSON.stringify(existing.config) === JSON.stringify(config)
-      ) continue;
+      if (existing && connectionOf(existing.config) === connectionOf(config)) {
+        existing.config = config;
+        continue;
+      }
 
       if (existing) await this.disconnect(name);
 

@@ -7,12 +7,15 @@ import type {
   ChatEventHandler,
   InProgressDetail,
   InProgressState,
+  ToolApprovalDecision,
+  ToolApprovalRequest,
 } from "../core/chat-contract.ts";
 import { testStoreComposition } from "../verification/test-stores.ts";
 import {
   type AgentChat,
   type AgentHost,
   type AgentProject,
+  askDenial,
   createAgentServer,
 } from "./agent-server.ts";
 import type { ToolResult } from "../core/tools/dispatch.ts";
@@ -45,6 +48,11 @@ class RecordingChat implements AgentChat {
   inProgressFullState: InProgressState | null = null;
   // Text streamed per message, for the terminal's ask.
   reply = "";
+  // The MCP call waiting on the user, and the answers given.
+  pendingApproval: ToolApprovalRequest | null = null;
+  readonly approvalAnswers: Array<[string, ToolApprovalDecision]> = [];
+  // When set, the next message asks for this call before completing.
+  askApproval: ToolApprovalRequest | null = null;
 
   constructor(
     private readonly kernel: Kernel,
@@ -60,9 +68,23 @@ class RecordingChat implements AgentChat {
   getInProgressState(
     detail: InProgressDetail = "compact",
   ): InProgressState | null {
-    return detail === "full"
+    const state = detail === "full"
       ? this.inProgressFullState ?? this.inProgressState
       : this.inProgressState;
+    if (!this.pendingApproval) return state;
+    return {
+      ...(state ?? { text: "", toolCalls: [] }),
+      pendingToolApproval: this.pendingApproval,
+    };
+  }
+  answerToolApproval(
+    approvalId: string,
+    decision: ToolApprovalDecision,
+  ): boolean {
+    if (this.pendingApproval?.approvalId !== approvalId) return false;
+    this.pendingApproval = null;
+    this.approvalAnswers.push([approvalId, decision]);
+    return true;
   }
   abort(): void {
     this.abortCount++;
@@ -123,6 +145,10 @@ class RecordingChat implements AgentChat {
     this.sentSessionIds.push(this.getCurrentSessionId());
     this.sentDocumentRefs.push(documentRefs);
     if (this.reply) onEvent?.({ type: "text_delta", text: this.reply });
+    if (this.askApproval) {
+      this.pendingApproval = this.askApproval;
+      onEvent?.({ type: "tool_approval_requested", ...this.askApproval });
+    }
     if (this.sendMessageBlocker) await this.sendMessageBlocker;
     onEvent?.({ type: "message_complete" });
     this.events.push("send.complete");
@@ -853,5 +879,179 @@ Deno.test({
       accountEntitlementsSupported: false,
     });
     await agent.close();
+  },
+});
+
+const WAITING: ToolApprovalRequest = {
+  approvalId: "approval-1",
+  toolName: "mcp__fx__search",
+  toolInput: { q: "x" },
+  mcpServer: "fx",
+  mcpTool: "search",
+};
+
+function nextApprovalFailure(ws: WebSocket): Promise<string> {
+  return new Promise((resolve) => {
+    ws.onmessage = (evt) => {
+      const event = JSON.parse(String(evt.data)) as {
+        type?: string;
+        text?: string;
+      };
+      if (event.type === "tool_approval_failed") resolve(event.text ?? "");
+    };
+  });
+}
+
+function nextMessage(ws: WebSocket): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    ws.onmessage = (evt) => resolve(JSON.parse(String(evt.data)));
+  });
+}
+
+Deno.test({
+  ...testOpts,
+  name: "Always allow persists the tool for the server, then lets the call run",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "agent-approval-" });
+    await projectMcpServers(dir).add({
+      name: "fx",
+      transport: "url",
+      url: "http://127.0.0.1:1/mcp",
+      enabled: false,
+    });
+    await withAgent(ownedSession("Approve"), async (h) => {
+      h.open(dir);
+      const ws = await openSocket(h.chatUrl);
+      try {
+        // Attach the project's chat, then put a call in front of it.
+        await fetch(`${h.base}/api/chat/status`).then((r) => r.body?.cancel());
+        const chat = h.chats.get(dir)!;
+        chat.pendingApproval = WAITING;
+        ws.send(JSON.stringify({
+          type: "tool_approval",
+          approvalId: WAITING.approvalId,
+          decision: "always",
+        }));
+        await waitFor(() => chat.approvalAnswers.length === 1);
+        assertEquals(chat.approvalAnswers, [[WAITING.approvalId, "allow"]]);
+        assertEquals(projectMcpServers(dir).list()[0]?.allowedTools, [
+          "search",
+        ]);
+      } finally {
+        ws.close();
+        await Deno.remove(dir, { recursive: true });
+      }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "Allow once and Deny answer without touching the allowlist",
+  fn: async () => {
+    await withAgent(ownedSession("Answers"), async (h) => {
+      const ws = await openSocket(h.chatUrl);
+      try {
+        for (
+          const [answer, decision] of [["once", "allow"], ["deny", "deny"]]
+        ) {
+          h.chat.pendingApproval = WAITING;
+          ws.send(JSON.stringify({
+            type: "tool_approval",
+            approvalId: WAITING.approvalId,
+            decision: answer,
+          }));
+          await waitFor(() => h.chat.pendingApproval === null);
+          assertEquals(h.chat.approvalAnswers.at(-1), [
+            WAITING.approvalId,
+            decision,
+          ]);
+        }
+        assertEquals(h.chat.approvalAnswers.length, 2);
+      } finally {
+        ws.close();
+      }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "a stale or malformed approval is refused",
+  fn: async () => {
+    await withAgent(ownedSession("Stale"), async (h) => {
+      const ws = await openSocket(h.chatUrl);
+      try {
+        const stale = nextApprovalFailure(ws);
+        ws.send(JSON.stringify({
+          type: "tool_approval",
+          approvalId: "gone",
+          decision: "once",
+        }));
+        assertStringIncludes(await stale, "No tool call is waiting");
+
+        h.chat.pendingApproval = WAITING;
+        const malformed = nextApprovalFailure(ws);
+        ws.send(JSON.stringify({
+          type: "tool_approval",
+          approvalId: WAITING.approvalId,
+          decision: "sure",
+        }));
+        assertStringIncludes(await malformed, "No tool call is waiting");
+        assertEquals(h.chat.approvalAnswers, []);
+      } finally {
+        ws.close();
+      }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "a reconnect mid-turn gets the call waiting for approval",
+  fn: async () => {
+    let sessionId = "";
+    await withAgent(async (kernel) => {
+      sessionId = await ownedSession("Reconnect")(kernel);
+      return sessionId;
+    }, async (h) => {
+      const blocker = deferred();
+      h.chat.sendMessageBlocker = blocker.promise;
+      h.chat.askApproval = WAITING;
+      const ws = await openSocket(h.chatUrl);
+      try {
+        ws.send(JSON.stringify({
+          type: "user_message",
+          sessionId,
+          content: "search the docs",
+        }));
+        await waitFor(() => h.chat.pendingApproval !== null);
+
+        const again = new WebSocket(h.chatUrl);
+        const status = await nextMessage(again);
+        assertEquals(status.type, "agent_status");
+        assertEquals(status.pendingToolApproval, WAITING);
+        again.close();
+      } finally {
+        blocker.resolve();
+        ws.close();
+      }
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "the terminal's ask denies an MCP call and says how to allow it",
+  fn: async () => {
+    await withAgent(ownedSession("Terminal approval"), async (h) => {
+      h.chat.askApproval = WAITING;
+      const res = await fetch(`${h.base}/api/chat/ask`, {
+        method: "POST",
+        body: JSON.stringify({ question: "search the docs" }),
+      });
+      assertStringIncludes(await res.text(), askDenial("search"));
+      assertEquals(h.chat.approvalAnswers, [[WAITING.approvalId, "deny"]]);
+    });
   },
 });

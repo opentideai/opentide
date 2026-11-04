@@ -163,6 +163,11 @@ class BlockingAfterFirstDeltaProvider implements ModelProvider {
 async function runScript(
   script: ProviderEvent[][],
   seed: NeutralMessage[] = [userMessage("hi")],
+  opts: {
+    mcp?: MCPManager;
+    // Sees each event as it's emitted, with the chat, to answer mid-turn.
+    onEvent?: (event: ChatEvent, chat: ChatOrchestrator) => void;
+  } = {},
 ): Promise<
   { events: ChatEvent[]; result: TurnResult; provider: FakeModelProvider }
 > {
@@ -172,7 +177,7 @@ async function runScript(
     const provider = new FakeModelProvider(script);
     const chat = new ChatOrchestrator(
       inProcessChatBackend(kernel, () => {}),
-      new MCPManager(),
+      opts.mcp ?? new MCPManager(),
       stubBrain,
       provider,
     );
@@ -181,7 +186,10 @@ async function runScript(
     const events: ChatEvent[] = [];
     const result = await inner.runTurn({
       content: "hi",
-      onEvent: (e) => events.push(e),
+      onEvent: (e) => {
+        events.push(e);
+        opts.onEvent?.(e, chat);
+      },
       approvalStarted: false,
       activeWorkCs: null,
       system: "sys",
@@ -3128,4 +3136,178 @@ Deno.test("runTurn — tool_result on the wire drops _changeset/_changesetEvent,
   } finally {
     await db.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Approval before external MCP tools
+// ---------------------------------------------------------------------------
+
+const FIXTURE_SERVER = "fx";
+const FIXTURE_PREFIX = `mcp__${FIXTURE_SERVER}__`;
+
+// An MCP manager with one server, "fx", whose every tool answers "ran".
+class FixtureMcp extends MCPManager {
+  readonly calls: string[] = [];
+  readonly allowed = new Set<string>();
+
+  override resolveQualifiedTool(
+    name: string,
+  ): { server: string; tool: string } | null {
+    return name.startsWith(FIXTURE_PREFIX)
+      ? { server: FIXTURE_SERVER, tool: name.slice(FIXTURE_PREFIX.length) }
+      : null;
+  }
+  override isToolAllowed(name: string): boolean {
+    return this.allowed.has(name);
+  }
+  override callTool(name: string): Promise<unknown> {
+    this.calls.push(name);
+    return Promise.resolve({ content: [{ type: "text", text: "ran" }] });
+  }
+}
+
+function mcpCall(tool: string, id: string): ProviderEvent {
+  return {
+    type: "tool_use_start",
+    toolName: `${FIXTURE_PREFIX}${tool}`,
+    toolInput: { q: tool },
+    toolCallId: id,
+  };
+}
+
+function mcpTurn(...tools: string[]): ProviderEvent[][] {
+  return [
+    [
+      ...tools.map((tool, i) => mcpCall(tool, `call_${i}`)),
+      { type: "message_complete", stopReason: "requires_action" },
+    ],
+    [
+      { type: "text_delta", text: "done" },
+      { type: "message_complete", stopReason: "end_turn" },
+    ],
+  ];
+}
+
+function answerEvery(decision: "allow" | "deny") {
+  return (event: ChatEvent, chat: ChatOrchestrator) => {
+    if (event.type === "tool_approval_requested") {
+      chat.answerToolApproval(event.approvalId!, decision);
+    }
+  };
+}
+
+Deno.test("MCP approval — an allowed call runs once, after the user is asked", async () => {
+  const mcp = new FixtureMcp();
+  const { events, result } = await runScript(mcpTurn("search"), undefined, {
+    mcp,
+    onEvent: answerEvery("allow"),
+  });
+
+  assertEquals(mcp.calls, [`${FIXTURE_PREFIX}search`]);
+  assertEquals(eventTypes(events).slice(0, 4), [
+    "tool_use_start",
+    "tool_approval_requested",
+    "tool_approval_resolved",
+    "tool_use_end",
+  ]);
+  const asked = events[1]!;
+  assertEquals(asked.mcpServer, FIXTURE_SERVER);
+  assertEquals(asked.mcpTool, "search");
+  assertEquals(asked.toolName, `${FIXTURE_PREFIX}search`);
+  assertEquals(asked.toolInput, { q: "search" });
+  assertEquals(events[2]?.approvalId, asked.approvalId);
+  assertEquals(events[2]?.decision, "allow");
+  assertEquals(result.stopReason, "end_turn");
+});
+
+Deno.test("MCP approval — a denied call never reaches the server and the model is told", async () => {
+  const mcp = new FixtureMcp();
+  const { events, result, provider } = await runScript(
+    mcpTurn("delete"),
+    undefined,
+    { mcp, onEvent: answerEvery("deny") },
+  );
+
+  assertEquals(mcp.calls, []);
+  const ended = events.find((e) => e.type === "tool_use_end");
+  assertEquals(
+    (ended?.toolResult as { error?: { code?: string } }).error?.code,
+    "TOOL_DENIED",
+  );
+  // The turn carries on: the model got the denial and answered.
+  assertEquals(provider.requests.length, 2);
+  assertEquals(result.stopReason, "end_turn");
+});
+
+Deno.test("MCP approval — an always-allowed tool runs without asking", async () => {
+  const mcp = new FixtureMcp();
+  mcp.allowed.add(`${FIXTURE_PREFIX}search`);
+  const { events } = await runScript(mcpTurn("search"), undefined, { mcp });
+
+  assertEquals(mcp.calls, [`${FIXTURE_PREFIX}search`]);
+  assert(!eventTypes(events).includes("tool_approval_requested"));
+});
+
+Deno.test("MCP approval — two calls in one message ask one after the other", async () => {
+  const mcp = new FixtureMcp();
+  const { events } = await runScript(mcpTurn("first", "second"), undefined, {
+    mcp,
+    onEvent: answerEvery("allow"),
+  });
+
+  const asked = events.filter((e) => e.type === "tool_approval_requested");
+  assertEquals(asked.map((e) => e.mcpTool), ["first", "second"]);
+  assert(asked[0]?.approvalId !== asked[1]?.approvalId);
+  assertEquals(mcp.calls, [
+    `${FIXTURE_PREFIX}first`,
+    `${FIXTURE_PREFIX}second`,
+  ]);
+});
+
+Deno.test("MCP approval — the waiting call shows in the in-progress state", async () => {
+  const mcp = new FixtureMcp();
+  let seen: unknown = null;
+  await runScript(mcpTurn("search"), undefined, {
+    mcp,
+    onEvent: (event, chat) => {
+      if (event.type !== "tool_approval_requested") return;
+      (chat as unknown as { inProgressBusy: boolean }).inProgressBusy = true;
+      seen = chat.getInProgressState()?.pendingToolApproval;
+      chat.answerToolApproval(event.approvalId!, "allow");
+    },
+  });
+
+  assertEquals(seen, {
+    approvalId: (seen as { approvalId: string } | null)?.approvalId,
+    toolName: `${FIXTURE_PREFIX}search`,
+    toolInput: { q: "search" },
+    mcpServer: FIXTURE_SERVER,
+    mcpTool: "search",
+  });
+});
+
+Deno.test("MCP approval — Stop while a call waits denies it and asks nothing more", async () => {
+  const mcp = new FixtureMcp();
+  const { events, provider } = await runScript(
+    mcpTurn("first", "second"),
+    undefined,
+    {
+      mcp,
+      onEvent: (event, chat) => {
+        if (event.type === "tool_approval_requested") chat.abort();
+      },
+    },
+  );
+
+  assertEquals(mcp.calls, []);
+  assertEquals(
+    events.filter((e) => e.type === "tool_approval_requested").length,
+    1,
+  );
+  assertEquals(
+    events.find((e) => e.type === "tool_approval_resolved")?.decision,
+    "deny",
+  );
+  // No second request: the cancelled turn doesn't go back to the model.
+  assertEquals(provider.requests.length, 1);
 });

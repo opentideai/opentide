@@ -14,6 +14,7 @@ import {
 } from "./reviews.ts";
 import { checkToolArgs, formatArgIssues } from "../core/tools/validate-args.ts";
 import { commitProject } from "./commit-subject.ts";
+import { ToolApprovals } from "./tool-approval.ts";
 import type {
   ChangelogClient,
   ChangesetClient,
@@ -69,6 +70,7 @@ import type {
   ChatRuntime,
   InProgressDetail,
   InProgressState,
+  ToolApprovalDecision,
 } from "../core/chat-contract.ts";
 import { canReadUserSession, localUser } from "../core/auth.ts";
 import {
@@ -1048,6 +1050,7 @@ export class ChatOrchestrator implements ChatRuntime {
     { name: string; input: unknown; result?: unknown }
   > = [];
   private inProgressBusy = false;
+  private toolApprovals = new ToolApprovals();
   private sessionNameGenerator: SessionNameGenerator;
 
   constructor(
@@ -1082,6 +1085,14 @@ export class ChatOrchestrator implements ChatRuntime {
 
   abort(): void {
     this.cancelledFlag = true;
+    this.toolApprovals.denyPending();
+  }
+
+  answerToolApproval(
+    approvalId: string,
+    decision: ToolApprovalDecision,
+  ): boolean {
+    return this.toolApprovals.answer(approvalId, decision);
   }
 
   getInProgressState(
@@ -1100,7 +1111,16 @@ export class ChatOrchestrator implements ChatRuntime {
         this.inProgressSegmentToolCalls,
         detail,
       ),
+      ...this.pendingToolApprovalState(),
     };
+  }
+
+  private pendingToolApprovalState(): Pick<
+    InProgressState,
+    "pendingToolApproval"
+  > {
+    const pending = this.toolApprovals.pending();
+    return pending ? { pendingToolApproval: pending } : {};
   }
 
   // The provider reads its API key lazily on every request (providers/*), so a key
@@ -2204,7 +2224,11 @@ export class ChatOrchestrator implements ChatRuntime {
         };
         let changesetNeedsApproval = false;
         for (const tu of assistantToolUses) {
-          const result = await this.dispatchLocalTool(tu, changeContext);
+          const result = await this.dispatchLocalTool(
+            tu,
+            changeContext,
+            onEvent,
+          );
           const visibleResult = modelVisibleToolOutput(result);
           const call: ToolCallRecord = {
             name: tu.name,
@@ -2459,6 +2483,36 @@ export class ChatOrchestrator implements ChatRuntime {
     };
   }
 
+  // Null when the call may run: the user allowed the tool for good, or allows
+  // it now. Otherwise the result the model gets instead. A cancelled turn asks
+  // nothing more.
+  private async mcpCallDenied(
+    tu: { name: string; input: unknown },
+    onEvent?: ChatEventHandler,
+  ): Promise<ToolResult | null> {
+    if (this.mcpManager.isToolAllowed(tu.name)) return null;
+    const resolved = this.mcpManager.resolveQualifiedTool(tu.name);
+    // An unknown tool fails in callTool with its own message.
+    if (!resolved) return null;
+    const decision = this.cancelledFlag
+      ? "deny"
+      : await this.toolApprovals.ask({
+        toolName: tu.name,
+        toolInput: tu.input,
+        mcpServer: resolved.server,
+        mcpTool: resolved.tool,
+      }, onEvent);
+    if (decision === "allow") return null;
+    return {
+      ok: false,
+      error: {
+        code: "TOOL_DENIED",
+        message:
+          `The user denied this call to ${resolved.tool} on ${resolved.server}.`,
+      },
+    };
+  }
+
   // Dispatch one tool for the local loop, mirroring the Managed path's routing: MCP
   // tools go to the MCP manager; everything else to the UNCHANGED dispatchTool (D6),
   // with the same session-id defaulting for session-local tools. Returns the raw
@@ -2466,8 +2520,11 @@ export class ChatOrchestrator implements ChatRuntime {
   private async dispatchLocalTool(
     tu: { id: string; name: string; input: unknown },
     changeContext: ChangeContext,
+    onEvent?: ChatEventHandler,
   ): Promise<unknown> {
     if (this.mcpManager.isMcpTool(tu.name)) {
+      const denied = await this.mcpCallDenied(tu, onEvent);
+      if (denied) return denied;
       try {
         return await this.mcpManager.callTool(
           tu.name,

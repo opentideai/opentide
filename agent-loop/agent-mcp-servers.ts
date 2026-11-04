@@ -41,6 +41,9 @@ export interface ProjectMcpServers {
   add(body: Record<string, unknown>): Promise<McpServerEdit>;
   update(name: string, body: Record<string, unknown>): Promise<McpServerEdit>;
   remove(name: string): Promise<boolean>;
+  // Let one of a server's tools run without asking from now on. False when
+  // there's no such server.
+  allowTool(server: string, tool: string): Promise<boolean>;
   sync(): Promise<{ errors: string[] }>;
   close(): Promise<void>;
 }
@@ -102,6 +105,13 @@ export function projectMcpServers(
       await save(servers.filter((s) => s.name !== name));
       return true;
     },
+    allowTool: async (name, tool) => {
+      const server = servers.find((s) => s.name === name);
+      if (!server) return false;
+      const allowedTools = toolList([...server.allowedTools ?? [], tool]);
+      await saved({ ...server, allowedTools });
+      return true;
+    },
     sync: () => manager.sync(servers),
     close: () => manager.closeAll(),
   };
@@ -141,6 +151,15 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((a) => typeof a === "string");
 }
 
+function isToolList(value: unknown): value is string[] {
+  return isStringArray(value) && value.every((t) => t.trim() !== "");
+}
+
+// Trimmed, each tool once.
+function toolList(tools: string[]): string[] {
+  return [...new Set(tools.map((t) => t.trim()))];
+}
+
 function isStringRecord(value: unknown): value is Record<string, string> {
   return isRecord(value) &&
     Object.values(value).every((v) => typeof v === "string");
@@ -162,6 +181,11 @@ const FIELD_CHECKS: Array<{
   { key: "args", valid: isStringArray, error: "an array of strings" },
   { key: "env", valid: isStringRecord, error: "an object of string values" },
   { key: "enabled", valid: (v) => typeof v === "boolean", error: "a boolean" },
+  {
+    key: "allowedTools",
+    valid: isToolList,
+    error: "an array of tool names",
+  },
 ];
 
 function badField(body: Record<string, unknown>): string | null {
@@ -194,6 +218,9 @@ export function parseMcpServerConfigInput(
     return { ok: false, error: "command is required for stdio transport" };
   }
   const enabled = body.enabled !== false;
+  const allowedTools = isToolList(body.allowedTools)
+    ? { allowedTools: toolList(body.allowedTools) }
+    : {};
   if (transport === "url") {
     return {
       ok: true,
@@ -203,6 +230,7 @@ export function parseMcpServerConfigInput(
         transport,
         url,
         authToken: body.authToken as string | undefined,
+        ...allowedTools,
       },
     };
   }
@@ -215,12 +243,13 @@ export function parseMcpServerConfigInput(
       command,
       args: body.args as string[] | undefined,
       env: body.env as Record<string, string> | undefined,
+      ...allowedTools,
     },
   };
 }
 
 // The server with the edit's fields replaced. A new object, so the manager sees
-// the change and reconnects.
+// the change; it reconnects only when the connection changed.
 function patchMcpServerConfig(
   server: MCPServerConfig,
   body: Record<string, unknown>,
@@ -233,5 +262,6 @@ function patchMcpServerConfig(
       (patch as Record<string, unknown>)[key] = body[key];
     }
   }
+  if (patch.allowedTools) patch.allowedTools = toolList(patch.allowedTools);
   return { ok: true, config: { ...server, ...patch } };
 }

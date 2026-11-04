@@ -92,11 +92,24 @@ interface UserMessage {
   rerun?: boolean;
   changesetId?: string;
   documentRefs?: Array<{ id: string; versionHash?: string }>;
+  // A "tool_approval" message's answer to the call waiting under approvalId.
+  approvalId?: string;
+  decision?: unknown;
+}
+
+// What the IDE may answer a waiting MCP call with. "always" also allows the
+// tool from then on.
+const TOOL_APPROVAL_ANSWERS = ["once", "always", "deny"] as const;
+type ToolApprovalAnswer = typeof TOOL_APPROVAL_ANSWERS[number];
+
+function isToolApprovalAnswer(value: unknown): value is ToolApprovalAnswer {
+  return TOOL_APPROVAL_ANSWERS.includes(value as ToolApprovalAnswer);
 }
 
 const BUSY = "Agent is busy. Wait for the current turn to complete.";
 const ARCHIVED_SEND = "Archived sessions must be unarchived before sending";
 const NO_PROJECT = "No project open";
+const NO_WAITING_TOOL_CALL = "No tool call is waiting for that approval";
 const AUTH_PATH_PREFIX = "/api/auth/";
 // How many of the most recently active sessions to look through for the one
 // to reopen.
@@ -334,6 +347,44 @@ export function createAgentServer(
     });
   }
 
+  async function answerToolApproval(
+    ws: WSContext,
+    project: AgentProject,
+    data: UserMessage,
+  ): Promise<void> {
+    const pending = project.chat.getInProgressState()?.pendingToolApproval;
+    const answer = data.decision;
+    // Not "error": that ends the turn in the IDE, and this turn goes on.
+    const refuse = (text: string) =>
+      ws.send(JSON.stringify({
+        type: "tool_approval_failed",
+        approvalId: data.approvalId,
+        text,
+      }));
+    if (
+      !pending || pending.approvalId !== data.approvalId ||
+      !isToolApprovalAnswer(answer)
+    ) {
+      refuse(NO_WAITING_TOOL_CALL);
+      return;
+    }
+    if (answer === "always") {
+      try {
+        await project.mcpServers.allowTool(pending.mcpServer, pending.mcpTool);
+      } catch (err) {
+        // The call keeps waiting; Allow once still works.
+        const msg = errorMessage(err);
+        refuse(msg);
+        log("error", msg);
+        return;
+      }
+    }
+    project.chat.answerToolApproval(
+      pending.approvalId,
+      answer === "deny" ? "deny" : "allow",
+    );
+  }
+
   async function onUserMessage(
     ws: WSContext,
     user: CurrentUser,
@@ -342,6 +393,10 @@ export function createAgentServer(
   ): Promise<void> {
     if (data.type === "cancel") {
       if (turns.busy) project.chat.abort();
+      return;
+    }
+    if (data.type === "tool_approval") {
+      await answerToolApproval(ws, project, data);
       return;
     }
     if (data.type !== "user_message" || !data.content) {
@@ -579,6 +634,12 @@ export function createAgentServer(
               if (event.type === "text_delta" && event.text) write(event.text);
               else if (event.type === "tool_use_start" && event.toolName) {
                 write(`\x1b[90m[calling ${event.toolName}...]\x1b[0m\n`);
+              } else if (
+                event.type === "tool_approval_requested" && event.approvalId
+              ) {
+                // Nobody here can click Allow.
+                write(`\x1b[90m${askDenial(event.mcpTool)}\x1b[0m\n`);
+                project.chat.answerToolApproval(event.approvalId, "deny");
               }
             },
             undefined,
@@ -720,6 +781,7 @@ export function createAgentServer(
                 toolCalls: state.toolCalls,
                 segmentText: state.segmentText,
                 segmentToolCalls: state.segmentToolCalls,
+                pendingToolApproval: state.pendingToolApproval,
               }
               : { type: "agent_status", busy: true },
           ));
@@ -766,6 +828,13 @@ export function createAgentServer(
     currentProject: () => attached?.path ?? null,
     close: detach,
   };
+}
+
+// What the terminal's ask prints for an MCP call it can't approve.
+export function askDenial(tool: string | undefined): string {
+  return `[${
+    tool ?? "This tool"
+  } needs approval: run it from the chat, or allow it under Settings → MCP servers]`;
 }
 
 // Image attachments go into the stored message as data URLs, so the IDE can

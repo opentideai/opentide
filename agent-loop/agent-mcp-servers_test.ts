@@ -122,3 +122,37 @@ Deno.test("parseMcpServerConfigInput rejects non-string stdio env values", () =>
     { ok: false, error: "env must be an object of string values" },
   );
 });
+
+Deno.test("allowTool adds a tool once, keeps the file owner-only and survives a reload", async () => {
+  const dir = await projectDir();
+  const servers = projectMcpServers(dir);
+  assert((await servers.add(OFF)).ok);
+
+  assertEquals(await servers.allowTool("docs", "search"), true);
+  assertEquals(await servers.allowTool("docs", "search"), true);
+  assertEquals(await servers.allowTool("stranger", "search"), false);
+
+  assertEquals(projectMcpServers(dir).list()[0]?.allowedTools, ["search"]);
+  assertEquals(
+    statSync(storeFile(dir)).mode & 0o777,
+    AGENT_MCP_SERVERS_FILE_MODE,
+  );
+});
+
+Deno.test("allowedTools is edited like any field, de-duplicated, and checked", async () => {
+  const dir = await projectDir();
+  const servers = projectMcpServers(dir);
+  const added = await servers.add({ ...OFF, allowedTools: ["a", "a"] });
+  assert(added.ok);
+  assertEquals(added.server.allowedTools, ["a"]);
+
+  const edited = await servers.update("docs", { allowedTools: [" b ", "b"] });
+  assert(edited.ok);
+  assertEquals(edited.server.allowedTools, ["b"]);
+
+  for (const bad of ["b", [""], [1]]) {
+    const refused = await servers.update("docs", { allowedTools: bad });
+    assert(!refused.ok);
+    assertEquals(refused.status, 400);
+  }
+});
