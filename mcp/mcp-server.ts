@@ -27,11 +27,17 @@ import { getMcpPrompt, listMcpPrompts } from "./mcp-prompts.ts";
 import type { Kernel } from "../core/registries.ts";
 import type { ChangeContext } from "../core/changelog.ts";
 import {
+  type ConnectionToolsets,
   dispatchMcpTool,
   MCP_SURFACE_META_KEY,
   mcpSurfaceMeta,
   projectedMcpTools,
 } from "./mcp-projection.ts";
+import {
+  TOOLSET_NAMES,
+  type ToolsetSelection,
+} from "../core/tools/toolsets.ts";
+import { startingToolsets } from "../core/project-toolsets.ts";
 import {
   MCP_CLIENT_NAME_MAX_CHARS,
   MCP_MAX_ARG_BYTES,
@@ -124,22 +130,62 @@ export interface McpServerDeps {
   rebuild: () => void;
 }
 
+// The toolsets a new connection starts with (core/tools/toolsets.ts), from the
+// ones it asked for or the project's opentide.json. Names that aren't toolsets
+// are logged and skipped. stdout is the JSON-RPC channel on stdio.
+function connectionSelection(
+  kernel: Kernel,
+  requested: string | null,
+): ToolsetSelection {
+  const { selection, unknown } = startingToolsets(
+    kernel.projectDir ?? null,
+    requested,
+  );
+  if (unknown.length > 0) {
+    const message = `Unknown toolsets ignored: ${unknown.join(", ")}. ` +
+      `Toolsets: all, ${TOOLSET_NAMES.join(", ")}.`;
+    console.error(`[opentide] ${message}`);
+    kernel.log.log("warn", "system", message);
+  }
+  return selection;
+}
+
 // Build the MCP Server with the core tool surface wired to dispatch. Split from
 // the transport so tests can exercise the handlers without spawning stdio.
+// `toolsets` is what the client asked for (--tools, ?toolsets=); null takes the
+// project's.
 export function createMcpServer(
   deps: McpServerDeps,
   transport: McpTransportKind = "stdio",
+  toolsets: string | null = null,
 ): Server {
+  let selection = connectionSelection(deps.kernel, toolsets);
   // `instructions` is the guidance a client puts in the agent's system prompt
   // on connect (core/agent-guide.ts). Tool descriptions say what each verb does;
   // this says how the verbs fit together and what not to do between them.
   const server = new Server(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
     {
-      capabilities: { tools: {}, prompts: {}, resources: {} },
-      instructions: buildAgentInstructions(deps.kernel),
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: {},
+        resources: {},
+      },
+      instructions: buildAgentInstructions(deps.kernel, selection),
     },
   );
+  // set_toolset changes the list; the client is told so it fetches it again.
+  const connectionToolsets: ConnectionToolsets = {
+    get: () => selection,
+    set: (next) => {
+      selection = next;
+      server.sendToolListChanged().catch((err: unknown) => {
+        console.error(
+          `[opentide] could not send tools/list_changed: ${errorMessage(err)}`,
+        );
+      });
+    },
+  };
 
   // One session per server instance. Stdio has a single instance; the HTTP
   // transport builds one per client connection (mcp-http.ts openSession), so
@@ -222,7 +268,7 @@ export function createMcpServer(
   // server BUILD identity (name/version) stays at the handshake above; the tool
   // SURFACE version is distinct and lives here (F4, OpenTide §10).
   server.setRequestHandler(ListToolsRequestSchema, () => {
-    const tools = projectedMcpTools(deps.kernel.composition);
+    const tools = projectedMcpTools(deps.kernel.composition, selection);
     return {
       tools,
       _meta: { [MCP_SURFACE_META_KEY]: mcpSurfaceMeta(tools) },
@@ -273,6 +319,7 @@ export function createMcpServer(
           deps.rebuild,
           context,
           binding,
+          connectionToolsets,
         );
         if (!result.isError) persistMutation(deps.kernel, name);
         return result;
@@ -347,8 +394,11 @@ async function recordCall(
 // Serve the outbound MCP server over stdio. Resolves when the transport closes
 // (the client disconnects / stdin ends). Note: stdout is the JSON-RPC channel —
 // callers MUST route all logging to stderr.
-export async function serveMcpStdio(deps: McpServerDeps): Promise<void> {
-  const server = createMcpServer(deps);
+export async function serveMcpStdio(
+  deps: McpServerDeps,
+  toolsets: string | null = null,
+): Promise<void> {
+  const server = createMcpServer(deps, "stdio", toolsets);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   await new Promise<void>((resolve) => {

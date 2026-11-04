@@ -16,6 +16,18 @@ import type { Changeset } from "../core/types.ts";
 import type { ChangeContext, ChangeRecord } from "../core/changelog.ts";
 import { AGENT_TOOLS, type CustomToolDef } from "../core/tools/definitions.ts";
 import {
+  applySetToolset,
+  EVERY_TOOLSET,
+  inListingOrder,
+  SET_TOOLSET,
+  SET_TOOLSET_TOOL,
+  setToolsetData,
+  TOOLSET_OFF,
+  toolsetOf,
+  toolsetOffMessage,
+  type ToolsetSelection,
+} from "../core/tools/toolsets.ts";
+import {
   dispatchTool,
   isDestructiveTool,
   isIdempotentTool,
@@ -107,10 +119,12 @@ export interface McpToolResult {
 // history, and every client reads them and manages its own.
 // Verbs only this face has, not in AGENT_TOOLS: show_app (the IDE has its own
 // preview pane) and the history writes (the IDE chat writes its own history).
+// set_toolset acts on the connection, so it isn't a kernel verb either.
 export const MCP_ONLY_TOOLS: ReadonlySet<string> = new Set([
   SHOW_APP,
   ...HISTORY_TOOL_NAMES,
   APPROVE_CHANGESET,
+  SET_TOOLSET,
 ]);
 
 const MCP_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
@@ -121,17 +135,21 @@ const MCP_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
 
 // Why a verb is (not) exposed over MCP. `excluded` = an IDE-only session/launcher
 // verb that this face never advertises; `no-capability` = its handler layer is
-// not assembled in this build. This is the single classifier that defines the
-// MCP surface — projectedMcpTools advertises exactly the `ok` verbs, and
-// dispatchMcpTool derives its two distinct refusal messages from the same
-// result, so the advertised list equals the callable list with no double-check.
-type ToolAvailability = "ok" | "excluded" | "no-capability";
+// not assembled in this build; `not-selected` = its toolset is off on this
+// connection. This is the single classifier that defines the MCP surface —
+// projectedMcpTools advertises exactly the `ok` verbs, and dispatchMcpTool
+// derives its refusal messages from the same result, so the advertised list
+// equals the callable list with no double-check.
+type ToolAvailability = "ok" | "excluded" | "no-capability" | "not-selected";
 
 function toolAvailability(
   composition: CompositionContext,
   name: string,
+  selection: ToolsetSelection,
 ): ToolAvailability {
   if (MCP_EXCLUDED_TOOLS.has(name)) return "excluded";
+  const set = toolsetOf(name);
+  if (set !== null && !selection.has(set)) return "not-selected";
   // Capability gating is owned by the core registry (tool-capabilities.ts): a
   // verb whose required handler class is absent from this Kernel's composition is
   // hidden rather than advertised as callable. This keeps the advertised list in
@@ -326,21 +344,30 @@ function toListing(tool: CustomToolDef): McpToolListing {
 
 // The tool list advertised over MCP: the integrated agent's catalog
 // (AGENT_TOOLS = the full tool surface minus UI-local verbs), minus the IDE-only
-// session/launcher verbs (MCP_EXCLUDED_TOOLS), and capability-gated to what the
-// current assembly can actually run. Reuses the existing definitions verbatim —
-// no forked schemas, no renamed verbs.
+// session/launcher verbs (MCP_EXCLUDED_TOOLS), capability-gated to what the
+// current assembly can actually run, and cut to the connection's toolsets, in
+// listing order. Reuses the existing definitions verbatim — no forked schemas,
+// no renamed verbs. Without a selection, every toolset: the whole surface.
 export function projectedMcpTools(
   composition: CompositionContext,
+  selection: ToolsetSelection = EVERY_TOOLSET,
 ): McpToolListing[] {
-  return [
-    ...AGENT_TOOLS
-      .filter((t) => toolAvailability(composition, t.name) === "ok")
-      .map((t) => toListing(t)),
+  const listed = [
+    ...AGENT_TOOLS.map((t) => toListing(t)),
     // MCP-only: the IDE has its own preview pane.
     showAppListing(),
     ...HISTORY_TOOLS.map((t) => toListing(t)),
     ...changesetFaceTools(composition).map((t) => toListing(t)),
-  ];
+    toListing(SET_TOOLSET_TOOL),
+  ].filter((t) => toolAvailability(composition, t.name, selection) === "ok");
+  return inListingOrder(listed);
+}
+
+// A connection's toolsets: what it lists now, and the change set_toolset makes.
+// The server owning the connection tells the client its list changed.
+export interface ConnectionToolsets {
+  get(): ToolsetSelection;
+  set(next: ToolsetSelection): void;
 }
 
 // A deterministic fingerprint of the STRUCTURAL tool contract — the tool names +
@@ -552,10 +579,8 @@ async function projectAutoAdvance(
 }
 
 const AGENT_TOOLS_BY_NAME: ReadonlyMap<string, CustomToolDef> = new Map(
-  [...AGENT_TOOLS, ...HISTORY_TOOLS, APPROVE_CHANGESET_TOOL].map((t) => [
-    t.name,
-    t,
-  ]),
+  [...AGENT_TOOLS, ...HISTORY_TOOLS, APPROVE_CHANGESET_TOOL, SET_TOOLSET_TOOL]
+    .map((t) => [t.name, t]),
 );
 
 // Dispatch an MCP `tools/call` through the existing core dispatch. The optional
@@ -571,8 +596,9 @@ export async function dispatchMcpTool(
   rebuild: () => void,
   context?: ChangeContext,
   binding?: SessionBinding,
+  toolsets?: ConnectionToolsets,
 ): Promise<McpToolResult> {
-  if (name === SHOW_APP) return showAppResult(kernel, args);
+  const selection = toolsets?.get() ?? EVERY_TOOLSET;
   if (
     name === APPROVE_CHANGESET &&
     changesetFaceTools(kernel.composition).length === 0
@@ -581,17 +607,22 @@ export async function dispatchMcpTool(
       `Tool "${name}" is not available in this MCP server assembly (its handler layer is not installed).`,
     );
   }
-  const availability = toolAvailability(kernel.composition, name);
+  const availability = toolAvailability(kernel.composition, name, selection);
   if (availability === "excluded") {
     return textError(
       `Tool "${name}" is not exposed over MCP: it targets the Genie IDE session/launcher, which is not present for a headless external agent.`,
     );
+  }
+  if (availability === "not-selected") {
+    const set = toolsetOf(name)!;
+    return textError(`Error [${TOOLSET_OFF}]: ${toolsetOffMessage(name, set)}`);
   }
   if (availability === "no-capability") {
     return textError(
       `Tool "${name}" is not available in this MCP server assembly (its handler layer is not installed).`,
     );
   }
+  if (name === SHOW_APP) return showAppResult(kernel, args);
   // Refuse arguments the tool does not declare before dispatch ignores them.
   // An agent on this face has no IDE watching its calls, so a silently dropped
   // `query` (for `sql`) or `code` (for `source`) costs it a confused session.
@@ -605,16 +636,39 @@ export async function dispatchMcpTool(
     }
     args = checked.args;
   }
+  if (name === SET_TOOLSET) return setToolset(args, toolsets);
   const otherProject = otherProjectRefusal(name, args, kernel);
   if (otherProject) return otherProject;
   try {
     const { value, records } = await kernel.changelog.collect(() =>
-      dispatchChecked(name, args, kernel, rebuild, context, binding)
+      dispatchChecked(name, args, kernel, rebuild, context, binding, selection)
     );
     return await withChanges(kernel, value, records);
   } catch (err) {
     return textError(`Tool "${name}" failed: ${errorMessage(err)}`);
   }
+}
+
+// set_toolset: turn one toolset on or off for this connection. A connection
+// with no toolsets of its own (a test harness) has nothing to change.
+function setToolset(
+  args: Record<string, unknown>,
+  toolsets: ConnectionToolsets | undefined,
+): McpToolResult {
+  if (!toolsets) {
+    return textError(
+      `Error [NOT_AVAILABLE]: ${SET_TOOLSET} needs an MCP connection.`,
+    );
+  }
+  const applied = applySetToolset(toolsets.get(), args);
+  if (!applied.ok) {
+    return textError(`Error [${applied.error.code}]: ${applied.error.message}`);
+  }
+  if (applied.changed) toolsets.set(applied.selection);
+  return toMcpResult(SET_TOOLSET, {
+    ok: true,
+    data: setToolsetData(applied.selection, applied.changed),
+  });
 }
 
 // Verbs whose project_path/project_name can reach another project's history.
@@ -652,8 +706,9 @@ async function dispatchChecked(
   args: Record<string, unknown>,
   kernel: Kernel,
   rebuild: () => void,
-  context?: ChangeContext,
-  binding?: SessionBinding,
+  context: ChangeContext | undefined,
+  binding: SessionBinding | undefined,
+  selection: ToolsetSelection,
 ): Promise<McpToolResult> {
   if (HISTORY_TOOL_NAMES.has(name)) {
     return toMcpResult(
@@ -679,7 +734,9 @@ async function dispatchChecked(
       ...result,
       data: {
         ...data,
-        surface: mcpSurfaceMeta(projectedMcpTools(kernel.composition)),
+        surface: mcpSurfaceMeta(
+          projectedMcpTools(kernel.composition, selection),
+        ),
       },
     });
   }

@@ -19,6 +19,9 @@ import type {
   ModelUsageRecord,
   RecordModelUsageInput,
 } from "./types.ts";
+import type { Toolset } from "./tools/toolsets.ts";
+
+export type { Toolset };
 import type { ReviewPacket, ReviewVerdict } from "./reviews.ts";
 
 // The runtime inputs the loop gathers from the kernel (enabled skills, registered
@@ -98,6 +101,10 @@ export interface ChatIntelligence {
   // Without one, the model gets request_review and submit_review like any MCP
   // client.
   reviewer?: Reviewer;
+  // The toolsets the loop offers its model at the start of a chat
+  // (core/tools/toolsets.ts); core is always among them, and set_toolset changes
+  // them mid-chat. Absent: every toolset.
+  toolsets?: readonly Toolset[];
   // The base system prompt with the project sections (skills, secrets,
   // custom instructions) composed in. The loop wraps session context around this.
   baseSystemPrompt(opts: PromptOpts): string;

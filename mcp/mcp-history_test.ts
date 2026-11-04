@@ -508,7 +508,11 @@ Deno.test({
     await initCompiler();
     try {
       await withKernel(async (kernel) => {
-        const server = createMcpServer({ kernel, rebuild: noop });
+        const server = createMcpServer(
+          { kernel, rebuild: noop },
+          "stdio",
+          "sessions",
+        );
         const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
         const client = new Client({ name: "history-test", version: "0.0.0" });
         await Promise.all([
@@ -621,7 +625,11 @@ Deno.test({
     await initCompiler();
     try {
       await withKernel(async (kernel) => {
-        const server = createMcpServer({ kernel, rebuild: noop });
+        const server = createMcpServer(
+          { kernel, rebuild: noop },
+          "stdio",
+          "sessions",
+        );
         const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
         const client = new Client({ name: "reader", version: "0.0.0" });
         await Promise.all([

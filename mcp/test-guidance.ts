@@ -4,6 +4,10 @@
 import type { CompositionContext } from "../core/composition.ts";
 import { generalGuide } from "../core/agent-guide.ts";
 import { projectedMcpTools } from "./mcp-projection.ts";
+import {
+  EVERY_TOOLSET,
+  type ToolsetSelection,
+} from "../core/tools/toolsets.ts";
 import { MCP_PROMPTS } from "./mcp-prompts.ts";
 
 // Snake_case words in the guidance that are arguments or placeholders, not tools.
@@ -17,16 +21,18 @@ const NOT_TOOLS = new Set([
 
 // Every snake_case word the instructions and prompts render under `composition`
 // that is neither an advertised tool nor a known argument — so renaming a verb,
-// or assembling without one, cannot leave the guidance pointing at a tool the
-// server does not offer. Empty when the guidance is consistent.
+// assembling without one, or a connection's toolsets leaving it out, cannot
+// leave the guidance pointing at a tool the server does not offer. Empty when
+// the guidance is consistent.
 export function unadvertisedToolMentions(
   composition: CompositionContext,
+  selection: ToolsetSelection = EVERY_TOOLSET,
 ): string[] {
   const advertised = new Set(
-    projectedMcpTools(composition).map((t) => t.name),
+    projectedMcpTools(composition, selection).map((t) => t.name),
   );
   const texts = [
-    generalGuide(),
+    generalGuide(selection),
     ...MCP_PROMPTS.map((p) =>
       p.render({ goal: "g", changeset_id: "c" }, composition)
     ),

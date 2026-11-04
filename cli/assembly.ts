@@ -237,6 +237,9 @@ export interface McpTransportArgs {
   printConfig: string | null;
   // --help/-h: print usage and exit.
   help: boolean;
+  // --tools git,docs: the toolsets to list besides core (core/tools/toolsets.ts).
+  // Null: the project's opentide.json decides.
+  tools: string | null;
 }
 
 export function getMcpTransportArgs(
@@ -252,6 +255,7 @@ export function getMcpTransportArgs(
       port: { type: "string" },
       "print-config": { type: "string" },
       help: { type: "boolean", short: "h" },
+      tools: { type: "string" },
     },
     allowPositionals: true,
   });
@@ -264,6 +268,7 @@ export function getMcpTransportArgs(
     port,
     printConfig: values["print-config"] ?? null,
     help: Boolean(values.help),
+    tools: values.tools ?? null,
   };
 }
 

@@ -455,7 +455,10 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // sessions no longer starts the connection's session. PATCH: an annotation.
 // v8.0.0: record_model_usage's role no longer takes "pricing"; the pricing
 // research agent is gone. MAJOR: an enum value removed.
-export const MCP_SURFACE_VERSION = "8.0.0";
+// v9.0.0: toolsets (core/tools/toolsets.ts). A connection lists core alone (57
+// tools) unless it selects more; set_toolset turns one on or off. MAJOR: the
+// default list lost 65 tools.
+export const MCP_SURFACE_VERSION = "9.0.0";
 
 // The per-call `_meta` key for turn context:
 // {turn_id, turn_index?, tool_call_id?, user_message?}.
@@ -479,6 +482,10 @@ export const MCP_HTTP_PORT = 3005;
 // Path of the MCP endpoint, both on `opentide serve` and on standalone
 // `opentide mcp --http`. One path, so a client config only changes the port.
 export const MCP_HTTP_PATH = "/mcp";
+// `/mcp?toolsets=git,docs`: the toolsets an MCP connection starts with
+// (core/tools/toolsets.ts). The integrated agent asks for all of them; its own
+// loop decides what its model sees.
+export const MCP_TOOLSETS_PARAM = "toolsets";
 
 // The per-server bearer token that gates the MCP HTTP endpoint (core/server-
 // token.ts). Minted fresh on every project open unless this env var pins it, which

@@ -49,7 +49,9 @@ import {
   METHOD_NOT_FOUND,
   preInitializeReply,
   stdioTransport,
+  withToolsets,
 } from "./mcp-bridge.ts";
+import { parseToolsetList } from "../core/tools/toolsets.ts";
 import {
   appPreviewResourceContents,
   appPreviewResourceListing,
@@ -70,6 +72,7 @@ type Params = Record<string, unknown>;
 const INTERNAL_ERROR = -32603;
 const INVALID_PARAMS = -32602;
 const INTERNAL_ID_PREFIX = "opentide-workspace-";
+const TOOLS_LIST_CHANGED = "notifications/tools/list_changed";
 
 export const LIST_PROJECTS = "list_projects";
 export const OPEN_PROJECT = "open_project";
@@ -325,11 +328,18 @@ class Upstream {
       jsonrpc: "2.0",
       method: "notifications/initialized",
     });
-    const listed = await this.request("tools/list", {});
     return {
       instructions: typeof init.instructions === "string"
         ? init.instructions
         : null,
+      ...await this.listTools(),
+    };
+  }
+
+  // Serve's tool list now. It changes when the agent calls set_toolset.
+  async listTools(): Promise<Pick<OpenedApp, "tools" | "meta">> {
+    const listed = await this.request("tools/list", {});
+    return {
       tools: Array.isArray(listed.tools) ? listed.tools : [],
       meta: listed._meta,
     };
@@ -414,7 +424,7 @@ export function runWorkspace(
 
   function notifyIfListChanged(): void {
     if (listedNames === null || listedNames === names()) return;
-    void send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+    void send({ jsonrpc: "2.0", method: TOOLS_LIST_CHANGED });
   }
 
   // Closing ends serve's side too (its SSE stream to us), so callers that need
@@ -442,6 +452,10 @@ export function runWorkspace(
     const next: Upstream = new Upstream(
       located.data,
       (msg) => {
+        if ("method" in msg && msg.method === TOOLS_LIST_CHANGED) {
+          void refreshTools(next);
+          return;
+        }
         if ("id" in msg && msg.id !== null && !("method" in msg)) {
           pending.delete(msg.id);
         }
@@ -470,6 +484,19 @@ export function runWorkspace(
           message: `Couldn't connect to ${name}'s server: ${errorMessage(err)}`,
         },
       };
+    }
+  }
+
+  // Serve's list changed (set_toolset): this bridge answers tools/list from
+  // what it holds, so it fetches the new list before telling the client.
+  async function refreshTools(from: Upstream): Promise<void> {
+    try {
+      const listed = await from.listTools();
+      if (upstream !== from || !opened) return;
+      opened = { ...opened, ...listed };
+      notifyIfListChanged();
+    } catch (err) {
+      console.error(`  Couldn't refresh the tool list: ${errorMessage(err)}`);
     }
   }
 
@@ -674,10 +701,13 @@ export function runWorkspace(
 
 // `opentide mcp` on a folder that isn't a project. Logs go to stderr; stdout
 // belongs to JSON-RPC.
+// `toolsets` (--tools) goes to each app's serve; null lets each app's
+// opentide.json decide. Before an app is open the list is core plus `toolsets`.
 export async function runWorkspaceBridge(
   folder: string,
   eager: boolean,
   composition: CompositionContext,
+  toolsets: string | null = null,
 ): Promise<number> {
   const dir = resolve(folder);
   console.error(
@@ -687,9 +717,12 @@ export async function runWorkspaceBridge(
   return await runWorkspace(stdioTransport(), {
     folder: dir,
     eager,
-    surface: projectedMcpTools(composition),
-    guide: generalGuide(),
-    locate: locateAndReport,
+    surface: projectedMcpTools(
+      composition,
+      parseToolsetList(toolsets ?? "").selection,
+    ),
+    guide: generalGuide(parseToolsetList(toolsets ?? "").selection),
+    locate: async (dir) => withToolsets(await locateAndReport(dir), toolsets),
     create: createApp,
     memory: fileWorkspaceMemory(),
   });

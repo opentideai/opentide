@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/opentideai/opentide/actions/workflows/ci.yml"><img src="https://github.com/opentideai/opentide/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/opentideai/opentide/releases/latest"><img src="https://img.shields.io/github/v/release/opentideai/opentide?color=5eead4&label=release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/MCP-109_tools-7dd3fc" alt="MCP: 109 tools">
+  <img src="https://img.shields.io/badge/MCP-122_tools-7dd3fc" alt="MCP: 122 tools">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-94a3b8" alt="Apache-2.0"></a>
 </p>
 
@@ -163,8 +163,8 @@ Most agent tokens go on rediscovering your code. Here the agent asks.
   rewrite whole files to change one function.
 - Errors are structured and specific. A mistyped argument comes back as
   `INVALID_ARGUMENTS` naming the right key, so it's fixed on the first retry.
-- Claude Code loads OpenTide's tools on demand, so 109 tools don't sit in every
-  prompt.
+- The agent's prompt carries the tools it uses. 57 core tools are listed by
+  default; git, docs, tasks and the rest are one `set_toolset` call away.
 
 ### <img src="assets/icons/live.svg" width="22" height="22" align="top" alt=""> See it working right away
 

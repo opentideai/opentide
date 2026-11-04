@@ -16,6 +16,11 @@
 // (set_system_prompt), which are appended under "This project".
 import type { Kernel } from "./registries.ts";
 import { RESERVED_NAMES_RULE } from "./reserved-names.ts";
+import {
+  EVERY_TOOLSET,
+  type Toolset,
+  type ToolsetSelection,
+} from "./tools/toolsets.ts";
 
 export const CUSTOM_INSTRUCTIONS_CONFIG = "_genie_custom_instructions";
 
@@ -24,12 +29,16 @@ opentide serves one app. Its code, routes, schemas, templates and tests live in 
 the database this server owns, not in source files.
 
 - Change the app only through these tools. Never read or edit .opentide/state/** \
-(a flushed copy, not source) and never hand-edit AGENT.md (generate_project_docs \
-rewrites it).
+(a flushed copy, not source) and never hand-edit AGENT.md (it is generated).
 - This process owns the database. Never start another opentide process or the IDE \
 against the same project while it runs: a second owner corrupts it.
 - Start with project_status. If its verdict is "stop", report the problems and \
 change nothing.
+- Tools come in toolsets; only core is on unless the project selects more. A \
+TOOLSET_OFF refusal names the toolset: turn it on with set_toolset.`;
+
+// Lines that name a tool outside core, shown only when its toolset is on.
+const GUIDE_SESSIONS = `\
 - Read past sessions with get_session_context. After landing work, \
 set_session_summary: what changed and why.`;
 
@@ -42,8 +51,7 @@ later refused as outside the plan, amend_changeset_plan, then retry.
 by your own criterion ids. A "must" criterion wants a refute review: \
 request_review, run the packet in a subagent, then submit_review.
 4. check_changeset_readiness, then complete_changeset. If it returns \
-stateFlushed: false, tell the user: the work exists only in memory. Work done \
-outside a changeset ends with flush_project_state.
+stateFlushed: false, tell the user: the work exists only in memory.
 ${RESERVED_NAMES_RULE}`;
 
 export const GUIDE_FAILURE = `\
@@ -51,9 +59,22 @@ export const GUIDE_FAILURE = `\
 Do not repair storage by hand.
 - INVALID_ARGUMENTS names the argument you meant. Fix the call and retry once.`;
 
-export function generalGuide(): string {
-  return [
+const GUIDE_LINES_BY_TOOLSET: ReadonlyArray<[Toolset, string]> = [
+  ["sessions", GUIDE_SESSIONS],
+];
+
+// The general rules for a connection listing `selection`: a line naming a tool
+// outside it is left out. Without a selection, every line.
+export function generalGuide(
+  selection: ToolsetSelection = EVERY_TOOLSET,
+): string {
+  const ownership = [
     GUIDE_OWNERSHIP,
+    ...GUIDE_LINES_BY_TOOLSET.filter(([set]) => selection.has(set))
+      .map(([, line]) => line),
+  ].join("\n");
+  return [
+    ownership,
     "Changing the app",
     GUIDE_WORK_LOOP,
     "When things break",
@@ -77,8 +98,11 @@ export const INSTRUCTIONS_MAX_CHARS = 2048;
 // The full instructions for one connection: the general rules, then the
 // project's. Read once at connect; a set_system_prompt mid-session reaches the
 // next connection.
-export function buildAgentInstructions(kernel: Kernel): string {
-  const general = generalGuide();
+export function buildAgentInstructions(
+  kernel: Kernel,
+  selection: ToolsetSelection = EVERY_TOOLSET,
+): string {
+  const general = generalGuide(selection);
   const project = projectGuide(kernel);
   if (!project) return general;
   const inline = `${general}\n\nThis project\n\n${project}`;

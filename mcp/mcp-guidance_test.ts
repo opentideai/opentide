@@ -17,6 +17,7 @@ import type { ChangeContext } from "../core/changelog.ts";
 import { dispatchTool } from "../core/tools/dispatch.ts";
 import { dispatchMcpTool, projectedMcpTools } from "./mcp-projection.ts";
 import { unadvertisedToolMentions } from "./test-guidance.ts";
+import { CORE_ONLY } from "../core/tools/toolsets.ts";
 import {
   CUSTOM_INSTRUCTIONS_CONFIG,
   generalGuide,
@@ -310,6 +311,7 @@ Deno.test({
   name: "MCP: every tool the instructions and prompts name is advertised",
   fn: () => {
     assertEquals(unadvertisedToolMentions(testComposition()), []);
+    assertEquals(unadvertisedToolMentions(testComposition(), CORE_ONLY), []);
   },
 });
 

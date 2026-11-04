@@ -47,6 +47,7 @@ import {
 } from "../core/composition.ts";
 import { testStoreComposition } from "../verification/test-stores.ts";
 import { testComposition } from "../cli/test-composition.ts";
+import { CORE_ONLY } from "../core/tools/toolsets.ts";
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 const noop = () => {};
@@ -1390,8 +1391,12 @@ Deno.test({
 // v7.2.0 adds get_changeset, link_session_message and the MCP-only
 // approve_changeset (118 -> 121), and optional fields on create/amend, the
 // document verbs and git_commit. Additive, so MINOR.
-const PINNED_SURFACE_FINGERPRINT = "f8cd-3eca76e1";
-const PINNED_SURFACE_TOOL_COUNT = 121;
+// v9.0.0 adds set_toolset (121 -> 122 with every toolset) and lists core alone
+// by default (57). Both are pinned.
+const PINNED_SURFACE_FINGERPRINT = "fa34-77bd904a";
+const PINNED_SURFACE_TOOL_COUNT = 122;
+const PINNED_CORE_FINGERPRINT = "970f-b10438f0";
+const PINNED_CORE_TOOL_COUNT = 57;
 
 Deno.test({
   ...testOpts,
@@ -1410,6 +1415,9 @@ Deno.test({
       "tool names/schemas changed — this is a surface-contract change: update the " +
         "pin and bump MCP_SURFACE_VERSION (major if a removal/incompatible schema)",
     );
+    const core = projectedMcpTools(OPEN_COMPOSITION, CORE_ONLY);
+    assertEquals(core.length, PINNED_CORE_TOOL_COUNT);
+    assertEquals(mcpSurfaceFingerprint(core), PINNED_CORE_FINGERPRINT);
   },
 });
 
@@ -1541,7 +1549,8 @@ Deno.test({
           | undefined;
         assert(surface, `tools/list _meta must carry ${MCP_SURFACE_META_KEY}`);
         assertEquals(surface.version, MCP_SURFACE_VERSION);
-        assertEquals(surface.fingerprint, PINNED_SURFACE_FINGERPRINT);
+        // A connection that selects nothing lists core alone.
+        assertEquals(surface.fingerprint, PINNED_CORE_FINGERPRINT);
         assertEquals(surface.toolCount, result.tools.length);
       } finally {
         await dispose();

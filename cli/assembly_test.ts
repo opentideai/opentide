@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   getBuildArgs,
   getExportArgs,
+  getMcpTransportArgs,
   getServeArgs,
   invocationCwd,
   resolveProjectPath,
@@ -147,4 +148,12 @@ Deno.test("getServeArgs: --exit-when-idle is off unless passed", () => {
     getServeArgs(3003, ["--project", "/x", "--exit-when-idle"]).exitWhenIdle,
     true,
   );
+});
+
+Deno.test("getMcpTransportArgs reads --tools, null without it", () => {
+  assertEquals(
+    getMcpTransportArgs(3010, ["--tools", "git,docs"]).tools,
+    "git,docs",
+  );
+  assertEquals(getMcpTransportArgs(3010, []).tools, null);
 });

@@ -13,6 +13,19 @@ import {
   runOwedGateReviews,
 } from "./reviews.ts";
 import { checkToolArgs, formatArgIssues } from "../core/tools/validate-args.ts";
+import {
+  applySetToolset,
+  EVERY_TOOLSET,
+  parseToolsets,
+  selects,
+  SET_TOOLSET,
+  SET_TOOLSET_TOOL,
+  setToolsetData,
+  TOOLSET_OFF,
+  toolsetOf,
+  toolsetOffMessage,
+  type ToolsetSelection,
+} from "../core/tools/toolsets.ts";
 import { commitProject } from "./commit-subject.ts";
 import { ToolApprovals } from "./tool-approval.ts";
 import type {
@@ -158,7 +171,10 @@ import {
 } from "../core/documents.ts";
 
 const AGENT_TOOLS_BY_NAME = new Map(
-  [...AGENT_TOOLS, ...CLIENT_REVIEW_TOOLS].map((t) => [t.name, t]),
+  [...AGENT_TOOLS, ...CLIENT_REVIEW_TOOLS, SET_TOOLSET_TOOL].map((t) => [
+    t.name,
+    t,
+  ]),
 );
 
 export interface WireAttachment {
@@ -1051,6 +1067,10 @@ export class ChatOrchestrator implements ChatRuntime {
   > = [];
   private inProgressBusy = false;
   private toolApprovals = new ToolApprovals();
+  // The toolsets the model is offered. set_toolset changes them until the agent
+  // restarts, and the turn rebuilds its tool list before its next request.
+  private toolsets: ToolsetSelection;
+  private toolsetsChanged = false;
   private sessionNameGenerator: SessionNameGenerator;
 
   constructor(
@@ -1072,6 +1092,9 @@ export class ChatOrchestrator implements ChatRuntime {
     this.sessions = backend.history;
     this.mcpManager = mcpManager;
     this.brain = brain;
+    this.toolsets = brain.toolsets
+      ? parseToolsets(brain.toolsets).selection
+      : EVERY_TOOLSET;
     this.provider = provider;
     this.sessionNameGenerator = sessionNameGenerator;
     // The user-configured model (may be the DEFAULT_MODEL_ID sentinel); the brain
@@ -1477,10 +1500,27 @@ export class ChatOrchestrator implements ChatRuntime {
     const mcpTools = this.mcpManager.getCustomTools();
     const ownTools = this.ownTools();
     const remainingMcpSlots = Math.max(0, MAX_AGENT_TOOLS - ownTools.length);
+    this.reportDroppedMcpTools(
+      mcpTools.slice(remainingMcpSlots).map((t) => t.name),
+    );
     return toNeutralTools([
       ...ownTools,
       ...mcpTools.slice(0, remainingMcpSlots),
     ]);
+  }
+
+  // External tools past the budget don't reach the model. The manager keeps the
+  // list for Settings → MCP servers; the log says so when it changes.
+  private reportDroppedMcpTools(dropped: string[]): void {
+    if (!this.mcpManager.setDroppedTools(dropped) || dropped.length === 0) {
+      return;
+    }
+    this.log.log(
+      "warn",
+      "system",
+      `${dropped.length} MCP tools don't fit the ${MAX_AGENT_TOOLS}-tool ` +
+        `budget and aren't given to the model: ${dropped.join(", ")}`,
+    );
   }
 
   // The loop's own verbs stay out of its model's tools: it approves plans on
@@ -1488,7 +1528,12 @@ export class ChatOrchestrator implements ChatRuntime {
   // runs reviews itself too: its model gets refute_claims and run_audit
   // instead of the packet pair.
   private ownTools() {
-    const tools = AGENT_TOOLS.filter((t) => !LOOP_TOOL_NAMES.has(t.name));
+    const tools = [
+      ...AGENT_TOOLS.filter((t) =>
+        !LOOP_TOOL_NAMES.has(t.name) && selects(this.toolsets, t.name)
+      ),
+      SET_TOOLSET_TOOL,
+    ];
     if (!this.brain.reviewer) return tools;
     return [
       ...tools.filter((t) => !REVIEW_PACKET_TOOL_NAMES.has(t.name)),
@@ -1709,12 +1754,12 @@ export class ChatOrchestrator implements ChatRuntime {
       activeWorkCs,
       approvalStarted,
       system,
-      tools,
       model,
       modelRole,
       documentMentions,
       attachments,
     } = opts;
+    let tools = opts.tools;
     const provider = this.provider!;
 
     // Slice 5 reactive-recovery snapshot (context-hardening plan). The turn's triggering
@@ -1889,6 +1934,11 @@ export class ChatOrchestrator implements ChatRuntime {
       // the appended tool results until a terminal stop (or an approval pause).
       while (true) {
         if (this.cancelledFlag) break;
+        // set_toolset changed what the model is offered: the next request says so.
+        if (this.toolsetsChanged) {
+          this.toolsetsChanged = false;
+          tools = this.buildNeutralTools();
+        }
         const controller = new AbortController();
         const req: TurnRequest = {
           model,
@@ -2546,6 +2596,19 @@ export class ChatOrchestrator implements ChatRuntime {
         },
       };
     }
+    const toolset = toolsetOf(tu.name);
+    if (toolset !== null && !this.toolsets.has(toolset)) {
+      return {
+        ok: false,
+        error: {
+          code: TOOLSET_OFF,
+          message: toolsetOffMessage(tu.name, toolset),
+        },
+      };
+    }
+    if (tu.name === SET_TOOLSET) {
+      return this.setToolset(tu.input as Record<string, unknown>);
+    }
     try {
       const toolInput = tu.input as Record<string, unknown>;
       if (
@@ -2592,6 +2655,19 @@ export class ChatOrchestrator implements ChatRuntime {
         },
       };
     }
+  }
+
+  // set_toolset: the loop owns its model's tool list, so it applies the change
+  // itself; the next request in this turn has the new tools.
+  private setToolset(args: Record<string, unknown>): ToolResult {
+    const applied = applySetToolset(this.toolsets, args);
+    if (!applied.ok) return { ok: false, error: applied.error };
+    this.toolsets = applied.selection;
+    if (applied.changed) this.toolsetsChanged = true;
+    return {
+      ok: true,
+      data: setToolsetData(applied.selection, applied.changed),
+    };
   }
 
   private emitSessionEventIfAny(

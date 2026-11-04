@@ -8,7 +8,12 @@
 // connect from here.
 import type { Hono } from "hono";
 import { type AuthProvider, LocalAuthProvider } from "../core/auth-provider.ts";
-import { AGENT_MCP_CLIENT_NAME, MCP_HTTP_PATH } from "../core/config.ts";
+import {
+  AGENT_MCP_CLIENT_NAME,
+  MCP_HTTP_PATH,
+  MCP_TOOLSETS_PARAM,
+} from "../core/config.ts";
+import { ALL_TOOLSETS } from "../core/tools/toolsets.ts";
 import { getProjectPaths } from "../core/project-manager.ts";
 import { KernelLog } from "../core/registries.ts";
 import { readServerToken } from "../core/server-token.ts";
@@ -64,6 +69,14 @@ export function serveAgentHost(options: ServeHostOptions): AgentHost {
   };
 }
 
+// The agent's MCP connection selects every toolset: the loop decides what its
+// model sees, and calls the history verbs itself.
+export function agentMcpUrl(server: string | URL): URL {
+  const url = new URL(MCP_HTTP_PATH, server);
+  url.searchParams.set(MCP_TOOLSETS_PARAM, ALL_TOOLSETS);
+  return url;
+}
+
 async function attachProject(
   path: string,
   options: ServeHostOptions,
@@ -76,7 +89,7 @@ async function attachProject(
     );
   }
   const client = await connectMcp(
-    new URL(MCP_HTTP_PATH, options.server),
+    agentMcpUrl(options.server),
     token,
     AGENT_MCP_CLIENT_NAME,
   );

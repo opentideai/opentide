@@ -28,6 +28,8 @@ import { getProjectPaths } from "../core/project-manager.ts";
 export interface McpServerView extends MCPServerConfig {
   status: MCPServerStatus;
   error?: string;
+  // Its tools the agent's model isn't given: they don't fit the tool budget.
+  droppedTools: string[];
 }
 
 export type McpServerEdit =
@@ -58,7 +60,11 @@ export function projectMcpServers(
     : legacyServers(projectDir);
 
   function view(config: MCPServerConfig): McpServerView {
-    return { ...config, ...manager.getStatus(config.name) };
+    return {
+      ...config,
+      ...manager.getStatus(config.name),
+      droppedTools: manager.droppedTools(config.name),
+    };
   }
 
   async function save(next: MCPServerConfig[]): Promise<{ errors: string[] }> {

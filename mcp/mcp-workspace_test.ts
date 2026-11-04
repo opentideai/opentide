@@ -202,6 +202,27 @@ Deno.test(
       const status = await call(again.client, "project_status");
       assert(!status.isError, text(status));
       assertEquals(openPath(), join(folder, "beta"));
+
+      // set_toolset on the open app: the bridge fetches serve's new list
+      // before telling the client it changed.
+      const lists = async () =>
+        (await again.client.listTools()).tools.map((t: { name: string }) =>
+          t.name
+        );
+      assert(!(await lists()).includes("git_push"));
+      const refreshed = new Promise<void>((resolve) =>
+        again.client.setNotificationHandler(
+          ToolListChangedNotificationSchema,
+          () => resolve(),
+        )
+      );
+      const on = await call(again.client, "set_toolset", {
+        toolset: "git",
+        enabled: true,
+      });
+      assert(!on.isError, text(on));
+      await refreshed;
+      assert((await lists()).includes("git_push"));
       await again.client.close();
       assertEquals(await again.exit, 0);
     } finally {

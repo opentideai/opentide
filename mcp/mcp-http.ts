@@ -19,7 +19,11 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer, type McpServerDeps } from "./mcp-server.ts";
-import { DEV_SERVER_HOST, MCP_HTTP_PATH } from "../core/config.ts";
+import {
+  DEV_SERVER_HOST,
+  MCP_HTTP_PATH,
+  MCP_TOOLSETS_PARAM,
+} from "../core/config.ts";
 import { isLoopbackRequest } from "../core/loopback-guard.ts";
 import { bearerMatches, SERVER_TOKEN_FILE } from "../core/server-token.ts";
 
@@ -92,8 +96,11 @@ export interface McpHttpHandler {
 
 // `getDeps` is read when a session opens, not when the handler is built, so a
 // mounted handler follows the control server's current project.
+// `toolsets` is what a connection gets when its URL doesn't say (--tools on a
+// standalone HTTP server); null lets the project's opentide.json decide.
 export function createMcpHttpHandler(
   getDeps: () => McpServerDeps,
+  toolsets: string | null = null,
 ): McpHttpHandler {
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
@@ -104,10 +111,10 @@ export function createMcpHttpHandler(
   // Server — the SDK chains the Server's close onto transport.onclose — so the
   // registry only needs to hold the transport. Returns it so the caller can hand
   // it the initialize request.
-  async function openSession(): Promise<
-    WebStandardStreamableHTTPServerTransport
-  > {
-    const server = createMcpServer(getDeps(), "http");
+  async function openSession(
+    toolsets: string | null,
+  ): Promise<WebStandardStreamableHTTPServerTransport> {
+    const server = createMcpServer(getDeps(), "http", toolsets);
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       onsessioninitialized: (sessionId: string) => {
@@ -144,7 +151,9 @@ export function createMcpHttpHandler(
         return jsonRpcError(400, "Invalid JSON-RPC request body.");
       }
       if (isInitializeRequest(body)) {
-        const transport = await openSession();
+        const transport = await openSession(
+          new URL(req.url).searchParams.get(MCP_TOOLSETS_PARAM) ?? toolsets,
+        );
         return await transport.handleRequest(req, { parsedBody: body });
       }
       return jsonRpcError(
@@ -180,8 +189,9 @@ export function serveMcpHttp(
   deps: McpServerDeps,
   port: number,
   token: string,
+  toolsets: string | null = null,
 ): McpHttpServer {
-  const handler = createMcpHttpHandler(() => deps);
+  const handler = createMcpHttpHandler(() => deps, toolsets);
 
   const httpServer = Deno.serve(
     { hostname: DEV_SERVER_HOST, port, onListen: () => {} },

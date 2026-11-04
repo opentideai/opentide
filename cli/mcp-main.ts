@@ -20,6 +20,7 @@ import { serveMcpHttp } from "../mcp/mcp-http.ts";
 import { runMcpBridge } from "../mcp/mcp-bridge.ts";
 import { serveNoProjectStdio } from "../mcp/mcp-no-project.ts";
 import { runWorkspaceBridge } from "../mcp/mcp-workspace.ts";
+import { parseToolsetList, TOOLSET_NAMES } from "../core/tools/toolsets.ts";
 import {
   connectConfigTarget,
   generateConnectConfig,
@@ -45,7 +46,7 @@ const USAGE =
   `opentide mcp — outbound MCP server (external agents drive the core)
 
 USAGE:
-  opentide mcp [--project <path>] [--standalone | --http [--port N]]
+  opentide mcp [--project <path>] [--tools <toolsets>] [--standalone | --http [--port N]]
   opentide mcp --print-config <${
     MCP_CLIENTS.join("|")
   }> [--project <path>] [--http [--port N]]
@@ -53,6 +54,11 @@ USAGE:
 OPTIONS:
   -p, --project <path>       Project to serve (default: the current directory, if it has an opentide.json;
                              embedded in a printed stdio config).
+      --tools <a,b>          Toolsets to list besides core, comma-separated, or "all"
+                             (default: the project's opentide.json "toolsets"). Toolsets:
+                             ${
+    TOOLSET_NAMES.filter((s) => s !== "core").join(", ")
+  }.
       --standalone           Load the project in this process instead of bridging to its serve process.
       --http                 Serve streamable-HTTP on 127.0.0.1:<port> instead of stdio.
       --port <N>             HTTP port (default ${MCP_HTTP_PORT}).
@@ -141,6 +147,16 @@ export async function serveMcp(
     Deno.exit(0);
   }
   if (args.printConfig !== null) printConfigAndExit(args);
+  if (args.tools !== null) {
+    const { unknown } = parseToolsetList(args.tools);
+    if (unknown.length > 0) {
+      console.error(
+        `Unknown toolsets: ${unknown.join(", ")}. Toolsets: all, ` +
+          `${TOOLSET_NAMES.join(", ")}.`,
+      );
+      Deno.exit(2);
+    }
+  }
 
   const cwd = invocationCwd();
   const project = resolveProjectPath(args.projectPath, cwd);
@@ -163,12 +179,15 @@ export async function serveMcp(
         folder,
         args.projectPath !== null,
         assembly.composition(),
+        args.tools,
       ),
     );
   }
   const projectPath = project.data;
 
-  if (!http && !args.standalone) Deno.exit(await runMcpBridge(projectPath));
+  if (!http && !args.standalone) {
+    Deno.exit(await runMcpBridge(projectPath, args.tools));
+  }
 
   await initCompiler();
   console.error("  Compiler ready (esbuild)");
@@ -194,7 +213,7 @@ export async function serveMcp(
     const written = writeServerToken(projectCtx.entry.path, token);
     if (!written.ok) console.error(`  ${written.error.message}`);
   }
-  const httpServer = token ? serveMcpHttp(deps, port, token) : null;
+  const httpServer = token ? serveMcpHttp(deps, port, token, args.tools) : null;
 
   let shuttingDown = false;
   const shutdown = async (code: number) => {
@@ -234,7 +253,7 @@ export async function serveMcp(
 
   console.error("  MCP server ready on stdio. Connect an external agent.");
   // Resolves when the client disconnects (stdin closes); then tear down cleanly.
-  await serveMcpStdio(deps);
+  await serveMcpStdio(deps, args.tools);
   await shutdown(0);
 }
 

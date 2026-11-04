@@ -27,7 +27,8 @@ import { Database } from "../core/db.ts";
 import { MCPManager } from "../core/mcp.ts";
 import { Kernel } from "../core/registries.ts";
 import { initCompiler, stopCompiler } from "../core/compiler.ts";
-import { MCP_HTTP_PATH, setKernelSettings } from "../core/config.ts";
+import { setKernelSettings } from "../core/config.ts";
+import { agentMcpUrl } from "./agent-host.ts";
 import { createProject, getProjectPaths } from "../core/project-manager.ts";
 import { isolateHome, TEST_TMP_DIR } from "../core/test-home_test.ts";
 import type { TurnUsage } from "../core/types.ts";
@@ -152,7 +153,7 @@ function serveMcp(kernel: Kernel): {
     (req) => rejectBadToken(req, token) ?? handler.handle(req),
   );
   return {
-    url: new URL(`http://127.0.0.1:${server.addr.port}${MCP_HTTP_PATH}`),
+    url: agentMcpUrl(`http://127.0.0.1:${server.addr.port}`),
     token,
     close: async () => {
       await handler.closeAll();

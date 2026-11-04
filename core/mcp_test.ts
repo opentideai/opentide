@@ -125,6 +125,26 @@ Deno.test({
   },
 });
 
+Deno.test({
+  ...testOpts,
+  name: "MCP dropped tools are kept per server and only change when told",
+  fn: async () => {
+    const mgr = new MCPManager();
+    const { transport, close } = await inMemoryServer(["a", "b", "c"]);
+    await mgr.connect(baseConfig("srv"), transport);
+
+    assert(mgr.setDroppedTools(["mcp__srv__b", "mcp__srv__c"]));
+    assert(!mgr.setDroppedTools(["mcp__srv__c", "mcp__srv__b"]));
+    assertEquals(mgr.droppedTools("srv"), ["b", "c"]);
+    assertEquals(mgr.droppedTools("other"), []);
+    assert(mgr.setDroppedTools([]));
+    assertEquals(mgr.droppedTools("srv"), []);
+
+    await mgr.closeAll();
+    await close().catch(() => {});
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Real streamable-HTTP: point MCPManager at a live in-process outbound MCP
 // server (serveMcpHttp) — the manager builds a real StreamableHTTPClientTransport

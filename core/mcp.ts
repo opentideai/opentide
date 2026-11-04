@@ -149,6 +149,8 @@ export class MCPManager {
     this.statuses.set(name, { status: "disconnected" });
   }
 
+  private dropped = new Set<string>();
+
   getStatus(name: string): { status: MCPServerStatus; error?: string } {
     return this.statuses.get(name) ?? { status: "disconnected" };
   }
@@ -186,6 +188,25 @@ export class MCPManager {
       }
     }
     return result;
+  }
+
+  // The qualified names of tools the agent's model isn't given because they
+  // don't fit its tool budget. Set by the chat each time it builds a request;
+  // true when the list changed.
+  setDroppedTools(qualifiedNames: readonly string[]): boolean {
+    const next = [...qualifiedNames].sort().join("\n");
+    if (next === [...this.dropped].sort().join("\n")) return false;
+    this.dropped = new Set(qualifiedNames);
+    return true;
+  }
+
+  // One server's tools that the model isn't given, by tool name.
+  droppedTools(server: string): string[] {
+    const entry = this.servers.get(server);
+    if (!entry) return [];
+    return entry.tools
+      .filter((t) => this.dropped.has(this.qualifiedToolName(server, t.name)))
+      .map((t) => t.name);
   }
 
   getToolsHash(): string {

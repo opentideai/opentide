@@ -15,7 +15,7 @@ import { takeOverProject } from "../core/project-handover.ts";
 import { readServerToken } from "../core/server-token.ts";
 import { testComposition } from "../cli/test-composition.ts";
 import { locateServe, type SpawnedServe } from "../core/serve-process.ts";
-import { proxyMcp, UPSTREAM_LOST } from "./mcp-bridge.ts";
+import { proxyMcp, UPSTREAM_LOST, withToolsets } from "./mcp-bridge.ts";
 import { mountMcpRoutes } from "./mcp-mount.ts";
 import { isolateHome } from "../core/test-home_test.ts";
 
@@ -264,3 +264,14 @@ Deno.test(
     }
   },
 );
+
+Deno.test("withToolsets adds the toolsets to serve's /mcp, or leaves it", () => {
+  const located = {
+    ok: true as const,
+    data: { url: "http://127.0.0.1:3003/mcp", token: "t" },
+  };
+  const asked = withToolsets(located, "git,docs");
+  assert(asked.ok);
+  assertEquals(asked.data.url, "http://127.0.0.1:3003/mcp?toolsets=git%2Cdocs");
+  assertEquals(withToolsets(located, null), located);
+});

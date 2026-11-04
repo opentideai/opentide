@@ -85,6 +85,9 @@ export interface ProjectMeta {
   // per-step checkpoints. Absent ⇒ COMMIT_ON_COMPLETE_DEFAULT for landing
   // commits, checkpoints on. See readProjectCommitOnComplete.
   commitOnComplete?: boolean;
+  // The toolsets an MCP connection lists when it doesn't ask for its own
+  // (core/tools/toolsets.ts). Absent ⇒ core only. See readProjectToolsets.
+  toolsets?: string[];
 }
 
 export interface ProjectForkMeta {
@@ -429,6 +432,25 @@ export function readProjectCommitOnComplete(
       ? (raw as Record<string, unknown>).commitOnComplete
       : undefined;
     return typeof value === "boolean" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The manifest's `toolsets`, or undefined when it isn't set: a missing or
+// unreadable manifest, or a value that isn't a list of strings. Names that
+// aren't toolsets are kept; the caller reports them.
+export function readProjectToolsets(projectDir: string): string[] | undefined {
+  const manifestPath = getProjectPaths(projectDir).manifest;
+  if (!existsSync(manifestPath)) return undefined;
+  try {
+    const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    const value = typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>).toolsets
+      : undefined;
+    return Array.isArray(value) && value.every((v) => typeof v === "string")
+      ? value
+      : undefined;
   } catch {
     return undefined;
   }

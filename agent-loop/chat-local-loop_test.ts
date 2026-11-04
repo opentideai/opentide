@@ -165,6 +165,7 @@ async function runScript(
   seed: NeutralMessage[] = [userMessage("hi")],
   opts: {
     mcp?: MCPManager;
+    brain?: ChatIntelligence;
     // Sees each event as it's emitted, with the chat, to answer mid-turn.
     onEvent?: (event: ChatEvent, chat: ChatOrchestrator) => void;
   } = {},
@@ -178,7 +179,7 @@ async function runScript(
     const chat = new ChatOrchestrator(
       inProcessChatBackend(kernel, () => {}),
       opts.mcp ?? new MCPManager(),
-      stubBrain,
+      opts.brain ?? stubBrain,
       provider,
     );
     const inner = internals(chat);
@@ -3310,4 +3311,72 @@ Deno.test("MCP approval — Stop while a call waits denies it and asks nothing m
   );
   // No second request: the cancelled turn doesn't go back to the model.
   assertEquals(provider.requests.length, 1);
+});
+
+// --- Toolsets ---
+
+function toolTurn(
+  name: string,
+  input: Record<string, unknown>,
+): ProviderEvent[][] {
+  return [
+    [
+      {
+        type: "tool_use_start",
+        toolName: name,
+        toolInput: input,
+        toolCallId: "t1",
+      },
+      { type: "message_complete", stopReason: "requires_action" },
+    ],
+    [
+      { type: "text_delta", text: "done" },
+      { type: "message_complete", stopReason: "end_turn" },
+    ],
+  ];
+}
+
+function toolResultOf(events: ChatEvent[]): unknown {
+  return events.find((e) => e.type === "tool_use_end")?.toolResult;
+}
+
+Deno.test("Toolsets — set_toolset changes the tools the next request offers", async () => {
+  const { events, provider } = await runScript(
+    toolTurn("set_toolset", { toolset: "docs", enabled: true }),
+    undefined,
+    { brain: { ...stubBrain, toolsets: ["git"] } },
+  );
+
+  assertEquals(toolResultOf(events), {
+    ok: true,
+    data: { toolsets: ["core", "docs", "git"], changed: true },
+  });
+  const offered = new Set(provider.requests[1]!.tools.map((t) => t.name));
+  assert(offered.has("document_write"));
+  assert(offered.has("git_push"));
+  assert(offered.has("set_toolset"));
+  assert(!offered.has("start_task"));
+});
+
+Deno.test("Toolsets — a call outside the chat's toolsets is refused", async () => {
+  const { events, provider } = await runScript(
+    toolTurn("git_push", {}),
+    undefined,
+    { brain: { ...stubBrain, toolsets: [] } },
+  );
+
+  const result = toolResultOf(events) as { error?: { code?: string } };
+  assertEquals(result.error?.code, "TOOLSET_OFF");
+  assertEquals(provider.requests.length, 2);
+});
+
+Deno.test("Toolsets — without brain toolsets the model is offered every toolset", async () => {
+  const { provider } = await runScript(
+    toolTurn("set_toolset", { toolset: "git", enabled: false }),
+  );
+
+  const offered = new Set(provider.requests[1]!.tools.map((t) => t.name));
+  assert(!offered.has("git_push"));
+  assert(offered.has("start_task"));
+  assert(offered.has("document_write"));
 });

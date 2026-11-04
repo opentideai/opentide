@@ -22,6 +22,7 @@ import {
   MCP_BRIDGE_RECONNECT_ATTEMPTS,
   MCP_BRIDGE_RECONNECT_DELAY_MS,
   MCP_BRIDGE_STARTUP_TIMEOUT_MS,
+  MCP_TOOLSETS_PARAM,
   SERVE_IDLE_EXIT_MS,
 } from "../core/config.ts";
 
@@ -322,10 +323,25 @@ export function stdioTransport(): StdioServerTransport {
 
 // `opentide mcp --project <path>` without --standalone. Logs go to stderr;
 // stdout belongs to the relayed JSON-RPC.
-export async function runMcpBridge(projectPath: string): Promise<number> {
-  const located = await locateAndReport(projectPath);
+// The serve's /mcp with the toolsets the client asked for (--tools), or as
+// located when it asked for none.
+export function withToolsets<T extends { url: string }>(
+  located: Result<T>,
+  toolsets: string | null,
+): Result<T> {
+  if (!located.ok || toolsets === null) return located;
+  const url = new URL(located.data.url);
+  url.searchParams.set(MCP_TOOLSETS_PARAM, toolsets);
+  return { ok: true, data: { ...located.data, url: url.toString() } };
+}
+
+export async function runMcpBridge(
+  projectPath: string,
+  toolsets: string | null = null,
+): Promise<number> {
+  const locate = async () =>
+    withToolsets(await locateAndReport(projectPath), toolsets);
+  const located = await locate();
   if (!located.ok) return 1;
-  return await proxyMcp(stdioTransport(), located.data, {
-    relocate: () => locateAndReport(projectPath),
-  });
+  return await proxyMcp(stdioTransport(), located.data, { relocate: locate });
 }
