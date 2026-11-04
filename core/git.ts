@@ -84,15 +84,19 @@ function isGitRepository(projectDir: string): boolean {
   return result.ok && result.stdout.trim() === "true";
 }
 
+// `git status -b` on a repo with no commits: "## No commits yet on main"
+// (older Git: "## Initial commit on main").
+const UNBORN_BRANCH_PREFIX = /^(No commits yet|Initial commit) on /;
+
 function parseBranchLine(line: string): {
   branch: string | null;
   ahead: number;
   behind: number;
 } {
-  const text = line.replace(/^##\s+/, "");
+  const text = line.replace(/^##\s+/, "").replace(UNBORN_BRANCH_PREFIX, "");
   const branch = text.startsWith("HEAD ") || text === "HEAD"
     ? null
-    : text.split(/[.\s]/, 1)[0] || null;
+    : text.split(/\.\.\.|\s/, 1)[0] || null;
   const ahead = Number(text.match(/ahead (\d+)/)?.[1] ?? 0);
   const behind = Number(text.match(/behind (\d+)/)?.[1] ?? 0);
   return { branch, ahead, behind };

@@ -89,6 +89,19 @@ Deno.test("git status reports missing, clean, and dirty repositories", async () 
   });
 });
 
+Deno.test("git status names the branch before the first commit and keeps dots in it", async () => {
+  if (!gitAvailable()) return;
+  await withTempProject((dir) => {
+    gitInit(dir);
+    runGit(dir, ["symbolic-ref", "HEAD", "refs/heads/release-0.1"]);
+    assertEquals(gitStatus(dir).branch, "release-0.1");
+
+    writeFileSync(join(dir, "opentide.json"), "{}\n");
+    gitCommit(dir, "first");
+    assertEquals(gitStatus(dir).branch, "release-0.1");
+  });
+});
+
 Deno.test("git commit stages all nonignored files and leaves ignored local paths untracked", async () => {
   if (!gitAvailable()) return;
   await withTempProject((dir) => {
