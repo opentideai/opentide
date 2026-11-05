@@ -6,10 +6,11 @@
 // transport-agnostic, so HTTP/WS slots in later as a sibling of this file with no
 // server change.
 //
-// Framing is hand-rolled (no vscode-jsonrpc dependency): it is ~one screen of
-// well-understood code and keeps the open layer dependency-light. stdout is the
+// The framing itself is core/content-length-framing.ts (no vscode-jsonrpc
+// dependency), shared with the user-code runner's channel. stdout is the
 // JSON-RPC channel, so this module writes ONLY encoded frames there; all logging
 // goes through the kernel (server.ts) or stderr (the composition root).
+import { encodeFrame, FrameBuffer } from "../core/content-length-framing.ts";
 import type {
   IncomingMessage,
   NotificationMessage,
@@ -17,96 +18,27 @@ import type {
 } from "./protocol.ts";
 import type { LspServer } from "./server.ts";
 
-const HEADER_SEPARATOR = "\r\n\r\n";
-const CONTENT_LENGTH_HEADER = "content-length";
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-// Encode an outgoing message as a Content-Length-framed frame. Length is the UTF-8
-// BYTE count of the body (not the character count) — the spec is explicit and a
-// multibyte body would otherwise truncate. Both request responses and server→client
-// notifications (Stage 1 publishDiagnostics) ride the same framing.
+// Both request responses and server→client notifications (Stage 1
+// publishDiagnostics) ride the same framing.
 export function encodeMessage(
   message: ResponseMessage | NotificationMessage,
 ): Uint8Array {
-  const body = encoder.encode(JSON.stringify(message));
-  const header = encoder.encode(
-    `Content-Length: ${body.byteLength}${HEADER_SEPARATOR}`,
-  );
-  const frame = new Uint8Array(header.byteLength + body.byteLength);
-  frame.set(header, 0);
-  frame.set(body, header.byteLength);
-  return frame;
+  return encodeFrame(message);
 }
 
-// Incremental parser: fed arbitrary byte chunks, it yields complete decoded
-// messages as their frames arrive. A single chunk may hold zero, one, or many
-// frames, and a frame may span chunks — the buffer holds the unconsumed tail.
+// Incremental parser over core's FrameBuffer, typed for LSP messages.
 export class MessageBuffer {
-  private buffer = new Uint8Array(0);
+  private readonly frames = new FrameBuffer();
 
   append(chunk: Uint8Array): void {
-    const next = new Uint8Array(this.buffer.byteLength + chunk.byteLength);
-    next.set(this.buffer, 0);
-    next.set(chunk, this.buffer.byteLength);
-    this.buffer = next;
+    this.frames.append(chunk);
   }
 
-  // Pull the next complete message, or null if the buffer does not yet hold a full
-  // frame (caller waits for more bytes). Malformed frames (bad JSON / missing
-  // Content-Length) are skipped past so one bad frame can't wedge the stream.
+  // The next complete message, or null if no full frame is buffered yet.
+  // Malformed frames are skipped past.
   tryReadMessage(): IncomingMessage | null {
-    const headerEnd = this.indexOfSeparator();
-    if (headerEnd === -1) return null;
-
-    const headerText = decoder.decode(this.buffer.subarray(0, headerEnd));
-    const contentLength = parseContentLength(headerText);
-    const bodyStart = headerEnd + HEADER_SEPARATOR.length;
-
-    if (contentLength === null) {
-      // Unusable header block — drop it and resync from after the separator.
-      this.buffer = this.buffer.subarray(bodyStart);
-      return null;
-    }
-    if (this.buffer.byteLength < bodyStart + contentLength) return null;
-
-    const body = this.buffer.subarray(bodyStart, bodyStart + contentLength);
-    this.buffer = this.buffer.subarray(bodyStart + contentLength);
-    try {
-      return JSON.parse(decoder.decode(body)) as IncomingMessage;
-    } catch {
-      // Body wasn't valid JSON — already consumed, so just skip it.
-      return null;
-    }
+    return this.frames.next() as IncomingMessage | null;
   }
-
-  // Byte offset of the `\r\n\r\n` header/body separator, or -1 if not present yet.
-  private indexOfSeparator(): number {
-    const sep = encoder.encode(HEADER_SEPARATOR);
-    outer:
-    for (let i = 0; i + sep.byteLength <= this.buffer.byteLength; i++) {
-      for (let j = 0; j < sep.byteLength; j++) {
-        if (this.buffer[i + j] !== sep[j]) continue outer;
-      }
-      return i;
-    }
-    return -1;
-  }
-}
-
-// Extract the Content-Length value from a header block (case-insensitive header
-// name, per HTTP). Returns null when absent or non-numeric.
-function parseContentLength(headerText: string): number | null {
-  for (const line of headerText.split("\r\n")) {
-    const colon = line.indexOf(":");
-    if (colon === -1) continue;
-    if (line.slice(0, colon).trim().toLowerCase() !== CONTENT_LENGTH_HEADER) {
-      continue;
-    }
-    const value = Number(line.slice(colon + 1).trim());
-    return Number.isInteger(value) && value >= 0 ? value : null;
-  }
-  return null;
 }
 
 // Streams the server can serve over. Defaulted to stdin/stdout by the composition

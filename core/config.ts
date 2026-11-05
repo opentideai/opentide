@@ -1247,6 +1247,29 @@ export const DB_BACKUP_INTERVAL_MS = 10 * 60 * 1000;
 // DB_BACKUP_INTERVAL_MS: it bounds how much of a session an unclean kill can destroy.
 export const DB_CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
+// --- User-code runner (one child Deno per project, narrow permissions) ---
+
+// How long a new runner has to say it is ready before the kernel gives up.
+export const RUNNER_READY_TIMEOUT_MS = 15_000;
+// Default wait for one request to the runner.
+export const RUNNER_REQUEST_TIMEOUT_MS = 30_000;
+// Between asking a runner to shut down and killing it.
+export const RUNNER_SHUTDOWN_GRACE_MS = 2_000;
+// How much of a runner's stderr the kernel keeps for error messages.
+export const RUNNER_STDERR_TAIL_BYTES = 8_192;
+// Loopback in every spelling Deno's host deny can't infer from 127.0.0.1.
+// Measured on Deno 2.9.8 / Linux: denying these hosts also blocks 127.1,
+// 2130706433, 0x7f.1 and ::ffff:127.0.0.1. It does NOT block 127.0.0.2 and the
+// rest of 127.0.0.0/8 (Deno takes no CIDR), which reach only sockets bound to
+// 0.0.0.0 — our own servers bind 127.0.0.1 (DEV_SERVER_HOST).
+export const RUNNER_LOOPBACK_DENY_HOSTS = [
+  "127.0.0.1",
+  "localhost",
+  "0.0.0.0",
+  "[::1]",
+  "[::]",
+] as const;
+
 // --- Kernel settings defaults ---
 
 const KERNEL_DEFAULTS: Required<KernelSettings> = {
