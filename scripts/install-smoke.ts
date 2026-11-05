@@ -160,6 +160,9 @@ async function driveChangeset(
       fail(`run_tests: ${JSON.stringify(tests)}`);
     }
     step("changeset built, test passes");
+    // flush_project_state is outside core, so this also proves set_toolset
+    // works through the installed bridge.
+    await call(client, "set_toolset", { toolset: "project", enabled: true });
     await call(client, "flush_project_state", {});
   } finally {
     await client.close();
