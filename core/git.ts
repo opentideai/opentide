@@ -424,6 +424,16 @@ export function insideWorkTree(projectDir: string): boolean {
   return result.ok && result.stdout.trim() === "true";
 }
 
+// True when `path` exists in the work tree, isn't ignored, and git has never
+// tracked it.
+export function isUntracked(projectDir: string, path: string): boolean {
+  return runGit(
+    projectDir,
+    ["ls-files", "--others", "--exclude-standard", "--", path],
+    false,
+  ).stdout.trim() !== "";
+}
+
 const EXCLUDE_PREFIX = ":(exclude)";
 
 function isExcludeSpec(spec: string): boolean {

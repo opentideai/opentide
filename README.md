@@ -163,7 +163,7 @@ Most agent tokens go on rediscovering your code. Here the agent asks.
   rewrite whole files to change one function.
 - Errors are structured and specific. A mistyped argument comes back as
   `INVALID_ARGUMENTS` naming the right key, so it's fixed on the first retry.
-- The agent's prompt carries the tools it uses. 57 core tools are listed by
+- The agent's prompt carries the tools it uses. 58 core tools are listed by
   default; git, docs, tasks and the rest are one `set_toolset` call away.
 
 ### <img src="assets/icons/live.svg" width="22" height="22" align="top" alt=""> See it working right away

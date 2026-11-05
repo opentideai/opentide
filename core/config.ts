@@ -260,7 +260,7 @@ export function appPreviewUrl(port: number, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.11";
+export const OPENTIDE_VERSION = "0.1.12";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
@@ -458,7 +458,9 @@ export const MCP_SERVER_VERSION = OPENTIDE_VERSION;
 // v9.0.0: toolsets (core/tools/toolsets.ts). A connection lists core alone (57
 // tools) unless it selects more; set_toolset turns one on or off. MAJOR: the
 // default list lost 65 tools.
-export const MCP_SURFACE_VERSION = "9.0.0";
+// v9.1.0: generate_project_docs moves from docs into core (58 tools), since
+// readiness points at it. MINOR: the default list gained one.
+export const MCP_SURFACE_VERSION = "9.1.0";
 
 // The per-call `_meta` key for turn context:
 // {turn_id, turn_index?, tool_call_id?, user_message?}.

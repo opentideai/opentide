@@ -11,7 +11,7 @@ import {
   PRIVATE_HISTORY_DIR,
   PROJECT_GITIGNORE,
 } from "./config.ts";
-import { gitCommitPaths, insideWorkTree } from "./git.ts";
+import { gitCommitPaths, insideWorkTree, isUntracked } from "./git.ts";
 import { writeFileIfMissing } from "./history-store.ts";
 import { hasProjectManifest } from "./project-layout.ts";
 import {
@@ -95,8 +95,13 @@ export async function commitManagedPaths(
     : [];
   // A project with no repo gets one, with the .gitignore a scaffolded project
   // has, so the user's own `git add -A` later can't pick up the server token.
-  if (!insideWorkTree(projectDir)) {
+  // A scaffold writes that .gitignore into a repo with no commits; until
+  // something commits it, the landing commit does.
+  const noRepo = !insideWorkTree(projectDir);
+  if (noRepo) {
     writeFileIfMissing(join(projectDir, GITIGNORE_FILE), PROJECT_GITIGNORE);
+  }
+  if (noRepo || isUntracked(projectDir, GITIGNORE_FILE)) {
     files.push(GITIGNORE_FILE);
   }
   return gitCommitPaths(

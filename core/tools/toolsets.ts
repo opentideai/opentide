@@ -66,6 +66,8 @@ export const TOOLSETS = {
     "get_code_context",
     "find_similar_entities",
     "blast_radius",
+    // Readiness warns when AGENT.md is stale; this is the fix, so it stays in reach.
+    "generate_project_docs",
     "set_toolset",
   ],
   sessions: [
@@ -85,7 +87,6 @@ export const TOOLSETS = {
     "document_query",
     "document_write",
     "document_pin",
-    "generate_project_docs",
   ],
   devtools: [
     "define_dev_view",
@@ -166,7 +167,7 @@ export const TOOLSET_NAMES: readonly Toolset[] = Object.keys(
 export const TOOLSET_SUMMARIES: Readonly<Record<Toolset, string>> = {
   core: "the build-and-verify loop (always on)",
   sessions: "read past sessions and write this session's history",
-  docs: "the durable document store and generated README/AGENT.md",
+  docs: "the durable document store",
   devtools: "dev views, dev tools and platform docs",
   project: "project files, state flush, export, modules, custom instructions",
   quality: "coverage, type check, static analysis, package audits, AI audits",

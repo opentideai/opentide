@@ -1393,10 +1393,11 @@ Deno.test({
 // document verbs and git_commit. Additive, so MINOR.
 // v9.0.0 adds set_toolset (121 -> 122 with every toolset) and lists core alone
 // by default (57). Both are pinned.
+// v9.1.0 moves generate_project_docs from docs into core (57 -> 58).
 const PINNED_SURFACE_FINGERPRINT = "fa34-77bd904a";
 const PINNED_SURFACE_TOOL_COUNT = 122;
-const PINNED_CORE_FINGERPRINT = "970f-b10438f0";
-const PINNED_CORE_TOOL_COUNT = 57;
+const PINNED_CORE_FINGERPRINT = "9912-f8855878";
+const PINNED_CORE_TOOL_COUNT = 58;
 
 Deno.test({
   ...testOpts,

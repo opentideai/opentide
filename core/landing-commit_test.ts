@@ -232,6 +232,27 @@ Deno.test({
 
 Deno.test({
   ...testOpts,
+  name: "a scaffold's uncommitted .gitignore goes in the first landing",
+  fn: async () => {
+    await withProject(async (dir, kernel) => {
+      git(dir, "init", "-q");
+      write(dir, ".gitignore", PROJECT_GITIGNORE);
+      write(dir, ".opentide/state/handlers/hello.json");
+      const result = await commitLandedChangeset(
+        kernel,
+        changeset("cs1", "First"),
+      );
+      assert(result.committed, JSON.stringify(result));
+      assert(
+        lines(git(dir, "show", "--name-only", "--format=", "HEAD"))
+          .includes(".gitignore"),
+      );
+    });
+  },
+});
+
+Deno.test({
+  ...testOpts,
   name: "commitOnComplete false turns landing commits off",
   fn: async () => {
     await withProject(async (dir, kernel) => {

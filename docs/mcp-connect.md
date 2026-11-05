@@ -157,14 +157,14 @@ This project is the OpenTide app todo-app. Before any other OpenTide tool, call 
 
 ## Toolsets
 
-OpenTide lists 57 tools by default, not all 122. The rest come in toolsets you
+OpenTide lists 58 tools by default, not all 122. The rest come in toolsets you
 turn on. Each tool is in exactly one; the list is `core/tools/toolsets.ts`.
 
 | Toolset     | What's in it                                                      |
 | ----------- | ----------------------------------------------------------------- |
 | `core`      | The build-and-verify loop. Always on.                             |
 | `sessions`  | Read past sessions, write this session's history                  |
-| `docs`      | The durable document store, generated README.md and AGENT.md      |
+| `docs`      | The durable document store                                        |
 | `devtools`  | Dev views, dev tools, platform docs                               |
 | `project`   | Project files, state flush, export, modules, custom instructions  |
 | `quality`   | Coverage, type check, static analysis, package and AI audits      |
@@ -1031,7 +1031,7 @@ versions are in play — don't conflate them:
 | --------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------- | -------------------- |
 | **MCP protocol version**                                        | the wire spec itself                                    | negotiated by the SDK at `connect()`          | the MCP spec / SDK   |
 | **Server version** (`MCP_SERVER_VERSION`, = `OPENTIDE_VERSION`) | the OpenTide **build**                                  | handshake `serverInfo` (`opentide` / version) | the OpenTide release |
-| **Tool-surface version** (`MCP_SURFACE_VERSION`, `9.0.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
+| **Tool-surface version** (`MCP_SURFACE_VERSION`, `9.1.0`)       | the **published tool contract** — names + input schemas | `tools/list` result `_meta` (see below)       | this policy          |
 
 The surface can be at `7.x` while the build is at `0.x` — versioning it
 separately is what lets a pinned integration survive server churn.
@@ -1044,12 +1044,12 @@ Every `tools/list` response carries a metadata block under the
 ```jsonc
 // tools/list result
 {
-  "tools": [/* … 57 tools: core alone … */],
+  "tools": [/* … 58 tools: core alone … */],
   "_meta": {
     "opentide/surface": {
-      "version": "9.0.0", // MCP_SURFACE_VERSION — the contract handle you pin
+      "version": "9.1.0", // MCP_SURFACE_VERSION — the contract handle you pin
       "fingerprint": "970f-b10438f0", // structural hash of names + input schemas
-      "toolCount": 57
+      "toolCount": 58
     }
   }
 }
@@ -1114,5 +1114,5 @@ gives pinned integrations at least one full major version to migrate. Removal
 itself is a MAJOR bump and is called out in the release notes for that version.
 
 **Nothing is deprecated today.** The deprecation registry (`MCP_DEPRECATIONS` in
-`mcp/mcp-projection.ts`) is empty. The surface is `9.0.0`: 57 tools in `core`,
+`mcp/mcp-projection.ts`) is empty. The surface is `9.1.0`: 58 tools in `core`,
 122 with every toolset on.
