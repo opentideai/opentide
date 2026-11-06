@@ -1,12 +1,12 @@
 // @layer core — the names an entity cannot take.
 //
 // A handler, function or test is compiled with the platform's own names already bound
-// in its scope: as `new Function` parameters in the kernel (core/compiler.ts), and as
+// in its scope: as `new Function` parameters (core/runner/instantiate.ts), and as
 // imports from deps.ts in every exported module (core/export.ts wrapModule). An entity
 // named after one of them declares a function that shadows the binding its own body
 // reads, so it breaks in the preview and in the export alike.
 //
-// This is the ONLY list. The compiler builds its parameter lists from it and the
+// This is the ONLY list. The instantiator's scopes are typed by it and the
 // export builds its deps.ts import line from it, so a name added to either scope is
 // reserved by the same edit. The export's main.ts is deliberately NOT a source of
 // reserved names: every entity binding there is `$`-prefixed (see export.ts
@@ -44,6 +44,28 @@ export const TEST_SCOPE_NAMES = [
 ] as const;
 
 export type TestScopeName = typeof TEST_SCOPE_NAMES[number];
+
+// Dev views and dev tools are bound with these. They aren't entities, so the
+// define tools don't reserve these names; they're here so the instantiator and
+// the generated docs (core/docs/generate.ts) read the same list.
+export const DEV_TOOL_SCOPE_NAMES = [
+  "db",
+  "functions",
+  "config",
+  "templates",
+  "packages",
+  "env",
+  "log",
+] as const;
+
+export type DevToolScopeName = typeof DEV_TOOL_SCOPE_NAMES[number];
+
+export const DEV_VIEW_SCOPE_NAMES = [
+  ...DEV_TOOL_SCOPE_NAMES,
+  "kernel",
+] as const;
+
+export type DevViewScopeName = typeof DEV_VIEW_SCOPE_NAMES[number];
 
 // Type names an exported module imports when its source mentions them. Ambient in the
 // kernel, so the preview never notices; the export's `deno check` does.

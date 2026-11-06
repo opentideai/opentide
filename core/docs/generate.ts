@@ -3,6 +3,11 @@
  * Run: deno task docs:generate
  */
 
+import {
+  DEV_TOOL_SCOPE_NAMES,
+  DEV_VIEW_SCOPE_NAMES,
+} from "../reserved-names.ts";
+
 const KERNEL_DIR = new URL("../", import.meta.url).pathname;
 const OUT_DIR = new URL("./generated/", import.meta.url).pathname;
 
@@ -62,20 +67,6 @@ function extractInterfaces(source: string, names: string[]): string {
   return names.map((n) => extractInterface(source, n)).join("\n\n");
 }
 
-function extractClosureParams(source: string, fnName: string): string[] {
-  const fnPattern = new RegExp(
-    `export async function ${fnName}[\\s\\S]*?new Function\\(([^)]+)\\)`,
-  );
-  const params = source.match(fnPattern)?.[1];
-  if (!params) return [];
-  return params
-    .split(",")
-    .map((s) => s.trim().replace(/^"|"$/g, ""))
-    .filter((s) =>
-      !s.includes("use strict") && !s.includes("sourceURL") && s.length > 0
-    );
-}
-
 function writeTopic(
   filename: string,
   frontmatter: Record<string, string>,
@@ -93,13 +84,12 @@ function writeTopic(
 // --- Read sources ---
 
 const types = readSource("types.ts");
-const compiler = readSource("compiler.ts");
 const handlerDb = readSource("handler-db.ts");
 
 // --- Extract ---
 
-const devViewClosureParams = extractClosureParams(compiler, "compileDevView");
-const devToolClosureParams = extractClosureParams(compiler, "compileDevTool");
+const devViewClosureParams = DEV_VIEW_SCOPE_NAMES;
+const devToolClosureParams = DEV_TOOL_SCOPE_NAMES;
 
 const drizzleOperators = handlerDb
   .match(/import \{([^}]+)\} from "drizzle-orm"/s)?.[1]
