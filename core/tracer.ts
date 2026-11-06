@@ -121,6 +121,7 @@ const DEFAULT_MAX_TRACES = getKernelSettings().maxTraces;
 export class Tracer {
   private traces: LogBuffer<RequestTrace>;
   private active = new Map<string, RequestTrace>();
+  private contexts = new Map<string, TraceContext>();
 
   constructor(maxTraces = DEFAULT_MAX_TRACES) {
     this.traces = new LogBuffer<RequestTrace>(maxTraces);
@@ -144,6 +145,7 @@ export class Tracer {
       durationMs: null,
     };
     this.active.set(requestId, trace);
+    this.contexts.set(requestId, traceCtx);
 
     try {
       const result = await traceStorage.run(traceCtx, fn);
@@ -152,8 +154,17 @@ export class Tracer {
       trace.endedAt = performance.now();
       trace.durationMs = round2(trace.endedAt - trace.startedAt);
       this.active.delete(requestId);
+      this.contexts.delete(requestId);
       this.traces.push(trace);
     }
+  }
+
+  // Runs fn inside a live request's trace, for work done on its behalf from
+  // outside its async context: a DB statement the runner sends over RPC. With no
+  // such request (none given, or already finished) fn runs untraced.
+  withTrace<T>(requestId: string | undefined, fn: () => T): T {
+    const traceCtx = requestId ? this.contexts.get(requestId) : undefined;
+    return traceCtx ? traceStorage.run(traceCtx, fn) : fn();
   }
 
   getTrace(requestId: string): RequestTrace | undefined {

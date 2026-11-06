@@ -13,6 +13,8 @@ export const RUNNER_PROTOCOL_VERSION = 1;
 export const RUNNER_METHODS = {
   ping: "runner.ping",
   shutdown: "runner.shutdown",
+  // Runner to kernel: one SQL statement, run by the kernel's database.
+  dbExec: "db.exec",
 } as const;
 
 export const RUNNER_NOTIFICATIONS = {
@@ -28,6 +30,7 @@ export const RUNNER_ERROR_CODES = {
   startFailed: "RUNNER_START_FAILED",
   protocolMismatch: "RUNNER_PROTOCOL_MISMATCH",
   invalidPath: "INVALID_RUNNER_PATH",
+  invalidParams: "INVALID_RUNNER_PARAMS",
 } as const;
 
 export interface RunnerReady {
@@ -35,6 +38,42 @@ export interface RunnerReady {
   pid: number;
   denoVersion: string;
 }
+
+// What a db.exec call runs. `query` and `execute` are user code's raw
+// db.query/db.execute. The drizzle kinds are what pg-proxy asks for: `rows` is
+// positional arrays for drizzle to map, `result` is the driver's own result for
+// statements drizzle doesn't map (an insert with no returning, say).
+export const DB_EXEC_KINDS = {
+  query: "query",
+  execute: "execute",
+  drizzleRows: "drizzle.rows",
+  drizzleResult: "drizzle.result",
+} as const;
+
+export type DbExecKind = typeof DB_EXEC_KINDS[keyof typeof DB_EXEC_KINDS];
+
+export interface DbExecRequest {
+  kind: DbExecKind;
+  sql: string;
+  params: unknown[] | undefined;
+  // The app request this statement belongs to, so it lands in that trace.
+  requestId?: string;
+}
+
+// The error user code would have caught in-process: its name, message and the
+// driver's fields (a Postgres `code`, `constraint`, `detail`...). The class is
+// lost on the way.
+export interface DbErrorShape {
+  name: string;
+  message: string;
+  fields: Record<string, string | number | boolean>;
+}
+
+// A failed statement is a normal answer, not an RPC error: the RPC error
+// channel is for the connection.
+export type DbExecOutcome =
+  | { ok: true; value: unknown }
+  | { ok: false; error: DbErrorShape };
 
 export type RpcError = { code: string; message: string; suggestion?: string };
 

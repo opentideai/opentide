@@ -29,15 +29,23 @@ import {
   sum,
 } from "drizzle-orm";
 import type { DbInterface } from "./types.ts";
-import type { DrizzleDb } from "./db/factory.ts";
 import type { DynamicSchemaRegistry } from "./db/dynamic-schema.ts";
 
 // deno-lint-ignore no-explicit-any
-type HandlerDb = DbInterface & Record<string, any>;
+export type HandlerDb = DbInterface & Record<string, any>;
+
+// The query builders user code gets. The kernel's drizzle (PGlite or
+// postgres-js) has them, and so does the runner's pg-proxy one.
+export interface QueryBuilders {
+  select: unknown;
+  insert: unknown;
+  update: unknown;
+  delete: unknown;
+}
 
 export function buildHandlerDb(
   traced: DbInterface,
-  drizzle: DrizzleDb,
+  drizzle: QueryBuilders,
   schemas: DynamicSchemaRegistry,
 ): HandlerDb {
   return {
