@@ -80,6 +80,7 @@ import {
   tracedTemplates,
   Tracer,
 } from "./tracer.ts";
+import { assetVersionOf } from "./asset-urls.ts";
 import { CustomAuditMap } from "./custom-audits.ts";
 import { buildHandlerDb } from "./handler-db.ts";
 import {
@@ -1634,36 +1635,54 @@ export class Kernel {
     };
   }
 
+  // What user code's `env` resolves a name to: a secret, then an env var, then
+  // the project's .env.
+  private resolveEnv(name: string): string | undefined {
+    return this.secrets.resolve(name) ?? this.envVars.getCached(name) ??
+      this.env.get(name);
+  }
+
+  private envNames(): string[] {
+    const keys = new Set<string>();
+    for (const k of Object.keys(this.env.all())) keys.add(k);
+    for (const k of this.envVars.cachedEntries().keys()) keys.add(k);
+    for (const e of this.secrets.list()) keys.add(e.key);
+    return [...keys];
+  }
+
+  // Every name user code's `env` resolves, with its value, as of now. The
+  // runner gets this: it can't resolve anything itself.
+  envSnapshot(): Record<string, string> {
+    this.envVars.refreshCache();
+    const snapshot: Record<string, string> = {};
+    for (const name of this.envNames()) {
+      const value = this.resolveEnv(name);
+      if (value !== undefined) snapshot[name] = value;
+    }
+    return snapshot;
+  }
+
   async compileDeps(): Promise<CompileDeps> {
     this.envVars.refreshCache();
 
-    const envVars = this.envVars;
-    const secrets = this.secrets;
-    const osEnv = this.env;
+    const resolve = (name: string) => this.resolveEnv(name);
+    const names = () => this.envNames();
 
     const env: Record<string, string> = new Proxy(Object.create(null), {
       get(_, prop) {
         if (typeof prop !== "string") return undefined;
-        return secrets.resolve(prop) ?? envVars.getCached(prop) ??
-          osEnv.get(prop);
+        return resolve(prop);
       },
       has(_, prop) {
         if (typeof prop !== "string") return false;
-        return secrets.resolve(prop) !== undefined ||
-          envVars.getCached(prop) !== undefined ||
-          osEnv.get(prop) !== undefined;
+        return resolve(prop) !== undefined;
       },
       ownKeys() {
-        const keys = new Set<string>();
-        for (const k of Object.keys(osEnv.all())) keys.add(k);
-        for (const k of envVars.cachedEntries().keys()) keys.add(k);
-        for (const e of secrets.list()) keys.add(e.key);
-        return [...keys];
+        return names();
       },
       getOwnPropertyDescriptor(_, prop) {
         if (typeof prop !== "string") return undefined;
-        const val = secrets.resolve(prop) ?? envVars.getCached(prop) ??
-          osEnv.get(prop);
+        const val = resolve(prop);
         if (val !== undefined) {
           return {
             configurable: true,
@@ -1705,7 +1724,7 @@ export class Kernel {
       config: this.configs,
       templates: tracedTemplates(this.templates, (name) => {
         const ts = this.assets.get(name)?.registeredAt;
-        return ts ? String(new Date(ts).getTime()) : undefined;
+        return ts ? assetVersionOf(ts) : undefined;
       }),
       packages: this.runtime.packageProxy?.(this) ?? this.packages.proxy(),
       env,

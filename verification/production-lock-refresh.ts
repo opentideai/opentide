@@ -76,8 +76,8 @@ import {
   type ExportFile,
   exportProject,
   type ExportProjectOptions,
-  sha256Hex,
 } from "../core/export.ts";
+import { sha256Hex } from "../core/util.ts";
 import type { Kernel } from "../core/registries.ts";
 import type { Result } from "../core/types.ts";
 import {

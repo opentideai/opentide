@@ -4,8 +4,8 @@ import {
   exportProject,
   fileBytes,
   MANIFEST_PATH,
-  sha256Hex,
 } from "../core/export.ts";
+import { sha256Hex } from "../core/util.ts";
 import { populate, withKernel } from "./export-fixtures.ts";
 import {
   MANIFEST_FILE_SET_MISMATCH,

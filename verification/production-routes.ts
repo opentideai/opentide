@@ -63,7 +63,8 @@ import type { Hono } from "hono";
 import type { CoreRouteContext } from "../core/route-mount.ts";
 import type { Kernel } from "../core/registries.ts";
 import { getVersion } from "../core/build.ts";
-import { type ExportProjectOptions, sha256Hex } from "../core/export.ts";
+import { type ExportProjectOptions } from "../core/export.ts";
+import { sha256Hex } from "../core/util.ts";
 import type { AttestationInput } from "../core/types.ts";
 import {
   PRODUCTION_CHANGESET_ID,

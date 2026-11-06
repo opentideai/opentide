@@ -24,6 +24,7 @@ import {
 } from "./export-validators.ts";
 import { compareRouteKeys, compareStrings } from "./route-order.ts";
 import { ENTITY_SCOPE_NAMES } from "./reserved-names.ts";
+import { sha256Hex } from "./util.ts";
 import {
   APP_AUTH_GATE_CONFIG,
   CORS_ALLOW_METHODS,
@@ -318,19 +319,6 @@ function readSourceDateEpoch(): string | undefined {
     // No --allow-env in this process: fall back to the fixed epoch.
     return undefined;
   }
-}
-
-// SHA-256 over raw bytes, hex-encoded. Shared by the export manifest and the
-// determinism/manifest tests so both hash artifacts exactly the same way.
-export async function sha256Hex(data: Uint8Array): Promise<string> {
-  // Copy into a fresh (non-shared) ArrayBuffer so the byte view satisfies the
-  // strict BufferSource type expected by crypto.subtle.digest.
-  const copy = new Uint8Array(data.length);
-  copy.set(data);
-  const digest = await crypto.subtle.digest("SHA-256", copy);
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 // The on-the-wire bytes of an exported file: raw for binary assets, UTF-8 for

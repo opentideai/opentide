@@ -142,7 +142,11 @@ export class RpcPeer {
   }
 
   private async run(method: string, params: unknown): Promise<Result<unknown>> {
-    const handler = this.options.handlers?.[method];
+    // Own keys only: the other side must not reach Object.prototype's methods.
+    const handlers = this.options.handlers ?? {};
+    const handler = Object.hasOwn(handlers, method)
+      ? handlers[method]
+      : undefined;
     if (!handler) {
       return failure(RUNNER_ERROR_CODES.unknownMethod, `No method ${method}`);
     }

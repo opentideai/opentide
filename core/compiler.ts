@@ -23,6 +23,7 @@ import {
   instantiateScript,
   instantiateTest,
   SCOPE_PREAMBLE_LINES,
+  type UserCodeKind,
   userCodeUrl,
 } from "./runner/instantiate.ts";
 
@@ -120,7 +121,7 @@ export async function compileHandler(
   source: string,
   deps: CompileDeps,
 ): Promise<Result<HandlerFn>> {
-  const js = await transpileEntity("handler", name, source);
+  const js = await transpileUserCode("handler", name, source);
   if (!js.ok) return js;
   return instantiateHandler(
     name,
@@ -135,7 +136,7 @@ export async function compileFunction(
   source: string,
   deps: CompileDeps,
 ): Promise<Result<(...args: unknown[]) => unknown>> {
-  const js = await transpileEntity("function", name, source);
+  const js = await transpileUserCode("function", name, source);
   if (!js.ok) return js;
   return instantiateFunction(name, js.data, deps);
 }
@@ -145,7 +146,7 @@ export async function compileTest(
   source: string,
   deps: CompileDeps,
 ): Promise<Result<TestFn>> {
-  const js = await transpile(source, "test");
+  const js = await transpileUserCode("test", name, source);
   if (!js.ok) return js;
   return instantiateTest(name, js.data, deps);
 }
@@ -156,7 +157,7 @@ export async function compileDevView(
   deps: CompileDeps,
   kernelInspect: KernelInspectAPI,
 ): Promise<Result<DevViewFn>> {
-  const js = await transpile(source, "dev view");
+  const js = await transpileUserCode("dev_view", name, source);
   if (!js.ok) return js;
   return instantiateDevView(name, js.data, deps, kernelInspect);
 }
@@ -167,7 +168,7 @@ export async function compileDevTool(
   args: DevToolArgDef[],
   deps: CompileDeps,
 ): Promise<Result<DevToolFn>> {
-  const js = await transpile(source, "dev tool");
+  const js = await transpileUserCode("dev_tool", name, source);
   if (!js.ok) return js;
   return instantiateDevTool(name, js.data, args, deps);
 }
@@ -275,14 +276,27 @@ function capturingLog(
   });
 }
 
-// Handlers and functions carry an inline source map, shifted so V8 maps the
-// lines of the wrapped script back to the TS source.
-function transpileEntity(
-  kind: "handler" | "function",
+const USER_CODE_LABELS: Record<UserCodeKind, string> = {
+  handler: "handler",
+  function: "function",
+  test: "test",
+  dev_view: "dev view",
+  dev_tool: "dev tool",
+};
+
+// The JS that instantiate.ts runs for one entity. Handlers and functions carry
+// an inline source map, shifted so V8 maps the lines of the wrapped script back
+// to the TS source.
+export function transpileUserCode(
+  kind: UserCodeKind,
   name: string,
   source: string,
 ): Promise<Result<string>> {
-  return transpile(source, kind, {
+  const label = USER_CODE_LABELS[kind];
+  if (kind !== "handler" && kind !== "function") {
+    return transpile(source, label);
+  }
+  return transpile(source, label, {
     sourcemap: "inline",
     sourcefile: userCodeUrl(kind, name),
   });

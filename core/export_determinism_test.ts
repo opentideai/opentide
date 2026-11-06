@@ -5,8 +5,8 @@ import {
   fileBytes,
   MANIFEST_FORMAT_VERSION,
   MANIFEST_PATH,
-  sha256Hex,
 } from "./export.ts";
+import { sha256Hex } from "./util.ts";
 import { buildNodeFiles, buildZip } from "./build.ts";
 import type { Kernel } from "./registries.ts";
 import type { RouteSchema } from "./types.ts";

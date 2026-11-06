@@ -41,3 +41,16 @@ export function decodeBase64(base64: string): Uint8Array {
   }
   return bytes;
 }
+
+// SHA-256 over raw bytes, hex-encoded. The export manifest, its determinism
+// tests and the runner's state mirror all hash with it.
+export async function sha256Hex(data: Uint8Array): Promise<string> {
+  // Copy into a fresh (non-shared) ArrayBuffer so the byte view satisfies the
+  // strict BufferSource type expected by crypto.subtle.digest.
+  const copy = new Uint8Array(data.length);
+  copy.set(data);
+  const digest = await crypto.subtle.digest("SHA-256", copy);
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}

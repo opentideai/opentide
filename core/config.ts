@@ -254,8 +254,17 @@ export function getAppServerDialHost(
 }
 
 export function appPreviewUrl(port: number, path = "/"): string {
-  const normalized = path.startsWith("/") ? path : "/" + path;
-  return `http://${getAppServerDialHost()}:${port}${normalized}`;
+  return joinAppUrl(appPreviewOrigin(port), path);
+}
+
+export function appPreviewOrigin(port: number): string {
+  return `http://${getAppServerDialHost()}:${port}`;
+}
+
+// The runner builds app URLs from the origin the kernel sends it, because its
+// own environment is the project's, not the kernel's.
+export function joinAppUrl(origin: string, path = "/"): string {
+  return origin + (path.startsWith("/") ? path : "/" + path);
 }
 
 // The OpenTide release version: `opentide --version` and the serverInfo both

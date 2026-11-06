@@ -21,7 +21,7 @@ const transport = createStreamTransport(
   Deno.stdin.readable,
   Deno.stdout.writable,
 );
-const peer = await serveRunner(transport, {
+const { peer } = await serveRunner(transport, {
   onShutdown: () => {
     void transport.close().finally(() => Deno.exit(0));
   },

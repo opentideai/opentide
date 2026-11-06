@@ -216,7 +216,7 @@ export class RunnerHost {
         );
         const exit = await exited;
         await p.close();
-        await runner.done;
+        await runner.peer.done;
         return exit;
       },
     };

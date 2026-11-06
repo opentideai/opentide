@@ -5,6 +5,7 @@ import type {
   TemplateRegistry,
 } from "./types.ts";
 import { LogBuffer } from "./registries.ts";
+import { stampAssetVersions } from "./asset-urls.ts";
 
 export interface TraceEvent {
   id: number;
@@ -232,8 +233,6 @@ export function tracedDb(db: DbInterface): DbInterface {
   };
 }
 
-const ASSET_URL_RE = /(\/_assets\/)([^"'?\s#]+)(\?v=[^"'\s#]*)?/g;
-
 export function tracedTemplates(
   templates: TemplateRegistry,
   assetVersion?: (name: string) => string | undefined,
@@ -243,13 +242,7 @@ export function tracedTemplates(
       ctx()?.templateRead(name);
       const content = templates.get(name);
       if (!content || !assetVersion) return content;
-      return content.replace(
-        ASSET_URL_RE,
-        (match, prefix: string, assetName: string) => {
-          const v = assetVersion(assetName);
-          return v ? `${prefix}${assetName}?v=${v}` : match;
-        },
-      );
+      return stampAssetVersions(content, assetVersion);
     },
   };
 }

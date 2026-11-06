@@ -6,7 +6,8 @@
 // Every params and result payload goes through the value codec below, so a
 // Date, a bigint or bytes from the DB arrive as themselves on the other side.
 
-import type { Result } from "../types.ts";
+import type { ColumnDef, DevToolArgDef, Result } from "../types.ts";
+import type { HandlerAbi } from "../handler-abi.ts";
 
 export const RUNNER_PROTOCOL_VERSION = 1;
 
@@ -15,6 +16,10 @@ export const RUNNER_METHODS = {
   shutdown: "runner.shutdown",
   // Runner to kernel: one SQL statement, run by the kernel's database.
   dbExec: "db.exec",
+  // Kernel to runner: what changed in the user code and state it mirrors.
+  stateSync: "state.sync",
+  // Kernel to runner: what the runner holds, by hash.
+  stateManifest: "state.manifest",
 } as const;
 
 export const RUNNER_NOTIFICATIONS = {
@@ -74,6 +79,91 @@ export interface DbErrorShape {
 export type DbExecOutcome =
   | { ok: true; value: unknown }
   | { ok: false; error: DbErrorShape };
+
+// --- State mirror ---
+//
+// The runner holds a copy of the user code and state that user code reads.
+// The kernel sends what changed (./mirror.ts); the runner applies it
+// (./runner-state.ts). Each entry is a category, a key and a hash of what the
+// kernel built the payload from.
+
+export const MIRROR_CATEGORIES = {
+  handler: "handler",
+  function: "function",
+  test: "test",
+  devView: "dev_view",
+  devTool: "dev_tool",
+  template: "template",
+  assetVersion: "asset_version",
+  config: "config",
+  schema: "schema",
+  package: "package",
+  env: "env",
+  app: "app",
+} as const;
+
+export type MirrorCategory =
+  typeof MIRROR_CATEGORIES[keyof typeof MIRROR_CATEGORIES];
+
+export interface MirrorPayloads {
+  handler: { js: string; abi: HandlerAbi };
+  function: { js: string };
+  test: { js: string };
+  dev_view: { js: string };
+  dev_tool: { js: string; args: DevToolArgDef[] };
+  template: { content: string };
+  asset_version: { version: string };
+  config: { value: unknown };
+  schema: { columns: ColumnDef[] };
+  // The runner imports these itself (the handler-call slice).
+  package: { specifier: string };
+  env: { vars: Record<string, string> };
+  // The runner's own environment is the project's, so it can't work out the
+  // app's origin; the kernel sends it.
+  app: { port: number; origin: string };
+}
+
+// The one key of a category that has a single entry (env, app).
+export const MIRROR_SINGLETON_KEY = "*";
+
+export interface MirrorRef {
+  category: MirrorCategory;
+  key: string;
+}
+
+export interface MirrorManifestEntry extends MirrorRef {
+  hash: string;
+}
+
+// A category never contains ":", so this can't collide.
+export function mirrorEntryId(ref: MirrorRef): string {
+  return `${ref.category}:${ref.key}`;
+}
+
+export type MirrorUpsert = {
+  [C in MirrorCategory]: MirrorManifestEntry & {
+    category: C;
+    payload: MirrorPayloads[C];
+  };
+}[MirrorCategory];
+
+// `failed` is what the kernel couldn't build (a transpile error): the runner
+// drops its copy and holds the entry as failed, under its hash.
+export interface StateSyncRequest {
+  removes: MirrorRef[];
+  upserts: MirrorUpsert[];
+  failed: MirrorManifestEntry[];
+}
+
+export interface MirrorFailure extends MirrorRef {
+  error: RpcError;
+}
+
+// Entries the runner took but couldn't instantiate. It holds them as failed,
+// under their hash, so the kernel doesn't send them again until they change.
+export interface StateSyncAnswer {
+  failures: MirrorFailure[];
+}
 
 export type RpcError = { code: string; message: string; suggestion?: string };
 

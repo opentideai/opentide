@@ -88,17 +88,30 @@ export function buildDrizzleTable(
   return pgTable(tableName, columnDefs);
 }
 
+export interface SchemaDefinition {
+  tableName: string;
+  columns: readonly ColumnDef[];
+}
+
 export class DynamicSchemaRegistry {
   private tables = new Map<string, AnyTable>();
+  // What each table was built from, so the runner can build the same one.
+  // A copy, replaced on every register, never edited.
+  private definitions = new Map<string, SchemaDefinition>();
 
   register(tableName: string, columns: ColumnDef[]): AnyTable {
     const table = buildDrizzleTable(tableName, columns);
     this.tables.set(tableName, table);
+    this.definitions.set(tableName, {
+      tableName,
+      columns: structuredClone(columns),
+    });
     return table;
   }
 
   remove(tableName: string): void {
     this.tables.delete(tableName);
+    this.definitions.delete(tableName);
   }
 
   get(tableName: string): AnyTable | undefined {
@@ -113,7 +126,12 @@ export class DynamicSchemaRegistry {
     return result;
   }
 
+  listDefinitions(): SchemaDefinition[] {
+    return [...this.definitions.values()];
+  }
+
   clear(): void {
     this.tables.clear();
+    this.definitions.clear();
   }
 }

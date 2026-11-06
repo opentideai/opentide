@@ -31,7 +31,8 @@ import {
   TARGET_DENO_SOURCE,
   TARGET_NODE,
 } from "./production-build.ts";
-import { MANIFEST_PATH, sha256Hex } from "../core/export.ts";
+import { MANIFEST_PATH } from "../core/export.ts";
+import { sha256Hex } from "../core/util.ts";
 import {
   PRODUCTION_CHANGESET_ID,
   PRODUCTION_CHANGESET_TITLE,

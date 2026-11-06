@@ -53,6 +53,17 @@ Deno.test("an unknown method and a throwing handler come back as errors", async 
   await runner.done;
 });
 
+Deno.test("Object.prototype's methods are not methods", async () => {
+  const { kernel, runner } = connectedPeers();
+  for (const method of ["toString", "constructor", "hasOwnProperty"]) {
+    const answer = await runner.request(method, null, TIMEOUT_MS);
+    assert(!answer.ok, method);
+    assertEquals(answer.error.code, RUNNER_ERROR_CODES.unknownMethod);
+  }
+  await kernel.close();
+  await runner.done;
+});
+
 Deno.test("a request nobody answers times out", async () => {
   const [a, b] = createMemoryTransportPair();
   const kernel = new RpcPeer(a);

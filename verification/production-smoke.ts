@@ -15,8 +15,8 @@ import {
   DEFAULT_APP_NAME,
   DEFAULT_APP_VERSION,
   type ExportProjectOptions,
-  sha256Hex,
 } from "../core/export.ts";
+import { sha256Hex } from "../core/util.ts";
 // Type-only import — RouteProbe is erased at runtime, so this does NOT form an
 // initialization cycle with route-smoke-plan.ts (which imports this module's
 // route/status/method constants at its own module-init). A *runtime* import from

@@ -6,7 +6,8 @@
 // cases. It exercises the real verification store factories, so it lives here in
 // the verification layer (it may import core freely).
 import { Database } from "../core/db.ts";
-import { type ExportFile, fileBytes, sha256Hex } from "../core/export.ts";
+import { type ExportFile, fileBytes } from "../core/export.ts";
+import { sha256Hex } from "../core/util.ts";
 import { Kernel } from "../core/registries.ts";
 import type { TypeFieldDef } from "../core/types.ts";
 import { testStoreComposition } from "./test-stores.ts";
