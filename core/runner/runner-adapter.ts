@@ -7,13 +7,17 @@
 // Defining one transpiles it here and has the runner instantiate it once
 // without keeping it, so a bad define still fails the define.
 //
-// The runner starts on first use. Starting it with the project, restarting it
-// and stopping it with the project is the lifecycle slice's job.
+// The runner starts on first use and stops with dispose(). One that exits, stops
+// answering pings, or is left running a script or test past its timeout is
+// dropped, killed if need be; the next call starts a new one and the mirror
+// brings it up to date in full. Calls in flight on the old one fail.
 
 import {
   appPreviewOrigin,
   getKernelSettings,
+  RUNNER_HEARTBEAT_INTERVAL_MS,
   RUNNER_REQUEST_TIMEOUT_MS,
+  RUNNER_TIMEOUT_GRACE_MS,
 } from "../config.ts";
 import { transpileScript } from "../compiler.ts";
 import type { Kernel } from "../registries.ts";
@@ -31,8 +35,14 @@ import type {
 } from "../types.ts";
 import { appFetchHandler } from "./app-fetch.ts";
 import { dbExecHandler } from "./db-service.ts";
-import { rpcStateChannel, StateMirror, type UserCodeSource } from "./mirror.ts";
-import type { PeerOptions } from "./peer.ts";
+import { SCRIPT_TIMEOUT_CODE, scriptTimeoutMessage } from "./instantiate.ts";
+import {
+  MirrorCache,
+  rpcStateChannel,
+  StateMirror,
+  type UserCodeSource,
+} from "./mirror.ts";
+import { failure, type PeerOptions, type RequestHandler } from "./peer.ts";
 import {
   type CallInvoke,
   decodeResponse,
@@ -42,6 +52,7 @@ import {
   type InvokeAnswer,
   type KernelInspectSnapshot,
   MIRROR_CATEGORIES,
+  RUNNER_ERROR_CODES,
   RUNNER_LOG_SOURCES,
   RUNNER_METHODS,
   RUNNER_NOTIFICATIONS,
@@ -63,8 +74,9 @@ export function createRunnerRuntimeAdapter(
   kernel: Kernel,
   base: RuntimeAdapter,
   start: RunnerStart,
+  options: RunnerBridgeOptions = {},
 ): RunnerRuntimeAdapter {
-  const bridge = new RunnerBridge(kernel, start);
+  const bridge = new RunnerBridge(kernel, start, options);
   return {
     ...base,
     capabilities: { ...base.capabilities, executionMode: "bridge" },
@@ -97,6 +109,7 @@ export function createRunnerRuntimeAdapter(
     runScript: (source, _deps, timeoutMs, kernelLog) =>
       runScriptInRunner(bridge, source, timeoutMs, kernelLog !== undefined),
     dispose: () => bridge.stop(),
+    abandon: (reason) => bridge.restart(reason),
   };
 }
 
@@ -109,6 +122,17 @@ export function isRunnerRuntimeAdapter(
 interface Connection {
   host: RunnerHost;
   mirror: StateMirror;
+  // False once the kernel has dropped this runner. Its calls back are refused
+  // from then on, so a killed runner's last queries can't reach the database.
+  alive: boolean;
+  heartbeat?: ReturnType<typeof setTimeout>;
+}
+
+export interface RunnerBridgeOptions {
+  heartbeatIntervalMs?: number;
+  // How long a ping may go unanswered. Default: the longest any caller waits
+  // for user code, so code a caller still waits for is never killed by it.
+  pingTimeoutMs?: number;
 }
 
 // A call's answer, and when it was sent: the runner's event times count from
@@ -120,18 +144,33 @@ interface Sent<T> {
 
 export class RunnerBridge {
   private connecting: Promise<Result<Connection>> | null = null;
+  private live: Connection | null = null;
+  private stopped = false;
+  private readonly mirrorCache = new MirrorCache();
   // Read once, like the app server's handler timeout: the settings are a file.
   private readonly callTimeoutMs = callTimeout();
+  private readonly heartbeatIntervalMs: number;
+  private readonly pingTimeoutMs: number;
 
   constructor(
     private readonly kernel: Kernel,
     private readonly start: RunnerStart,
-  ) {}
+    options: RunnerBridgeOptions = {},
+  ) {
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ??
+      RUNNER_HEARTBEAT_INTERVAL_MS;
+    this.pingTimeoutMs = options.pingTimeoutMs ?? this.callTimeoutMs;
+  }
 
   // The kernel's mirror of this runner, once it's running.
   async mirror(): Promise<Result<StateMirror>> {
     const conn = await this.connection();
     return conn.ok ? { ok: true, data: conn.data.mirror } : conn;
+  }
+
+  // The running runner's host, if one is running.
+  get host(): RunnerHost | null {
+    return this.live?.host ?? null;
   }
 
   async define<T>(entity: UserCodeSource, stub: T): Promise<Result<T>> {
@@ -170,42 +209,130 @@ export class RunnerBridge {
       : answer;
   }
 
-  async stop(): Promise<void> {
-    const conn = await this.connecting;
-    this.connecting = null;
-    if (conn?.ok) await conn.data.host.stop();
+  // Kills the running runner, if there is one. The next call starts another.
+  async restart(reason: string): Promise<void> {
+    const conn = await this.current();
+    if (conn) await this.drop(conn, `was killed: ${reason}`);
   }
 
-  private connection(): Promise<Result<Connection>> {
+  // For good: no runner starts after this.
+  async stop(): Promise<void> {
+    this.stopped = true;
+    const conn = await this.current();
+    if (!conn) return;
+    this.retire(conn);
+    await conn.host.stop();
+  }
+
+  private async current(): Promise<Connection | null> {
+    const conn = await this.connecting;
+    return conn?.ok && conn.data.alive ? conn.data : null;
+  }
+
+  private async connection(): Promise<Result<Connection>> {
+    if (this.stopped) {
+      return failure(
+        RUNNER_ERROR_CODES.closed,
+        "The user-code runner is stopped.",
+      );
+    }
+    // Gone before its exit was seen: a call made now would only fail.
+    if (this.live?.host.closed) {
+      await this.drop(this.live, "lost its connection");
+    }
     // Outside any trace: the connection's read loops live as long as it does,
     // and would otherwise carry the trace of the request that started it.
     this.connecting ??= outsideTrace(() => this.connect());
-    return this.connecting;
+    return await this.connecting;
   }
 
   private async connect(): Promise<Result<Connection>> {
-    const host = await this.start(kernelEnd(this.kernel));
+    // Filled in once it's up: until then, its calls back are answered.
+    const made: { conn?: Connection } = {};
+    const host = await this.start(
+      kernelEnd(this.kernel, () => made.conn?.alive ?? true),
+    );
     if (!host.ok) {
       this.connecting = null;
       return host;
     }
-    return {
-      ok: true,
-      data: {
-        host: host.data,
-        mirror: new StateMirror(this.kernel, rpcStateChannel(host.data)),
-      },
+    const started: Connection = {
+      host: host.data,
+      mirror: new StateMirror(
+        this.kernel,
+        rpcStateChannel(host.data),
+        this.mirrorCache,
+      ),
+      alive: true,
     };
+    made.conn = started;
+    this.live = started;
+    void host.data.exited.then(() => this.drop(started, "exited"));
+    this.beat(started);
+    return { ok: true, data: started };
+  }
+
+  // Pings the runner every interval; one that doesn't answer is dropped.
+  private beat(conn: Connection): void {
+    const timer = setTimeout(async () => {
+      const pong = await conn.host.request(
+        RUNNER_METHODS.ping,
+        null,
+        this.pingTimeoutMs,
+      );
+      if (pong.ok) {
+        if (conn.alive) this.beat(conn);
+      } else if (pong.error.code === RUNNER_ERROR_CODES.timeout) {
+        await this.drop(
+          conn,
+          `stopped answering (no ping answer in ${this.pingTimeoutMs} ms)`,
+        );
+      }
+    }, this.heartbeatIntervalMs);
+    Deno.unrefTimer(timer);
+    conn.heartbeat = timer;
+  }
+
+  // Gives up on a runner: kills it if it's still there, and says why.
+  private async drop(conn: Connection, reason: string): Promise<void> {
+    if (!conn.alive) return;
+    this.retire(conn);
+    const exit = await conn.host.kill();
+    const status = `exit code ${exit.code}${
+      exit.signal ? `, ${exit.signal}` : ""
+    }`;
+    const stderr = conn.host.stderrTail();
+    this.kernel.log.log(
+      "warn",
+      "system",
+      `The user-code runner ${reason} (${status}). The next call starts a new one.${
+        stderr ? `\n${stderr}` : ""
+      }`,
+    );
+  }
+
+  private retire(conn: Connection): void {
+    conn.alive = false;
+    clearTimeout(conn.heartbeat);
+    if (this.live === conn) {
+      this.live = null;
+      this.connecting = null;
+    }
   }
 }
 
-// What the kernel's end of the connection answers and hears.
-function kernelEnd(kernel: Kernel): PeerOptions {
+// What the kernel's end of the connection answers and hears. Nothing more is
+// answered once the runner is dropped.
+function kernelEnd(kernel: Kernel, alive: () => boolean): PeerOptions {
+  const whileAlive = (handler: RequestHandler): RequestHandler => (params) =>
+    alive()
+      ? handler(params)
+      : failure(RUNNER_ERROR_CODES.closed, "This runner was dropped.");
   return {
     handlers: {
-      [RUNNER_METHODS.dbExec]: dbExecHandler(kernel.db),
-      [RUNNER_METHODS.appFetch]: appFetchHandler(() =>
-        appPreviewOrigin(kernel.appPort)
+      [RUNNER_METHODS.dbExec]: whileAlive(dbExecHandler(kernel.db)),
+      [RUNNER_METHODS.appFetch]: whileAlive(
+        appFetchHandler(() => appPreviewOrigin(kernel.appPort)),
       ),
     },
     onNotification: (method, params) => {
@@ -292,9 +419,29 @@ async function runScriptInRunner(
   const ran = await bridge.invoke<RuntimeScriptResult>(
     RUNNER_METHODS.invokeScript,
     params,
-    timeoutMs + RUNNER_REQUEST_TIMEOUT_MS,
+    timeoutMs + RUNNER_TIMEOUT_GRACE_MS,
   );
-  return ran.ok ? ran.data.answer : { ...ran, logs: [] };
+  // A script that ran past its timeout may still be running, and writing.
+  const outran = "a script ran past its timeout";
+  if (!ran.ok) {
+    if (ran.error.code !== RUNNER_ERROR_CODES.timeout) {
+      return { ...ran, logs: [] };
+    }
+    await bridge.restart(outran);
+    return {
+      ok: false,
+      error: {
+        code: SCRIPT_TIMEOUT_CODE,
+        message: scriptTimeoutMessage(timeoutMs),
+      },
+      logs: [],
+    };
+  }
+  const { answer } = ran.data;
+  if (!answer.ok && answer.error.code === SCRIPT_TIMEOUT_CODE) {
+    await bridge.restart(outran);
+  }
+  return answer;
 }
 
 // Ends a stub's call the way the user code ended: its value, its Response, or

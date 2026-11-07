@@ -58,8 +58,13 @@ Deno.test("net denies every loopback spelling and every interface, once each", (
   assert(flags().includes("--allow-net"));
 });
 
-Deno.test("the runner is pinned to OpenTide's config, and the app lock when given", () => {
+Deno.test("the runner is pinned to OpenTide's config, and the lock when given", () => {
   assert(flags().includes("--config=/opt/opentide/deno.json"));
+  const { configFile: _, ...bundled } = INPUT;
+  const noConfig = runnerPermissionFlags(bundled);
+  assert(noConfig.ok);
+  assert(noConfig.data.includes("--no-config"));
+  assert(!noConfig.data.some((x) => x.startsWith("--config")));
   assert(!flags().some((x) => x.startsWith("--lock")));
   assert(
     flags({ ...INPUT, lockFile: "/p/deno.lock" } as typeof INPUT)

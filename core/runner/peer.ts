@@ -44,6 +44,11 @@ export class RpcPeer {
     this.done = this.readLoop();
   }
 
+  // True once the other side has gone: nothing sent from now on is answered.
+  get closed(): boolean {
+    return this.closedError !== null;
+  }
+
   async request<T>(
     method: string,
     params: unknown,

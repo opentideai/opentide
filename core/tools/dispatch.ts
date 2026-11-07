@@ -77,7 +77,6 @@ import {
 } from "../fingerprint.ts";
 import { createTimestampedId } from "../ids.ts";
 import {
-  formatKernelTimeoutMs,
   getKernelSettings,
   MCP_SURFACE_VERSION,
   TOOL_ERROR_STALE_WRITE,
@@ -95,6 +94,7 @@ import {
   resetDataTables,
 } from "../data-fixtures.ts";
 import { kernelInspectAPI } from "../dev-views.ts";
+import { runTestFn } from "../test-run.ts";
 import {
   decodeBase64,
   encodeBase64,
@@ -391,7 +391,6 @@ export async function runKernelTests(
     onProgress?.({ type: "started", name: test.name });
     throwIfAborted();
     const start = performance.now();
-    let testTimerId: ReturnType<typeof setTimeout>;
     let abortHandler: (() => void) | undefined;
     try {
       const abort = new Promise<never>((_, reject) => {
@@ -403,24 +402,7 @@ export async function runKernelTests(
         abortHandler = () => reject(abortError());
         signal.addEventListener("abort", abortHandler, { once: true });
       });
-      await Promise.race([
-        test.fn(),
-        new Promise<never>((_, reject) => {
-          testTimerId = setTimeout(
-            () =>
-              reject(
-                new Error(
-                  `Test timed out after ${
-                    formatKernelTimeoutMs(testTimeoutMs)
-                  }`,
-                ),
-              ),
-            testTimeoutMs,
-          );
-        }),
-        abort,
-      ]);
-      clearTimeout(testTimerId!);
+      await runTestFn(kernel, test.fn, testTimeoutMs, abort);
       if (signal && abortHandler) {
         signal.removeEventListener("abort", abortHandler);
       }
@@ -435,7 +417,6 @@ export async function runKernelTests(
       });
       onProgress?.({ type: "result", result });
     } catch (err) {
-      clearTimeout(testTimerId!);
       if (signal && abortHandler) {
         signal.removeEventListener("abort", abortHandler);
       }

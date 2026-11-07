@@ -5,15 +5,19 @@
 // writes <out>/opentide-<version>.tar.gz and its .sha256, and the Claude Desktop
 // extension <out>/opentide.mcpb (default out: dist/).
 // The tarball unpacks to opentide-<version>/ and holds exactly the files git
-// tracks at HEAD, so commit first.
+// tracks at HEAD, so commit first, plus the bundled runner built from them.
 import { dirname, join, normalize } from "node:path";
-import { OPENTIDE_VERSION } from "../core/config.ts";
+import { OPENTIDE_VERSION, RUNNER_BUNDLE_FILE } from "../core/config.ts";
 import { buildExtension, EXTENSION_DIR } from "./claude-desktop-extension.ts";
 
 const REPO_ROOT = normalize(
   join(dirname(new URL(import.meta.url).pathname), ".."),
 );
 const DEFAULT_OUT_DIR = "dist";
+const RUNNER_MAIN_PATH = "core/runner/runner-main.ts";
+// The user-code runner as one file, for compiled builds, which have no
+// sources on disk to run it from (core/runner/project-runner.ts).
+export const RUNNER_BUNDLE_PATH = `core/runner/${RUNNER_BUNDLE_FILE}`;
 
 export function tarballName(version: string = OPENTIDE_VERSION): string {
   return `opentide-${version}.tar.gz`;
@@ -50,6 +54,18 @@ async function writeHeadTree(dest: string, top: string): Promise<void> {
   await Deno.remove(archive);
 }
 
+// Built from the unpacked tree, so it's HEAD's code under HEAD's lock.
+async function bundleRunner(tree: string): Promise<void> {
+  await run(Deno.execPath(), [
+    "bundle",
+    "--quiet",
+    "--platform=deno",
+    `--config=${join(tree, "deno.json")}`,
+    `--output=${join(tree, RUNNER_BUNDLE_PATH)}`,
+    join(tree, RUNNER_MAIN_PATH),
+  ]);
+}
+
 async function warnIfDirty(): Promise<void> {
   const dirty = (await run("git", ["-C", REPO_ROOT, "status", "--porcelain"]))
     .trim();
@@ -78,6 +94,7 @@ export async function packageOpenTide(outDir: string): Promise<ReleaseFiles> {
   try {
     const top = `opentide-${OPENTIDE_VERSION}`;
     await writeHeadTree(staging, top);
+    await bundleRunner(join(staging, top));
     await Deno.mkdir(outDir, { recursive: true });
     const name = tarballName();
     const tarball = join(outDir, name);

@@ -119,26 +119,30 @@ interface Hashed {
   hash: string;
 }
 
+// What a mirror knows about the kernel's side alone: hashes and transpiled
+// code. A respawned runner gets a new mirror and the same cache, so nothing
+// unchanged is transpiled again.
+export class MirrorCache {
+  readonly hashByEntry = new WeakMap<object, string>();
+  readonly hashByText = new Map<string, { text: string; hash: string }>();
+  // One slot per entity: its last source and what that transpiled to.
+  readonly transpiled = new Map<
+    string,
+    { source: string; js: Result<string> }
+  >();
+}
+
 export class StateMirror {
   // What the runner holds, failed entries included. Null when that isn't
   // known (a new mirror, a respawned runner, a send that failed half-way):
   // the next sync asks the runner first.
   private confirmed: Map<string, MirrorManifestEntry> | null = null;
-  private readonly hashByEntry = new WeakMap<object, string>();
-  private readonly hashByText = new Map<
-    string,
-    { text: string; hash: string }
-  >();
-  // One slot per entity: its last source and what that transpiled to.
-  private readonly transpiled = new Map<
-    string,
-    { source: string; js: Result<string> }
-  >();
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly kernel: Kernel,
     private readonly runner: RunnerStateChannel,
+    private readonly cache: MirrorCache = new MirrorCache(),
   ) {}
 
   // Runs after any sync already under way, then diffs afresh, so two callers
@@ -183,10 +187,10 @@ export class StateMirror {
     source: string,
   ): Promise<Result<string>> {
     const id = mirrorEntryId({ category, key });
-    const cached = this.transpiled.get(id);
+    const cached = this.cache.transpiled.get(id);
     if (cached?.source === source) return cached.js;
     const js = await transpileUserCode(category, key, source);
-    this.transpiled.set(id, { source, js });
+    this.cache.transpiled.set(id, { source, js });
     return js;
   }
 
@@ -271,23 +275,23 @@ export class StateMirror {
   private async hashOf(id: string, candidate: Candidate): Promise<string> {
     const { identity } = candidate;
     if (identity) {
-      const known = this.hashByEntry.get(identity);
+      const known = this.cache.hashByEntry.get(identity);
       if (known) return known;
       const hash = await hashText(candidate.fingerprint());
-      this.hashByEntry.set(identity, hash);
+      this.cache.hashByEntry.set(identity, hash);
       return hash;
     }
     const text = candidate.fingerprint();
-    const known = this.hashByText.get(id);
+    const known = this.cache.hashByText.get(id);
     if (known?.text === text) return known.hash;
     const hash = await hashText(text);
-    this.hashByText.set(id, { text, hash });
+    this.cache.hashByText.set(id, { text, hash });
     return hash;
   }
 
   private dropStaleTranspiles(current: Map<string, Hashed>): void {
-    for (const id of this.transpiled.keys()) {
-      if (!current.has(id)) this.transpiled.delete(id);
+    for (const id of this.cache.transpiled.keys()) {
+      if (!current.has(id)) this.cache.transpiled.delete(id);
     }
   }
 

@@ -89,6 +89,9 @@ export interface RuntimeMetadata {
 export interface RuntimeAdapter extends RuntimeMetadata {
   initialize?: () => Promise<void> | void;
   dispose?: () => Promise<void> | void;
+  // The caller stopped waiting for user code that may still be running (a
+  // test timed out or was cancelled). A runtime that can stop it does.
+  abandon?: (reason: string) => Promise<void>;
 
   compileHandler?: (
     name: string,

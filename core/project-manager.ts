@@ -218,6 +218,10 @@ export function getProjectPaths(projectDir: string) {
     assetBlobsDir: join(historyDir, "asset-blobs"),
     branchesDir,
     cacheDir: cachesDir,
+    // The user-code runner's scratch dir, and where a compiled build writes the
+    // bundled runner (core/runner/project-runner.ts).
+    runnerScratchDir: join(cachesDir, "runner"),
+    runnerBundledScript: join(cachesDir, "runner-main.js"),
     logsCache: join(cachesDir, "logs.json"),
     localState: join(cachesDir, "local-state.json"),
     registryCache: join(cachesDir, REGISTRY_CACHE_FILE),

@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,6 +11,7 @@ import { dispatchTool } from "../tools/dispatch.ts";
 import type { HandlerContext } from "../types.ts";
 import { dbExecHandler } from "./db-service.ts";
 import {
+  MirrorCache,
   rpcStateChannel,
   type RunnerStateChannel,
   StateMirror,
@@ -475,6 +476,30 @@ async function importedSpecifiers(module: string): Promise<string[]> {
 }
 
 // runner.ts is what runner-main.ts loads, state included.
+Deno.test({
+  ...testOpts,
+  name: "a mirror for a respawned runner reuses the code already transpiled",
+  fn: () =>
+    withLinked(async (l) => {
+      const cache = new MirrorCache();
+      const mirrorFor = () =>
+        new StateMirror(l.kernel, rpcStateChannel(l.kernelPeer), cache);
+      const source = "function f() { return 1; }";
+      const first = await mirrorFor().transpile(
+        MIRROR_CATEGORIES.function,
+        "f",
+        source,
+      );
+      assert(first.ok);
+      const again = await mirrorFor().transpile(
+        MIRROR_CATEGORIES.function,
+        "f",
+        source,
+      );
+      assertStrictEquals(again, first);
+    }),
+});
+
 Deno.test("the runner loads no transpiler and no database driver", async () => {
   const loaded = await importedSpecifiers("./runner.ts");
   for (

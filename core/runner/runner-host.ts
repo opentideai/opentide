@@ -84,8 +84,8 @@ export const denoSpawn: SpawnFn = (spec) => {
   };
 };
 
-// runner-main.ts as a file on disk. A compiled build has none; the lifecycle
-// slice writes a bundled copy out instead.
+// runner-main.ts as a file on disk. A compiled build has none, and spawns the
+// bundled copy instead (./project-runner.ts).
 export function runnerScriptPath(): string {
   return new URL("./runner-main.ts", import.meta.url).pathname;
 }
@@ -123,6 +123,7 @@ export async function denoCacheDirs(
 
 interface Channel {
   stop(peer: RpcPeer): Promise<RunnerExit>;
+  kill(peer: RpcPeer): Promise<RunnerExit>;
   exited: Promise<RunnerExit>;
 }
 
@@ -171,6 +172,13 @@ export class RunnerHost {
         await stderr.done;
         return exit;
       },
+      async kill(p) {
+        child.kill("SIGKILL");
+        const exit = await child.status;
+        await p.close();
+        await stderr.done;
+        return exit;
+      },
     };
     const ready = await waitForReady(
       announced.ready,
@@ -214,20 +222,26 @@ export class RunnerHost {
         );
       },
     });
-    const channel: Channel = {
-      exited,
-      async stop(p) {
-        await p.request(
-          RUNNER_METHODS.shutdown,
-          null,
-          RUNNER_SHUTDOWN_GRACE_MS,
+    const stop = async (p: RpcPeer) => {
+      const asked = await p.request(
+        RUNNER_METHODS.shutdown,
+        null,
+        RUNNER_SHUTDOWN_GRACE_MS,
+      );
+      // One that didn't answer is shut from here: it runs in this process.
+      if (!asked.ok) {
+        void runnerEnd.close().then(() =>
+          markExited({ code: 0, signal: null })
         );
-        const exit = await exited;
-        await p.close();
-        await runner.peer.done;
-        return exit;
-      },
+      }
+      const exit = await exited;
+      await p.close();
+      await runner.peer.done;
+      return exit;
     };
+    // In this process there's nothing to kill: a kill is a stop, and code
+    // still running here loses its connection to the kernel.
+    const channel: Channel = { exited, stop, kill: stop };
     const ready = await waitForReady(
       announced.ready,
       exited,
@@ -238,6 +252,11 @@ export class RunnerHost {
       ok: true,
       data: new RunnerHost(peer, channel, ready.data, StderrTail.none()),
     };
+  }
+
+  // The connection to the runner is gone, whether or not it has exited yet.
+  get closed(): boolean {
+    return this.peer.closed;
   }
 
   request<T>(
@@ -252,6 +271,12 @@ export class RunnerHost {
   // Safe to call more than once.
   stop(): Promise<RunnerExit> {
     this.stopping ??= this.channel.stop(this.peer);
+    return this.stopping;
+  }
+
+  // Kills the runner at once: for one running code nobody waits for any more.
+  kill(): Promise<RunnerExit> {
+    this.stopping ??= this.channel.kill(this.peer);
     return this.stopping;
   }
 

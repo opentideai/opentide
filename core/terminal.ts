@@ -1,7 +1,8 @@
 import type { Kernel } from "./registries.ts";
 import type { Database } from "./db.ts";
 import { formatShellTranscript, runShellCommand } from "./shell.ts";
-import { formatKernelTimeoutMs, getKernelSettings } from "./config.ts";
+import { getKernelSettings } from "./config.ts";
+import { runTestFn } from "./test-run.ts";
 
 // ANSI color codes
 const C = {
@@ -773,25 +774,8 @@ function buildRun(k: Kernel): (pattern?: string) => Promise<string> {
 
     for (const test of tests) {
       const start = performance.now();
-      let timerId: ReturnType<typeof setTimeout>;
       try {
-        await Promise.race([
-          test.fn(),
-          new Promise<never>((_, reject) => {
-            timerId = setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    `Test timed out after ${
-                      formatKernelTimeoutMs(testTimeoutMs)
-                    }`,
-                  ),
-                ),
-              testTimeoutMs,
-            );
-          }),
-        ]);
-        clearTimeout(timerId!);
+        await runTestFn(k, test.fn, testTimeoutMs);
         const ms = Math.round(performance.now() - start);
         passed++;
         k.tests.updateResult(test.name, {
@@ -803,7 +787,6 @@ function buildRun(k: Kernel): (pattern?: string) => Promise<string> {
           `  \x1b[32m✓${C.reset} ${C.white}${test.name}${C.reset} ${C.muted}(${ms}ms)${C.reset}`,
         );
       } catch (err) {
-        clearTimeout(timerId!);
         const ms = Math.round(performance.now() - start);
         const msg = err instanceof Error ? err.message : String(err);
         failed++;

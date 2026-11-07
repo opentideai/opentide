@@ -1266,6 +1266,15 @@ export const RUNNER_REQUEST_TIMEOUT_MS = 30_000;
 export const RUNNER_SHUTDOWN_GRACE_MS = 2_000;
 // How much of a runner's stderr the kernel keeps for error messages.
 export const RUNNER_STDERR_TAIL_BYTES = 8_192;
+// How often the kernel pings a running runner. One that doesn't answer within
+// the longest any caller waits for user code is killed.
+export const RUNNER_HEARTBEAT_INTERVAL_MS = 5_000;
+// After a script's own timeout, how long the kernel waits for the runner to
+// say so before taking it as wedged. Either way the runner is killed.
+export const RUNNER_TIMEOUT_GRACE_MS = 2_000;
+// runner-main.ts bundled into one file, beside it in a release (scripts/
+// package-opentide.ts). A compiled build spawns this, written out to disk.
+export const RUNNER_BUNDLE_FILE = "runner-bundle.js";
 // Loopback in every spelling Deno's host deny can't infer from 127.0.0.1.
 // Measured on Deno 2.9.8 / Linux: denying these hosts also blocks 127.1,
 // 2130706433, 0x7f.1 and ::ffff:127.0.0.1. It does NOT block 127.0.0.2 and the

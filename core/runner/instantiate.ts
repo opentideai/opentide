@@ -194,6 +194,13 @@ export function instantiateScript(
   }
 }
 
+// What a script that outran its timeout fails with.
+export const SCRIPT_TIMEOUT_CODE = "TIMEOUT";
+
+export function scriptTimeoutMessage(timeoutMs: number): string {
+  return `Script timed out after ${timeoutMs}ms`;
+}
+
 // Runs a transpiled script against `deps`, racing it against `timeoutMs`.
 // Every line it logs goes to the result and to `sink`.
 //
@@ -201,7 +208,7 @@ export function instantiateScript(
 // timeout the race rejects with TIMEOUT and we stop awaiting, but the script
 // keeps running and may still write to the DB. A late rejection is not a
 // hazard: Promise.race attaches a reaction to it, so it never surfaces as an
-// unhandledrejection. The runner's lifecycle fixes this by killing the runner.
+// unhandledrejection. In a runner, the kernel kills the runner on a timeout.
 export async function runScriptJs(
   jsCode: string,
   deps: CompileDeps,
@@ -215,7 +222,7 @@ export async function runScriptJs(
   try {
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error(`Script timed out after ${timeoutMs}ms`)),
+        () => reject(new Error(scriptTimeoutMessage(timeoutMs))),
         timeoutMs,
       );
     });
@@ -235,7 +242,9 @@ export async function runScriptJs(
     return {
       ok: false,
       error: {
-        code: message.includes("timed out") ? "TIMEOUT" : "RUNTIME_ERROR",
+        code: message.includes("timed out")
+          ? SCRIPT_TIMEOUT_CODE
+          : "RUNTIME_ERROR",
         message,
       },
       logs,

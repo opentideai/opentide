@@ -21,9 +21,10 @@ export interface RunnerPermissionInput {
   // Read and write: the runner's scratch dir, also its TMPDIR.
   scratchDir: string;
   // OpenTide's own deno.json, so a project's deno.json never configures the
-  // runner's imports.
-  configFile: string;
-  // The app's lock file, when it has one.
+  // runner's imports. Absent for the bundled runner, which has none to
+  // configure: it runs with --no-config.
+  configFile?: string;
+  // The lock file the runner resolves and records its imports in.
   lockFile?: string;
   // Every address on this machine's interfaces, read by the kernel at spawn.
   interfaceAddresses: string[];
@@ -33,7 +34,7 @@ export function runnerPermissionFlags(
   input: RunnerPermissionInput,
 ): Result<string[]> {
   const readable = [...new Set([...input.cacheDirs, input.scratchDir])];
-  const paths = [...readable, input.configFile, input.lockFile ?? ""];
+  const paths = [...readable, input.configFile ?? "", input.lockFile ?? ""];
   const withComma = paths.find((p) => p.includes(","));
   if (withComma) {
     return {
@@ -53,7 +54,7 @@ export function runnerPermissionFlags(
     ok: true,
     data: [
       "--no-prompt",
-      `--config=${input.configFile}`,
+      input.configFile ? `--config=${input.configFile}` : "--no-config",
       ...(input.lockFile ? [`--lock=${input.lockFile}`] : []),
       `--allow-read=${readable.join(",")}`,
       `--allow-write=${input.scratchDir}`,

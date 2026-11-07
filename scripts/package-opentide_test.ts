@@ -1,7 +1,11 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "node:path";
 import { OPENTIDE_VERSION } from "../core/config.ts";
-import { packageOpenTide, tarballName } from "./package-opentide.ts";
+import {
+  packageOpenTide,
+  RUNNER_BUNDLE_PATH,
+  tarballName,
+} from "./package-opentide.ts";
 import { EXTENSION_FILE } from "./claude-desktop-extension.ts";
 
 async function tarList(tarball: string): Promise<string[]> {
@@ -33,7 +37,7 @@ const inGitCheckout = new Deno.Command("git", {
 
 Deno.test({
   name:
-    "packageOpenTide: the tarball is HEAD's tracked files under opentide-<version>/",
+    "packageOpenTide: the tarball is HEAD's tracked files and the runner bundle under opentide-<version>/",
   ignore: !inGitCheckout,
 }, async () => {
   const out = await Deno.makeTempDir({ prefix: "opentide-package-" });
@@ -46,7 +50,7 @@ Deno.test({
     assert(entries.every((e) => e.startsWith(prefix)));
     const files = entries.filter((e) => !e.endsWith("/"))
       .map((e) => e.slice(prefix.length)).sort();
-    assertEquals(files, await trackedFiles());
+    assertEquals(files, [...await trackedFiles(), RUNNER_BUNDLE_PATH].sort());
     const [sum, name] = (await Deno.readTextFile(`${tarball}.sha256`)).trim()
       .split(/\s+/);
     assertEquals(name, tarballName());

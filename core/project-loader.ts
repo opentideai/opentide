@@ -31,6 +31,7 @@ import {
 import { setUnpricedModelWarnHandler } from "./usage.ts";
 import { type DoctorIssue, doctorProject } from "./project-doctor.ts";
 import { runProjectInitHooks } from "./project-hooks.ts";
+import { projectRunnerStart } from "./runner/project-runner.ts";
 import type { CompositionContext } from "./composition.ts";
 
 // Thrown when another process already has the project open. Carries the Result
@@ -87,6 +88,9 @@ export interface LoadProjectOptions {
   // The assembled upper-layer seams for this project's Kernel. Omitted ⇒ the
   // Kernel gets coreOnlyComposition() (no verification/agent).
   composition?: CompositionContext;
+  // Run the project's user code in its own runner process
+  // (core/runner/project-runner.ts) instead of the kernel's. Off by default.
+  userCodeRunner?: boolean;
 }
 
 export async function loadProject(
@@ -142,9 +146,18 @@ async function loadProjectLocked(
   );
   console.log(`  Database ready (${dbUrl ? "postgres" : paths.dataDir})`);
 
-  const kernel = new Kernel(db, {
+  const kernel: Kernel = new Kernel(db, {
     historyDir: paths.historyDir,
     composition: opts.composition,
+    userCodeRunner: opts.userCodeRunner
+      ? projectRunnerStart(
+        {
+          scratchDir: paths.runnerScratchDir,
+          bundledScript: paths.runnerBundledScript,
+        },
+        () => kernel.envSnapshot(),
+      )
+      : undefined,
   });
   kernel.projectDir = entry.path;
   // Private sessions written before they had their own directory move there
@@ -270,6 +283,9 @@ async function unloadProjectOnce(ctx: ProjectContext): Promise<void> {
   await ctx.commandRunner.shutdown();
   await ctx.devServer.shutdown();
   await ctx.appServer.shutdown();
+  // With the app server down nothing calls user code; the runner, if there is
+  // one, is the last thing that can write.
+  await ctx.kernel.runtime.dispose?.();
 
   // The data directory becomes openable HERE, not at close() — and this runs before
   // the backup rather than after it because the backup is the slowest thing on this
