@@ -14,6 +14,7 @@ import { drizzle } from "drizzle-orm/pg-proxy";
 import type { DynamicSchemaRegistry } from "../db/dynamic-schema.ts";
 import { buildHandlerDb, type HandlerDb } from "../handler-db.ts";
 import { RUNNER_REQUEST_TIMEOUT_MS } from "../config.ts";
+import { tracedDb } from "../trace-context.ts";
 import type { RpcPeer } from "./peer.ts";
 import {
   DB_EXEC_KINDS,
@@ -39,7 +40,9 @@ export function buildRunnerDb(
     // this is the driver's whole result, as in-process drizzle returns it.
     return { rows: await exec({ kind, sql, params }) as unknown[] };
   });
-  const raw = {
+  // Traced here, as in-process, so raw statements land in the running call's
+  // trace. Drizzle statements aren't traced, in-process or here.
+  const raw = tracedDb({
     query: (sql: string, params?: unknown[]) =>
       exec({ kind: DB_EXEC_KINDS.query, sql, params }) as Promise<
         Record<string, unknown>[]
@@ -48,20 +51,16 @@ export function buildRunnerDb(
       exec({ kind: DB_EXEC_KINDS.execute, sql, params }) as Promise<
         { changes: number }
       >,
-  };
+  });
   return buildHandlerDb(raw, proxy, schemas);
 }
 
-// db.exec over the runner's connection. `requestId` says which app request is
-// running, so the kernel files the statement under that trace.
-export function rpcDbExec(
-  peer: RpcPeer,
-  requestId: () => string | undefined = () => undefined,
-): DbExec {
+// db.exec over the runner's connection.
+export function rpcDbExec(peer: RpcPeer): DbExec {
   return async (request) => {
     const answer = await peer.request<DbExecOutcome>(
       RUNNER_METHODS.dbExec,
-      { ...request, requestId: requestId() },
+      request,
       RUNNER_REQUEST_TIMEOUT_MS,
     );
     if (!answer.ok) throw new Error(`db.exec: ${answer.error.message}`);

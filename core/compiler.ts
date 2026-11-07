@@ -7,8 +7,8 @@ import type {
   DevViewFn,
   HandlerFn,
   KernelInspectAPI,
-  LogLevel,
   Result,
+  RuntimeScriptResult,
   TestFn,
 } from "./types.ts";
 import { detectHandlerAbi } from "./handler-abi.ts";
@@ -20,8 +20,8 @@ import {
   instantiateDevView,
   instantiateFunction,
   instantiateHandler,
-  instantiateScript,
   instantiateTest,
+  runScriptJs,
   SCOPE_PREAMBLE_LINES,
   type UserCodeKind,
   userCodeUrl,
@@ -173,29 +173,31 @@ export async function compileDevTool(
   return instantiateDevTool(name, js.data, args, deps);
 }
 
-export interface ScriptResult {
-  ok: true;
-  output: unknown;
-  logs: string[];
-  durationMs: number;
-}
-
-export interface ScriptError {
-  ok: false;
-  error: { code: string; message: string; suggestion?: string };
-  logs: string[];
-}
-
 export async function runScript(
   source: string,
   deps: CompileDeps,
   timeoutMs = getKernelSettings().scriptTimeoutMs,
   kernelLog?: KernelLog,
-): Promise<ScriptResult | ScriptError> {
-  let jsCode: string;
+): Promise<RuntimeScriptResult> {
+  const js = await transpileScript(source);
+  if (!js.ok) return { ...js, logs: [] };
+  return await runScriptJs(
+    js.data,
+    deps,
+    timeoutMs,
+    (level, message) => kernelLog?.log(level, "script", message),
+  );
+}
+
+// A script is a body of statements; it runs as an async IIFE so it can await.
+export async function transpileScript(
+  source: string,
+): Promise<Result<string>> {
   try {
-    const wrapped = `(async () => {\n${source}\n})()`;
-    jsCode = await transformTypeScript(wrapped);
+    return {
+      ok: true,
+      data: await transformTypeScript(`(async () => {\n${source}\n})()`),
+    };
   } catch (err) {
     return {
       ok: false,
@@ -204,76 +206,8 @@ export async function runScript(
         message: errorMessage(err),
         suggestion: "Fix the TypeScript syntax and try again.",
       },
-      logs: [],
     };
   }
-
-  const logs: string[] = [];
-  const script = instantiateScript(
-    jsCode,
-    deps,
-    capturingLog(logs, kernelLog),
-  );
-  if (!script.ok) return { ...script, logs };
-
-  let scriptTimerId: ReturnType<typeof setTimeout>;
-  try {
-    const timeout = new Promise<never>((_, reject) => {
-      scriptTimerId = setTimeout(
-        () => reject(new Error(`Script timed out after ${timeoutMs}ms`)),
-        timeoutMs,
-      );
-    });
-    const start = performance.now();
-    // LIMITATION: in-process scripts cannot be forcibly cancelled. On timeout
-    // the race rejects with TIMEOUT and we stop awaiting, but the script keeps
-    // running to completion and may still mutate the DB. A late rejection is
-    // not a hazard — Promise.race attaches a reaction to this promise, so it
-    // never surfaces as an unhandledrejection. The runner process fixes this:
-    // a timed-out script gets its runner killed (docs: user-code-runner plan).
-    const output = await Promise.race([
-      Promise.resolve(script.data()),
-      timeout,
-    ]);
-    clearTimeout(scriptTimerId!);
-    return {
-      ok: true,
-      output: output === undefined ? null : output,
-      logs,
-      durationMs: Math.round(performance.now() - start),
-    };
-  } catch (err) {
-    clearTimeout(scriptTimerId!);
-    const message = errorMessage(err);
-    return {
-      ok: false,
-      error: {
-        code: message.includes("timed out") ? "TIMEOUT" : "RUNTIME_ERROR",
-        message,
-      },
-      logs,
-    };
-  }
-}
-
-// The script's `log`: every line goes to the script's result and the kernel log.
-function capturingLog(
-  logs: string[],
-  kernelLog: KernelLog | undefined,
-): CompileDeps["log"] {
-  const at = (level: LogLevel) => (...args: unknown[]) => {
-    const msg = args
-      .map((a) => typeof a === "string" ? a : JSON.stringify(a))
-      .join(" ");
-    logs.push(msg);
-    kernelLog?.log(level, "script", msg);
-  };
-  return Object.assign(at("debug"), {
-    debug: at("debug"),
-    info: at("info"),
-    warn: at("warn"),
-    error: at("error"),
-  });
 }
 
 const USER_CODE_LABELS: Record<UserCodeKind, string> = {

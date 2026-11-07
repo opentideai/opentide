@@ -4,6 +4,12 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "node:path";
+import { createAppServer } from "../app-server.ts";
+import { initCompiler, stopCompiler } from "../compiler.ts";
+import { APP_PORT_AUTO } from "../config.ts";
+import { Database } from "../db.ts";
+import { Kernel } from "../registries.ts";
+import { dispatchTool } from "../tools/dispatch.ts";
 import { userConfigDir } from "../user-config-dir.ts";
 import {
   hostInterfaceAddresses,
@@ -136,4 +142,113 @@ Deno.test("under the runner's flags, keys, shell, loopback and the cache are out
     await listener.shutdown();
     await box.cleanup();
   }
+});
+
+// The same boundary, met by user code: a handler the kernel serves, run in a
+// real runner child. And the one loopback user code is allowed, its own app,
+// reached through the kernel.
+Deno.test({
+  name:
+    "a handler in the real runner can't reach keys, shell or loopback, but can reach its app",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  fn: async () => {
+    const box = await sandbox();
+    const other = Deno.serve(
+      { hostname: "0.0.0.0", port: 0, onListen: () => {} },
+      () => new Response("reached"),
+    );
+    await initCompiler();
+    const db = await Database.create({ driver: "pglite" });
+    const kernel = new Kernel(db, {
+      userCodeRunner: (peer) =>
+        RunnerHost.spawn({
+          spawn: denoSpawn,
+          spec: {
+            command: box.deno,
+            args: ["run", ...box.flags, runnerScriptPath()],
+            env: box.env,
+            cwd: box.scratchDir,
+          },
+          peer,
+        }),
+    });
+    const app = createAppServer(kernel, APP_PORT_AUTO);
+    try {
+      const configPath = join(userConfigDir(), "config.json");
+      const probe = `async function probe() {
+  const attempt = async (fn: () => unknown) => {
+    try { await fn(); return "allowed"; }
+    catch (err) { return err instanceof Error ? err.name : String(err); }
+  };
+  log("probed");
+  return Response.json({
+    readKeys: await attempt(() => Deno.readTextFile(${
+        JSON.stringify(configPath)
+      })),
+    readDotEnv: await attempt(() => Deno.readTextFile(${
+        JSON.stringify(join(box.projectDir, ".env"))
+      })),
+    spawnShell: await attempt(() => new Deno.Command("/bin/sh", { args: ["-c", "id"] }).outputSync()),
+    fetchLoopback: await attempt(() => fetch("http://127.0.0.1:${other.addr.port}/").then((r) => r.text())),
+  });
+}`;
+      const handlers: [string, string][] = [
+        ["probe", probe],
+        ["ping", `function ping() { return new Response("pong"); }`],
+      ];
+      for (const [name, source] of handlers) {
+        const defined = await dispatchTool(
+          "define_handler",
+          { name, source },
+          kernel,
+          () => {},
+          { manualEdit: true },
+        );
+        assert(defined.ok, defined.error?.message);
+        kernel.routes.register("GET", `/${name}`, name);
+      }
+      app.rebuild();
+      kernel.appPort = app.port;
+      const res = await fetch(`http://127.0.0.1:${app.port}/probe`);
+      assertEquals(res.status, 200, await res.clone().text());
+      assertEquals(await res.json(), {
+        readKeys: "NotCapable",
+        readDotEnv: "NotCapable",
+        spawnShell: "NotCapable",
+        fetchLoopback: "NotCapable",
+      });
+      assertEquals(
+        kernel.log.query({ source: "app" }).map((e) => e.message),
+        ["probed"],
+      );
+
+      const tool = (name: string, input: Record<string, unknown>) =>
+        dispatchTool(name, input, kernel, () => {}, { manualEdit: true });
+      const defined = await tool("define_test", {
+        name: "ownAppTest",
+        source: `async function ownAppTest() {
+  const res = await fetch(appUrl("/ping"));
+  assertEquals(await res.text(), "pong");
+}`,
+      });
+      assert(defined.ok, defined.error?.message);
+      const ran = await tool("run_tests", {});
+      assert(ran.ok, ran.error?.message);
+      const [result] = (ran.data as {
+        results: { name: string; passed: boolean; error?: string }[];
+      }).results;
+      assertEquals(
+        { name: result?.name, passed: result?.passed, error: result?.error },
+        { name: "ownAppTest", passed: true, error: undefined },
+      );
+    } finally {
+      await app.shutdown();
+      await kernel.runtime.dispose?.();
+      await db.close();
+      stopCompiler();
+      await other.shutdown();
+      await box.cleanup();
+    }
+  },
 });

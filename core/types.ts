@@ -216,6 +216,22 @@ export interface TestEntry {
 
 export type TestFn = () => Promise<void>;
 
+// How a script run ended, in-process or in the runner.
+export interface RuntimeScriptSuccess {
+  ok: true;
+  output: unknown;
+  logs: string[];
+  durationMs: number;
+}
+
+export interface RuntimeScriptFailure {
+  ok: false;
+  error: { code: string; message: string; suggestion?: string };
+  logs: string[];
+}
+
+export type RuntimeScriptResult = RuntimeScriptSuccess | RuntimeScriptFailure;
+
 export interface ConfigEntry {
   name: string;
   value: unknown;

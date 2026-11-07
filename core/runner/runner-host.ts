@@ -17,7 +17,7 @@ import {
   RUNNER_PROTOCOL_VERSION,
   type RunnerReady,
 } from "./protocol.ts";
-import { failure, RpcPeer } from "./peer.ts";
+import { failure, type PeerOptions, RpcPeer } from "./peer.ts";
 import {
   createMemoryTransportPair,
   createStreamTransport,
@@ -52,6 +52,8 @@ export interface SpawnRunnerOptions {
   spawn?: SpawnFn;
   readyTimeoutMs?: number;
   onStderr?: (text: string) => void;
+  // What the kernel's end answers (db.exec, app.fetch) and hears (log lines).
+  peer?: PeerOptions;
 }
 
 // clearEnv: the runner sees only the env the spec names, never the kernel's.
@@ -143,10 +145,13 @@ export class RunnerHost {
   ): Promise<Result<RunnerHost>> {
     const child = (options.spawn ?? denoSpawn)(options.spec);
     const stderr = new StderrTail(child.stderr, options.onStderr);
-    const announced = readyLatch();
+    const announced = readyLatch(options.peer);
     const peer = new RpcPeer(
       createStreamTransport(child.stdout, child.stdin),
-      { onNotification: announced.onNotification },
+      {
+        handlers: options.peer?.handlers,
+        onNotification: announced.onNotification,
+      },
     );
     const channel: Channel = {
       exited: child.status,
@@ -191,10 +196,13 @@ export class RunnerHost {
 
   // The runner served in this process. No boundary: for tests and kernels
   // with no project dir.
-  static async inMemory(): Promise<Result<RunnerHost>> {
+  static async inMemory(
+    options: PeerOptions = {},
+  ): Promise<Result<RunnerHost>> {
     const [kernelEnd, runnerEnd] = createMemoryTransportPair();
-    const announced = readyLatch();
+    const announced = readyLatch(options);
     const peer = new RpcPeer(kernelEnd, {
+      handlers: options.handlers,
       onNotification: announced.onNotification,
     });
     let markExited: (exit: RunnerExit) => void = () => {};
@@ -252,7 +260,8 @@ export class RunnerHost {
   }
 }
 
-function readyLatch(): {
+// Catches the ready notification; every other one goes on to `options`.
+function readyLatch(options: PeerOptions = {}): {
   ready: Promise<unknown>;
   onNotification: (method: string, params: unknown) => void;
 } {
@@ -262,6 +271,7 @@ function readyLatch(): {
     ready,
     onNotification(method, params) {
       if (method === RUNNER_NOTIFICATIONS.ready) resolve(params);
+      else options.onNotification?.(method, params);
     },
   };
 }

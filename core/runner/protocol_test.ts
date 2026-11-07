@@ -128,7 +128,9 @@ Deno.test("a Response keeps status, every Set-Cookie and its bytes", async () =>
     statusText: "Created",
     headers,
   });
-  const back = decodeResponse(await encodeResponse(original));
+  const wire = await encodeResponse(original);
+  assert(wire.ok);
+  const back = decodeResponse(wire.data);
   assertEquals(back.status, 201);
   assertEquals(back.statusText, "Created");
   assertEquals(back.headers.getSetCookie(), ["a=1", "b=2"]);
@@ -136,4 +138,15 @@ Deno.test("a Response keeps status, every Set-Cookie and its bytes", async () =>
     new Uint8Array(await back.arrayBuffer()),
     new Uint8Array([1, 2, 3]),
   );
+});
+
+Deno.test("an event stream is refused, not buffered until the timeout", async () => {
+  const body = new ReadableStream({ start() {/* never ends */} });
+  const wire = await encodeResponse(
+    new Response(body, {
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    }),
+  );
+  assert(!wire.ok);
+  assertEquals(wire.error.code, RUNNER_ERROR_CODES.streamingUnsupported);
 });

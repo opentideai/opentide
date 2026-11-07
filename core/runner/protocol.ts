@@ -6,8 +6,16 @@
 // Every params and result payload goes through the value codec below, so a
 // Date, a bigint or bytes from the DB arrive as themselves on the other side.
 
-import type { ColumnDef, DevToolArgDef, Result } from "../types.ts";
+import type {
+  ColumnDef,
+  DevToolArgDef,
+  KernelInspectAPI,
+  LogLevel,
+  Result,
+  SchemaEntry,
+} from "../types.ts";
 import type { HandlerAbi } from "../handler-abi.ts";
+import type { ForeignTraceEvent } from "../trace-context.ts";
 
 export const RUNNER_PROTOCOL_VERSION = 1;
 
@@ -20,10 +28,24 @@ export const RUNNER_METHODS = {
   stateSync: "state.sync",
   // Kernel to runner: what the runner holds, by hash.
   stateManifest: "state.manifest",
+  // Kernel to runner: would this code instantiate? Holds nothing.
+  stateCheck: "state.check",
+  // Kernel to runner: run one piece of user code.
+  invokeHandler: "invoke.handler",
+  invokeFunction: "invoke.function",
+  invokeTest: "invoke.test",
+  invokeDevTool: "invoke.dev_tool",
+  invokeDevView: "invoke.dev_view",
+  invokeScript: "invoke.script",
+  // Runner to kernel: a fetch to the app's own origin, which the runner
+  // can't reach itself.
+  appFetch: "app.fetch",
 } as const;
 
 export const RUNNER_NOTIFICATIONS = {
   ready: "runner.ready",
+  // Runner to kernel: a line user code logged.
+  log: "runner.log",
 } as const;
 
 export const RUNNER_ERROR_CODES = {
@@ -36,6 +58,8 @@ export const RUNNER_ERROR_CODES = {
   protocolMismatch: "RUNNER_PROTOCOL_MISMATCH",
   invalidPath: "INVALID_RUNNER_PATH",
   invalidParams: "INVALID_RUNNER_PARAMS",
+  notLoaded: "RUNNER_ENTITY_NOT_LOADED",
+  streamingUnsupported: "STREAMING_UNSUPPORTED",
 } as const;
 
 export interface RunnerReady {
@@ -61,8 +85,6 @@ export interface DbExecRequest {
   kind: DbExecKind;
   sql: string;
   params: unknown[] | undefined;
-  // The app request this statement belongs to, so it lands in that trace.
-  requestId?: string;
 }
 
 // The error user code would have caught in-process: its name, message and the
@@ -115,7 +137,7 @@ export interface MirrorPayloads {
   asset_version: { version: string };
   config: { value: unknown };
   schema: { columns: ColumnDef[] };
-  // The runner imports these itself (the handler-call slice).
+  // The runner imports these itself, from the specifier.
   package: { specifier: string };
   env: { vars: Record<string, string> };
   // The runner's own environment is the project's, so it can't work out the
@@ -140,12 +162,15 @@ export function mirrorEntryId(ref: MirrorRef): string {
   return `${ref.category}:${ref.key}`;
 }
 
-export type MirrorUpsert = {
-  [C in MirrorCategory]: MirrorManifestEntry & {
+// One entry's payload, tagged with its category so the two stay matched.
+export type MirrorPayload = {
+  [C in MirrorCategory]: MirrorRef & {
     category: C;
     payload: MirrorPayloads[C];
   };
 }[MirrorCategory];
+
+export type MirrorUpsert = MirrorPayload & { hash: string };
 
 // `failed` is what the kernel couldn't build (a transpile error): the runner
 // drops its copy and holds the entry as failed, under its hash.
@@ -163,6 +188,76 @@ export interface MirrorFailure extends MirrorRef {
 // under their hash, so the kernel doesn't send them again until they change.
 export interface StateSyncAnswer {
   failures: MirrorFailure[];
+}
+
+// --- Running user code ---
+//
+// The kernel syncs the mirror, then asks for one call. The answer says how the
+// call ended and carries the trace events the runner recorded during it, with
+// times in ms since the runner took the call.
+
+// An error user code threw, as the kernel rethrows it: the class is lost.
+// No name means user code threw something that isn't an Error.
+export interface ThrownError {
+  name?: string;
+  message: string;
+  stack?: string;
+}
+
+export type InvokeOutcome =
+  | { kind: "value"; value: unknown }
+  | { kind: "response"; response: WireResponse }
+  | { kind: "thrown"; error: ThrownError };
+
+export interface InvokeAnswer {
+  outcome: InvokeOutcome;
+  events: ForeignTraceEvent[];
+}
+
+export interface HandlerInvoke {
+  name: string;
+  request: WireRequest;
+  ctx: unknown;
+}
+
+export interface CallInvoke {
+  name: string;
+  args: unknown[];
+}
+
+// What a user dev view's `kernel` reads, taken when the call is made:
+// KernelInspectAPI is synchronous, so the runner can't ask as it goes.
+export interface KernelInspectSnapshot {
+  routes: ReturnType<KernelInspectAPI["listRoutes"]>;
+  handlers: ReturnType<KernelInspectAPI["listHandlers"]>;
+  functions: ReturnType<KernelInspectAPI["listFunctions"]>;
+  configs: ReturnType<KernelInspectAPI["listConfigs"]>;
+  schemas: SchemaEntry[];
+  types: ReturnType<KernelInspectAPI["listTypes"]>;
+  devViews: ReturnType<KernelInspectAPI["listDevViews"]>;
+  assets: Record<string, string | null>;
+  devViewSources: Record<string, string>;
+}
+
+export interface DevViewInvoke {
+  name: string;
+  object: unknown;
+  inspect: KernelInspectSnapshot;
+}
+
+export interface ScriptInvoke {
+  js: string;
+  timeoutMs: number;
+  // Whether each line also goes to the kernel's log as it's logged.
+  logToKernel: boolean;
+}
+
+export const RUNNER_LOG_SOURCES = ["app", "script"] as const;
+
+export interface RunnerLogLine {
+  source: typeof RUNNER_LOG_SOURCES[number];
+  level: LogLevel;
+  message: string;
 }
 
 export type RpcError = { code: string; message: string; suggestion?: string };
@@ -339,8 +434,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 // --- HTTP Request / Response over the wire ---
 //
-// Bodies are buffered whole. Streaming bodies (SSE) have no design yet; the
-// handler-call slice has to design them or refuse them, never truncate.
+// Bodies are buffered whole. A server-sent event stream never ends, so it
+// can't be buffered: it's refused with STREAMING_UNSUPPORTED instead of
+// hanging until the handler times out.
 
 export interface WireRequest {
   method: string;
@@ -373,12 +469,32 @@ export function decodeRequest(wire: WireRequest): Request {
   });
 }
 
-export async function encodeResponse(res: Response): Promise<WireResponse> {
+const EVENT_STREAM_TYPE = "text/event-stream";
+
+export async function encodeResponse(
+  res: Response,
+): Promise<Result<WireResponse>> {
+  const type = res.headers.get("content-type") ?? "";
+  if (type.toLowerCase().startsWith(EVENT_STREAM_TYPE)) {
+    await res.body?.cancel();
+    return {
+      ok: false,
+      error: {
+        code: RUNNER_ERROR_CODES.streamingUnsupported,
+        message:
+          `A ${EVENT_STREAM_TYPE} response can't cross the user-code runner yet: bodies are buffered whole.`,
+        suggestion: "Return the whole body at once.",
+      },
+    };
+  }
   return {
-    status: res.status,
-    statusText: res.statusText,
-    headers: [...res.headers],
-    body: res.body ? new Uint8Array(await res.arrayBuffer()) : null,
+    ok: true,
+    data: {
+      status: res.status,
+      statusText: res.statusText,
+      headers: [...res.headers],
+      body: res.body ? new Uint8Array(await res.arrayBuffer()) : null,
+    },
   };
 }
 

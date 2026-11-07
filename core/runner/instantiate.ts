@@ -11,7 +11,9 @@ import type {
   DevViewFn,
   HandlerFn,
   KernelInspectAPI,
+  LogLevel,
   Result,
+  RuntimeScriptResult,
   TestFn,
 } from "../types.ts";
 import { AssertionError } from "../types.ts";
@@ -190,6 +192,82 @@ export function instantiateScript(
       error: { code: "RUNTIME_ERROR", message: errorMessage(err) },
     };
   }
+}
+
+// Runs a transpiled script against `deps`, racing it against `timeoutMs`.
+// Every line it logs goes to the result and to `sink`.
+//
+// LIMITATION: a script can't be cancelled from inside its own process. On
+// timeout the race rejects with TIMEOUT and we stop awaiting, but the script
+// keeps running and may still write to the DB. A late rejection is not a
+// hazard: Promise.race attaches a reaction to it, so it never surfaces as an
+// unhandledrejection. The runner's lifecycle fixes this by killing the runner.
+export async function runScriptJs(
+  jsCode: string,
+  deps: CompileDeps,
+  timeoutMs: number,
+  sink: (level: LogLevel, message: string) => void,
+): Promise<RuntimeScriptResult> {
+  const logs: string[] = [];
+  const script = instantiateScript(jsCode, deps, capturingLog(logs, sink));
+  if (!script.ok) return { ...script, logs };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Script timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    });
+    const start = performance.now();
+    const output = await Promise.race([
+      Promise.resolve(script.data()),
+      timeout,
+    ]);
+    return {
+      ok: true,
+      output: output === undefined ? null : output,
+      logs,
+      durationMs: Math.round(performance.now() - start),
+    };
+  } catch (err) {
+    const message = errorMessage(err);
+    return {
+      ok: false,
+      error: {
+        code: message.includes("timed out") ? "TIMEOUT" : "RUNTIME_ERROR",
+        message,
+      },
+      logs,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The script's `log`: each line is kept for the result and passed to `sink`.
+function capturingLog(
+  logs: string[],
+  sink: (level: LogLevel, message: string) => void,
+): CompileDeps["log"] {
+  const at = (level: LogLevel) => (...args: unknown[]) => {
+    const message = formatLogArgs(args);
+    logs.push(message);
+    sink(level, message);
+  };
+  return Object.assign(at("debug"), {
+    debug: at("debug"),
+    info: at("info"),
+    warn: at("warn"),
+    error: at("error"),
+  });
+}
+
+// How a log() call's arguments become one line, in-process and in the runner.
+export function formatLogArgs(args: unknown[]): string {
+  return args.map((a) => typeof a === "string" ? a : JSON.stringify(a)).join(
+    " ",
+  );
 }
 
 interface NamedSpec {

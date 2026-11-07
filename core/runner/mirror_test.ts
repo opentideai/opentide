@@ -46,7 +46,7 @@ async function withLinked(fn: (l: Linked) => Promise<void>): Promise<void> {
   const kernel = new Kernel(db);
   const [kernelEnd, runnerEnd] = createMemoryTransportPair();
   const kernelPeer = new RpcPeer(kernelEnd, {
-    handlers: { [RUNNER_METHODS.dbExec]: dbExecHandler(db, kernel.tracer) },
+    handlers: { [RUNNER_METHODS.dbExec]: dbExecHandler(db) },
   });
   const runner = await serveRunner(runnerEnd, { onShutdown: noop });
   const mirror = new StateMirror(kernel, rpcStateChannel(kernelPeer));
@@ -440,6 +440,7 @@ Deno.test({
           asked++;
           return real.manifest();
         },
+        check: real.check,
       };
       const mirror = new StateMirror(l.kernel, channel);
       l.kernel.configs.set("a", 1);

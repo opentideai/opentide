@@ -2,15 +2,12 @@
 // no database of its own, only drizzle on pg-proxy (./runner-db.ts), so every
 // statement user code makes arrives here and runs on the kernel's connection.
 //
-// Raw db.query/db.execute go through tracedDb, as they do in-process, so they
-// land in the request's trace. Drizzle statements run through the kernel's own
-// drizzle session, with its parsers, so the runner's drizzle maps exactly the
-// rows the in-process one would. Drizzle statements aren't traced, in-process
-// or here.
+// Raw db.query/db.execute run as they are: the runner traces them itself, so
+// a call's events all come from one clock. Drizzle statements run through the
+// kernel's own drizzle session, with its parsers, so the runner's drizzle maps
+// exactly the rows the in-process one would.
 
 import type { Database } from "../db.ts";
-import { tracedDb, type Tracer } from "../tracer.ts";
-import type { DbInterface } from "../types.ts";
 import type { RequestHandler } from "./peer.ts";
 import {
   DB_EXEC_KINDS,
@@ -20,8 +17,7 @@ import {
   RUNNER_ERROR_CODES,
 } from "./protocol.ts";
 
-export function dbExecHandler(db: Database, tracer: Tracer): RequestHandler {
-  const traced = tracedDb(db);
+export function dbExecHandler(db: Database): RequestHandler {
   return async (params) => {
     const request = parseDbExecRequest(params);
     if (!request) {
@@ -33,26 +29,21 @@ export function dbExecHandler(db: Database, tracer: Tracer): RequestHandler {
         },
       };
     }
-    const outcome = await tracer.withTrace(
-      request.requestId,
-      () => runStatement(request, db, traced),
-    );
-    return { ok: true, data: outcome };
+    return { ok: true, data: await runStatement(request, db) };
   };
 }
 
 async function runStatement(
   request: DbExecRequest,
   db: Database,
-  traced: DbInterface,
 ): Promise<DbExecOutcome> {
   const { sql, params } = request;
   try {
     switch (request.kind) {
       case DB_EXEC_KINDS.query:
-        return { ok: true, value: await traced.query(sql, params) };
+        return { ok: true, value: await db.query(sql, params) };
       case DB_EXEC_KINDS.execute:
-        return { ok: true, value: await traced.execute(sql, params) };
+        return { ok: true, value: await db.execute(sql, params) };
       case DB_EXEC_KINDS.drizzleRows:
         return { ok: true, value: await drizzleStatement(db, request, true) };
       case DB_EXEC_KINDS.drizzleResult:
@@ -123,11 +114,9 @@ function parseDbExecRequest(params: unknown): DbExecRequest | null {
   const kinds: readonly unknown[] = Object.values(DB_EXEC_KINDS);
   if (!kinds.includes(p.kind) || typeof p.sql !== "string") return null;
   if (p.params !== undefined && !Array.isArray(p.params)) return null;
-  if (p.requestId !== undefined && typeof p.requestId !== "string") return null;
   return {
     kind: p.kind as DbExecRequest["kind"],
     sql: p.sql,
     params: p.params as unknown[] | undefined,
-    requestId: p.requestId as string | undefined,
   };
 }

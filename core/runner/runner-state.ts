@@ -8,18 +8,19 @@
 // function it started with.
 
 import { joinAppUrl } from "../config.ts";
-import { stampAssetVersions } from "../asset-urls.ts";
 import { DynamicSchemaRegistry } from "../db/dynamic-schema.ts";
+import { tracedFunctions, tracedTemplates } from "../trace-context.ts";
 import type {
   CompileDeps,
   CompileLog,
   DevToolFn,
   DevViewFn,
   HandlerFn,
-  KernelInspectAPI,
   Result,
   TestFn,
 } from "../types.ts";
+import { errorMessage } from "../util.ts";
+import { callInspect } from "./call-context.ts";
 import {
   instantiateDevTool,
   instantiateDevView,
@@ -33,6 +34,7 @@ import {
   mirrorEntryId,
   type MirrorFailure,
   type MirrorManifestEntry,
+  type MirrorPayload,
   type MirrorRef,
   type MirrorUpsert,
   RUNNER_ERROR_CODES,
@@ -44,14 +46,6 @@ import { buildRunnerDb, type DbExec } from "./runner-db.ts";
 
 type UserFunction = (...args: unknown[]) => unknown;
 
-// Dev views get a snapshot of the kernel per call, which comes with the
-// handler-call slice. Until then reaching for it fails loudly.
-const NO_KERNEL_INSPECT = new Proxy({} as KernelInspectAPI, {
-  get() {
-    throw new Error("kernel inspection isn't available in the runner yet");
-  },
-});
-
 export class RunnerState {
   private readonly handlers = new Map<string, HandlerFn>();
   private readonly functions = new Map<string, UserFunction>();
@@ -61,7 +55,8 @@ export class RunnerState {
   private readonly templates = new Map<string, string>();
   private readonly assetVersions = new Map<string, string>();
   private readonly configs = new Map<string, unknown>();
-  private readonly packages = new Map<string, string>();
+  // Each package's module, imported here from its specifier.
+  private readonly packages = new Map<string, Record<string, unknown>>();
   private readonly schemas = new DynamicSchemaRegistry();
   private env: Record<string, string> = {};
   private app = { port: 0, origin: "" };
@@ -72,30 +67,29 @@ export class RunnerState {
   constructor(exec: DbExec, log: CompileLog) {
     this.deps = {
       db: buildRunnerDb(exec, this.schemas),
-      functions: {
+      functions: tracedFunctions({
         get: (name) => this.functions.get(name),
         call: (name, ...args) => {
           const fn = this.functions.get(name);
           if (!fn) throw new Error(`Function "${name}" not found in registry`);
           return fn(...args);
         },
-      },
+      }),
       config: { get: (name) => this.configs.get(name) },
-      templates: {
-        get: (name) => {
-          const content = this.templates.get(name);
-          return content
-            ? stampAssetVersions(content, (a) => this.assetVersions.get(a))
-            : content;
-        },
-      },
-      // Filled from the mirrored specifiers by the handler-call slice.
-      packages: {},
+      templates: tracedTemplates(
+        { get: (name) => this.templates.get(name) },
+        (asset) => this.assetVersions.get(asset),
+      ),
+      packages: liveRecord(() => Object.fromEntries(this.packages)),
       env: liveRecord(() => this.env),
       log,
       getAppPort: () => this.app.port,
       appUrl: (path) => joinAppUrl(this.app.origin, path),
     };
+  }
+
+  get appOrigin(): string {
+    return this.app.origin;
   }
 
   handler(name: string): HandlerFn | undefined {
@@ -122,7 +116,7 @@ export class RunnerState {
     return [...this.held.values()];
   }
 
-  apply(request: StateSyncRequest): StateSyncAnswer {
+  async apply(request: StateSyncRequest): Promise<StateSyncAnswer> {
     for (const ref of request.removes) {
       this.drop(ref);
       this.held.delete(mirrorEntryId(ref));
@@ -133,7 +127,7 @@ export class RunnerState {
     }
     const failures: MirrorFailure[] = [];
     for (const upsert of request.upserts) {
-      const applied = this.take(upsert);
+      const applied = await this.take(upsert);
       if (!applied.ok) {
         this.drop(upsert);
         failures.push({
@@ -147,58 +141,30 @@ export class RunnerState {
     return { failures };
   }
 
+  // Would this code instantiate? Nothing is kept: the kernel asks at define
+  // time, so a bad define fails the define, as it does in-process.
+  check(entry: MirrorPayload): Result<void> {
+    const made = this.instantiate(entry);
+    return made && !made.ok ? made : OK;
+  }
+
   private hold({ category, key, hash }: MirrorManifestEntry): void {
     this.held.set(mirrorEntryId({ category, key }), { category, key, hash });
   }
 
-  private take(upsert: MirrorUpsert): Result<void> {
+  private async take(upsert: MirrorUpsert): Promise<Result<void>> {
     const { key } = upsert;
     switch (upsert.category) {
       case MIRROR_CATEGORIES.handler:
-        return store(
-          this.handlers,
-          key,
-          instantiateHandler(
-            key,
-            upsert.payload.js,
-            upsert.payload.abi,
-            this.deps,
-          ),
-        );
+        return store(this.handlers, key, this.instantiateHandler(upsert));
       case MIRROR_CATEGORIES.function:
-        return store(
-          this.functions,
-          key,
-          instantiateFunction(key, upsert.payload.js, this.deps),
-        );
+        return store(this.functions, key, this.instantiateFunction(upsert));
       case MIRROR_CATEGORIES.test:
-        return store(
-          this.tests,
-          key,
-          instantiateTest(key, upsert.payload.js, this.deps),
-        );
+        return store(this.tests, key, this.instantiateTest(upsert));
       case MIRROR_CATEGORIES.devView:
-        return store(
-          this.devViews,
-          key,
-          instantiateDevView(
-            key,
-            upsert.payload.js,
-            this.deps,
-            NO_KERNEL_INSPECT,
-          ),
-        );
+        return store(this.devViews, key, this.instantiateDevView(upsert));
       case MIRROR_CATEGORIES.devTool:
-        return store(
-          this.devTools,
-          key,
-          instantiateDevTool(
-            key,
-            upsert.payload.js,
-            upsert.payload.args,
-            this.deps,
-          ),
-        );
+        return store(this.devTools, key, this.instantiateDevTool(upsert));
       case MIRROR_CATEGORIES.template:
         this.templates.set(key, upsert.payload.content);
         return OK;
@@ -212,8 +178,11 @@ export class RunnerState {
         this.schemas.register(key, upsert.payload.columns);
         return OK;
       case MIRROR_CATEGORIES.package:
-        this.packages.set(key, upsert.payload.specifier);
-        return OK;
+        return store(
+          this.packages,
+          key,
+          await importPackage(key, upsert.payload.specifier),
+        );
       case MIRROR_CATEGORIES.env:
         this.env = upsert.payload.vars;
         return OK;
@@ -221,6 +190,49 @@ export class RunnerState {
         this.app = upsert.payload;
         return OK;
     }
+  }
+
+  // User code made live, or null for anything that isn't code.
+  private instantiate(entry: MirrorPayload): Result<unknown> | null {
+    switch (entry.category) {
+      case MIRROR_CATEGORIES.handler:
+        return this.instantiateHandler(entry);
+      case MIRROR_CATEGORIES.function:
+        return this.instantiateFunction(entry);
+      case MIRROR_CATEGORIES.test:
+        return this.instantiateTest(entry);
+      case MIRROR_CATEGORIES.devView:
+        return this.instantiateDevView(entry);
+      case MIRROR_CATEGORIES.devTool:
+        return this.instantiateDevTool(entry);
+      default:
+        return null;
+    }
+  }
+
+  private instantiateHandler(e: PayloadOf<"handler">): Result<HandlerFn> {
+    return instantiateHandler(e.key, e.payload.js, e.payload.abi, this.deps);
+  }
+
+  private instantiateFunction(e: PayloadOf<"function">) {
+    return instantiateFunction(e.key, e.payload.js, this.deps);
+  }
+
+  private instantiateTest(e: PayloadOf<"test">): Result<TestFn> {
+    return instantiateTest(e.key, e.payload.js, this.deps);
+  }
+
+  private instantiateDevView(e: PayloadOf<"dev_view">): Result<DevViewFn> {
+    return instantiateDevView(e.key, e.payload.js, this.deps, callInspect);
+  }
+
+  private instantiateDevTool(e: PayloadOf<"dev_tool">): Result<DevToolFn> {
+    return instantiateDevTool(
+      e.key,
+      e.payload.js,
+      e.payload.args,
+      this.deps,
+    );
   }
 
   private drop({ category, key }: MirrorRef): void {
@@ -265,7 +277,34 @@ export class RunnerState {
   }
 }
 
+type PayloadOf<C extends MirrorPayload["category"]> = Extract<
+  MirrorPayload,
+  { category: C }
+>;
+
 const OK: Result<void> = { ok: true, data: undefined };
+
+async function importPackage(
+  name: string,
+  specifier: string,
+): Promise<Result<Record<string, unknown>>> {
+  try {
+    return {
+      ok: true,
+      data: await import(specifier) as Record<string, unknown>,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        code: RUNNER_ERROR_CODES.notLoaded,
+        message: `Failed to import package "${name}" (${specifier}): ${
+          errorMessage(err)
+        }`,
+      },
+    };
+  }
+}
 
 function store<T>(map: Map<string, T>, key: string, made: Result<T>) {
   if (!made.ok) return made;
@@ -274,10 +313,8 @@ function store<T>(map: Map<string, T>, key: string, made: Result<T>) {
 }
 
 // A read-only view of whatever record `current` returns now, so code that
-// captured `env` once still sees each sync's values.
-function liveRecord(
-  current: () => Record<string, string>,
-): Record<string, string> {
+// captured `env` or `packages` once still sees each sync's values.
+function liveRecord<T>(current: () => Record<string, T>): Record<string, T> {
   return new Proxy(Object.create(null), {
     get: (_, prop) => typeof prop === "string" ? current()[prop] : undefined,
     has: (_, prop) =>
@@ -302,7 +339,7 @@ export function stateHandlers(
   state: RunnerState,
 ): Record<string, RequestHandler> {
   return {
-    [RUNNER_METHODS.stateSync]: (params) => {
+    [RUNNER_METHODS.stateSync]: async (params) => {
       if (!isSyncRequest(params)) {
         return {
           ok: false,
@@ -312,12 +349,24 @@ export function stateHandlers(
           },
         };
       }
-      return { ok: true, data: state.apply(params) };
+      return { ok: true, data: await state.apply(params) };
     },
     [RUNNER_METHODS.stateManifest]: () => ({
       ok: true,
       data: state.manifest(),
     }),
+    [RUNNER_METHODS.stateCheck]: (params) => {
+      if (!isPayload(params)) {
+        return {
+          ok: false,
+          error: {
+            code: RUNNER_ERROR_CODES.invalidParams,
+            message: "state.check needs { category, key, payload }",
+          },
+        };
+      }
+      return state.check(params);
+    },
   };
 }
 
@@ -327,4 +376,11 @@ function isSyncRequest(params: unknown): params is StateSyncRequest {
   const p = params as Record<string, unknown>;
   return Array.isArray(p.removes) && Array.isArray(p.upserts) &&
     Array.isArray(p.failed);
+}
+
+function isPayload(params: unknown): params is MirrorPayload {
+  if (typeof params !== "object" || params === null) return false;
+  const p = params as Record<string, unknown>;
+  return typeof p.category === "string" && typeof p.key === "string" &&
+    typeof p.payload === "object" && p.payload !== null;
 }

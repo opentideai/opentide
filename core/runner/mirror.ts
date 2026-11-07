@@ -17,9 +17,8 @@ import { assetVersionOf } from "../asset-urls.ts";
 import { transpileUserCode } from "../compiler.ts";
 import { detectHandlerAbi } from "../handler-abi.ts";
 import type { Kernel } from "../registries.ts";
-import type { Result } from "../types.ts";
+import type { DevToolArgDef, Result } from "../types.ts";
 import { sha256Hex } from "../util.ts";
-import type { RpcPeer } from "./peer.ts";
 import {
   MIRROR_CATEGORIES,
   MIRROR_SINGLETON_KEY,
@@ -27,6 +26,7 @@ import {
   mirrorEntryId,
   type MirrorFailure,
   type MirrorManifestEntry,
+  type MirrorPayload,
   type MirrorPayloads,
   type MirrorRef,
   type MirrorUpsert,
@@ -35,28 +35,65 @@ import {
   type StateSyncRequest,
 } from "./protocol.ts";
 
-// The runner's two state methods, as the mirror calls them.
+// The runner's state methods, as the mirror calls them.
 export interface RunnerStateChannel {
   sync(request: StateSyncRequest): Promise<Result<StateSyncAnswer>>;
   manifest(): Promise<Result<MirrorManifestEntry[]>>;
+  check(entry: MirrorPayload): Promise<Result<void>>;
 }
 
-export function rpcStateChannel(peer: RpcPeer): RunnerStateChannel {
+// Anything that sends requests to the runner: its RpcPeer or its RunnerHost.
+export interface RunnerRequester {
+  request<T>(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+  ): Promise<Result<T>>;
+}
+
+export function rpcStateChannel(runner: RunnerRequester): RunnerStateChannel {
   return {
     sync: (request) =>
-      peer.request<StateSyncAnswer>(
+      runner.request<StateSyncAnswer>(
         RUNNER_METHODS.stateSync,
         request,
         RUNNER_REQUEST_TIMEOUT_MS,
       ),
     manifest: () =>
-      peer.request<MirrorManifestEntry[]>(
+      runner.request<MirrorManifestEntry[]>(
         RUNNER_METHODS.stateManifest,
         null,
         RUNNER_REQUEST_TIMEOUT_MS,
       ),
+    check: (entry) =>
+      runner.request<void>(
+        RUNNER_METHODS.stateCheck,
+        entry,
+        RUNNER_REQUEST_TIMEOUT_MS,
+      ),
   };
 }
+
+type UserCodeCategory =
+  | typeof MIRROR_CATEGORIES.handler
+  | typeof MIRROR_CATEGORIES.function
+  | typeof MIRROR_CATEGORIES.test
+  | typeof MIRROR_CATEGORIES.devView
+  | typeof MIRROR_CATEGORIES.devTool;
+
+// One piece of user code by its source, registered or about to be.
+export type UserCodeSource =
+  | {
+    category: Exclude<UserCodeCategory, typeof MIRROR_CATEGORIES.devTool>;
+    key: string;
+    source: string;
+  }
+  | {
+    category: typeof MIRROR_CATEGORIES.devTool;
+    key: string;
+    source: string;
+    args: DevToolArgDef[];
+  };
 
 export interface SyncReport {
   sent: number;
@@ -66,13 +103,6 @@ export interface SyncReport {
   // and again only once its source changes.
   failures: MirrorFailure[];
 }
-
-type UserCodeCategory =
-  | typeof MIRROR_CATEGORIES.handler
-  | typeof MIRROR_CATEGORIES.function
-  | typeof MIRROR_CATEGORIES.test
-  | typeof MIRROR_CATEGORIES.devView
-  | typeof MIRROR_CATEGORIES.devTool;
 
 // One entry as the kernel has it now. `identity` is the registry's entry
 // object, when there is one; `fingerprint` is what the hash covers.
@@ -134,6 +164,15 @@ export class StateMirror {
       key: candidate.key,
       hash,
     }));
+  }
+
+  // Would this code run in the runner? Transpiles it (filling the cache the
+  // next sync reads) and has the runner instantiate it without keeping it.
+  // The define path asks before registering, so a bad define fails there.
+  async check(entity: UserCodeSource): Promise<Result<void>> {
+    const entry = await this.userCodePayload(entity);
+    if (!entry.ok) return entry;
+    return await this.runner.check(entry.data);
   }
 
   // The JS for one entity, from the cache when its source hasn't changed.
@@ -255,47 +294,23 @@ export class StateMirror {
   private *candidates(): Iterable<Candidate> {
     const k = this.kernel;
     for (const e of k.handlers.list()) {
-      yield this.code(MIRROR_CATEGORIES.handler, e.name, e, e.source, (js) => ({
-        js,
-        abi: detectHandlerAbi(e.source, e.name),
-      }));
+      yield this.code({ category: MIRROR_CATEGORIES.handler, ...named(e) }, e);
     }
     for (const e of k.functions.list()) {
-      yield this.code(
-        MIRROR_CATEGORIES.function,
-        e.name,
-        e,
-        e.source,
-        (js) => ({ js }),
-      );
+      yield this.code({ category: MIRROR_CATEGORIES.function, ...named(e) }, e);
     }
     for (const e of k.tests.list()) {
-      yield this.code(
-        MIRROR_CATEGORIES.test,
-        e.name,
-        e,
-        e.source,
-        (js) => ({ js }),
-      );
+      yield this.code({ category: MIRROR_CATEGORIES.test, ...named(e) }, e);
     }
     for (const e of k.devViews.list()) {
       // Built-in views are kernel code and run in the kernel.
       if (e.builtIn) continue;
-      yield this.code(
-        MIRROR_CATEGORIES.devView,
-        e.name,
-        e,
-        e.source,
-        (js) => ({ js }),
-      );
+      yield this.code({ category: MIRROR_CATEGORIES.devView, ...named(e) }, e);
     }
     for (const e of k.devTools.list()) {
       yield this.code(
-        MIRROR_CATEGORIES.devTool,
-        e.name,
+        { category: MIRROR_CATEGORIES.devTool, ...named(e), args: e.args },
         e,
-        e.source,
-        (js) => ({ js, args: e.args }),
         () => jsonText([e.source, e.args]),
       );
     }
@@ -363,25 +378,59 @@ export class StateMirror {
   }
 
   // User code: the payload is built from its JS, transpiled only when sent.
-  private code<C extends UserCodeCategory>(
-    category: C,
-    key: string,
+  private code(
+    entity: UserCodeSource,
     identity: object,
-    source: string,
-    build: (js: string) => MirrorPayloads[C],
-    fingerprint: () => string = () => source,
-  ): Candidate<C> {
+    fingerprint: () => string = () => entity.source,
+  ): Candidate {
     return {
-      category,
-      key,
+      category: entity.category,
+      key: entity.key,
       identity,
       fingerprint,
       payload: async () => {
-        const js = await this.transpile(category, key, source);
-        return js.ok ? { ok: true, data: build(js.data) } : js;
+        const entry = await this.userCodePayload(entity);
+        return entry.ok ? { ok: true, data: entry.data.payload } : entry;
       },
     };
   }
+
+  private async userCodePayload(
+    entity: UserCodeSource,
+  ): Promise<Result<MirrorPayload>> {
+    const { category, key, source } = entity;
+    const js = await this.transpile(category, key, source);
+    if (!js.ok) return js;
+    switch (entity.category) {
+      case MIRROR_CATEGORIES.handler:
+        return payload(entity.category, key, {
+          js: js.data,
+          abi: detectHandlerAbi(source, key),
+        });
+      case MIRROR_CATEGORIES.devTool:
+        return payload(entity.category, key, {
+          js: js.data,
+          args: entity.args,
+        });
+      default:
+        return payload(entity.category, key, { js: js.data });
+    }
+  }
+}
+
+function named(e: { name: string; source: string }) {
+  return { key: e.name, source: e.source };
+}
+
+function payload<C extends MirrorCategory>(
+  category: C,
+  key: string,
+  data: MirrorPayloads[C],
+): Result<MirrorPayload> {
+  return {
+    ok: true,
+    data: { category, key, payload: data } as MirrorPayload,
+  };
 }
 
 function plain<C extends MirrorCategory>(

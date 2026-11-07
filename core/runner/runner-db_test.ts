@@ -2,7 +2,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { Database } from "../db.ts";
 import { DynamicSchemaRegistry } from "../db/dynamic-schema.ts";
 import { buildHandlerDb, type HandlerDb } from "../handler-db.ts";
-import { tracedDb, Tracer } from "../tracer.ts";
+import { runInTrace, TraceContext, tracedDb } from "../trace-context.ts";
 import { dbExecHandler } from "./db-service.ts";
 import { RpcPeer } from "./peer.ts";
 import { RUNNER_METHODS } from "./protocol.ts";
@@ -20,7 +20,6 @@ const ITEMS_SQL = `CREATE TABLE items (
 
 interface Side {
   db: HandlerDb;
-  tracer: Tracer;
   close(): Promise<void>;
 }
 
@@ -35,17 +34,15 @@ async function inProcess(): Promise<Side> {
   const database = await freshDatabase();
   return {
     db: buildHandlerDb(tracedDb(database), database.drizzle, database.schemas),
-    tracer: new Tracer(),
     close: () => database.close(),
   };
 }
 
-async function overRpc(requestId?: () => string | undefined): Promise<Side> {
+async function overRpc(): Promise<Side> {
   const database = await freshDatabase();
-  const tracer = new Tracer();
   const [kernelEnd, runnerEnd] = createMemoryTransportPair();
   const kernel = new RpcPeer(kernelEnd, {
-    handlers: { [RUNNER_METHODS.dbExec]: dbExecHandler(database, tracer) },
+    handlers: { [RUNNER_METHODS.dbExec]: dbExecHandler(database) },
   });
   const runner = new RpcPeer(runnerEnd);
   // Slice 4 pushes these; here they're copied from the kernel's registry.
@@ -54,8 +51,7 @@ async function overRpc(requestId?: () => string | undefined): Promise<Side> {
     schemas.register(entry.tableName, entry.columns);
   }
   return {
-    db: buildRunnerDb(rpcDbExec(runner, requestId), schemas),
-    tracer,
+    db: buildRunnerDb(rpcDbExec(runner), schemas),
     async close() {
       await runner.close();
       await kernel.close();
@@ -173,32 +169,17 @@ Deno.test("a failed statement throws what in-process throws, driver fields inclu
   assertEquals(local.code, "23505");
 });
 
-Deno.test("raw statements land in the runner request's trace; drizzle ones don't, as in-process", async () => {
-  const requestId = "req-1";
-  const remote = await overRpc(() => requestId);
+Deno.test("raw statements land in the running call's trace; drizzle ones don't, as in-process", async () => {
+  const remote = await overRpc();
   try {
-    const { trace } = await remote.tracer.run(
-      requestId,
-      "GET",
-      "/",
-      async () => {
-        await remote.db.query("SELECT 1 AS one");
-        await remote.db.select().from(remote.db.tables.items);
-        await remote.db.execute("DELETE FROM items");
-      },
-    );
+    const trace = new TraceContext();
+    await runInTrace(trace, async () => {
+      await remote.db.query("SELECT 1 AS one");
+      await remote.db.select().from(remote.db.tables.items);
+      await remote.db.execute("DELETE FROM items");
+    });
     assertEquals(trace.events.map((e) => e.type), ["db-query", "db-execute"]);
     assertEquals(trace.events[0]?.data.rowCount, 1);
-  } finally {
-    await remote.close();
-  }
-});
-
-Deno.test("a statement for a request that's already finished runs untraced", async () => {
-  const remote = await overRpc(() => "gone");
-  try {
-    assertEquals(await remote.db.query("SELECT 1 AS one"), [{ one: 1 }]);
-    assertEquals(remote.tracer.getRecentTraces(), []);
   } finally {
     await remote.close();
   }

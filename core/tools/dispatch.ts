@@ -157,7 +157,7 @@ import {
   getVersion,
   writeExportFiles,
 } from "../build.ts";
-import type { RuntimeScriptResult } from "../runtime.ts";
+import type { RuntimeScriptResult } from "../types.ts";
 import {
   DUPLICATE_BLOCK_THRESHOLD,
   findSimilarEntities,

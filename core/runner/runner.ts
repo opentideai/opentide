@@ -9,14 +9,19 @@ import {
   type RunnerReady,
 } from "./protocol.ts";
 import { type RequestHandler, RpcPeer } from "./peer.ts";
+import { appFetchShim, rpcAppForward } from "./app-fetch.ts";
+import { callHandlers, forwardingLog, type LogSink } from "./runner-calls.ts";
 import { rpcDbExec } from "./runner-db.ts";
 import { RunnerState, stateHandlers } from "./runner-state.ts";
 import type { RunnerTransport } from "./transport.ts";
-import type { CompileLog } from "../types.ts";
 
 export interface ServeRunnerOptions {
   // Called once the kernel asks it to stop, after the answer is sent.
   onShutdown: () => void;
+  // Replace this process's global fetch so user code reaches its own app
+  // through the kernel. Only in the runner's own process: in-memory, the
+  // process is the kernel's.
+  shimGlobalFetch?: boolean;
 }
 
 export interface ServedRunner {
@@ -40,10 +45,23 @@ export async function serveRunner(
     },
   };
   const peer = new RpcPeer(transport, { handlers });
-  // The state's db calls back over this same peer, so it's made after the
-  // peer, and its methods are added before any message has been read.
-  const state = new RunnerState(rpcDbExec(peer), stderrLog());
-  Object.assign(handlers, stateHandlers(state));
+  // The state's db and log go back over this same peer, so it's made after
+  // the peer, and its methods are added before any message has been read.
+  const sink: LogSink = (line) => {
+    void peer.notify(RUNNER_NOTIFICATIONS.log, line);
+  };
+  const state = new RunnerState(
+    rpcDbExec(peer),
+    forwardingLog(sink),
+  );
+  Object.assign(handlers, stateHandlers(state), callHandlers(state, sink));
+  if (options.shimGlobalFetch) {
+    globalThis.fetch = appFetchShim(
+      globalThis.fetch.bind(globalThis),
+      () => state.appOrigin,
+      rpcAppForward(peer),
+    );
+  }
   const ready: RunnerReady = {
     protocolVersion: RUNNER_PROTOCOL_VERSION,
     pid: Deno.pid,
@@ -51,17 +69,4 @@ export async function serveRunner(
   };
   await peer.notify(RUNNER_NOTIFICATIONS.ready, ready);
   return { peer, state };
-}
-
-// User code's log() goes to stderr, which the kernel keeps as the runner's
-// log tail, until the handler-call slice forwards it into the kernel's log.
-function stderrLog(): CompileLog {
-  const line = (level: string) => (...args: unknown[]) =>
-    console.error(`[${level}]`, ...args);
-  return Object.assign(line("info"), {
-    debug: line("debug"),
-    info: line("info"),
-    warn: line("warn"),
-    error: line("error"),
-  });
 }

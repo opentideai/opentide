@@ -25,6 +25,7 @@ const { peer } = await serveRunner(transport, {
   onShutdown: () => {
     void transport.close().finally(() => Deno.exit(0));
   },
+  shimGlobalFetch: true,
 });
 await peer.done;
 // stdin closed: the kernel is gone, so the runner goes too.

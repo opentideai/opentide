@@ -6,6 +6,7 @@ import type {
   HandlerFn,
   KernelInspectAPI,
   Result,
+  RuntimeScriptResult,
   TestFn,
 } from "./types.ts";
 import type {
@@ -84,21 +85,6 @@ export interface RuntimeMetadata {
   supportedLanguages: readonly RuntimeLanguageId[];
   capabilities: RuntimeCapabilities;
 }
-
-export interface RuntimeScriptSuccess {
-  ok: true;
-  output: unknown;
-  logs: string[];
-  durationMs: number;
-}
-
-export interface RuntimeScriptFailure {
-  ok: false;
-  error: { code: string; message: string; suggestion?: string };
-  logs: string[];
-}
-
-export type RuntimeScriptResult = RuntimeScriptSuccess | RuntimeScriptFailure;
 
 export interface RuntimeAdapter extends RuntimeMetadata {
   initialize?: () => Promise<void> | void;

@@ -74,12 +74,12 @@ import { PackageMap } from "./packages.ts";
 import { loadEnv, saveEnv } from "./env.ts";
 import { SecretsStore } from "./secrets.ts";
 import { EnvVarStore } from "./env-vars.ts";
+import { Tracer } from "./tracer.ts";
 import {
-  tracedDb,
-  tracedFunctions,
-  tracedTemplates,
-  Tracer,
-} from "./tracer.ts";
+  createRunnerRuntimeAdapter,
+  type RunnerStart,
+} from "./runner/runner-adapter.ts";
+import { tracedDb, tracedFunctions, tracedTemplates } from "./trace-context.ts";
 import { assetVersionOf } from "./asset-urls.ts";
 import { CustomAuditMap } from "./custom-audits.ts";
 import { buildHandlerDb } from "./handler-db.ts";
@@ -1242,12 +1242,18 @@ export class Kernel {
       historyDir?: string;
       runtimeId?: string;
       composition?: CompositionContext;
+      // Run user code in this runner instead of the kernel's own process
+      // (core/runner/runner-adapter.ts). TypeScript only.
+      userCodeRunner?: RunnerStart;
     },
   ) {
     this.db = db;
-    this.runtime = getDefaultRuntimeRegistry().resolve(
+    const runtime = getDefaultRuntimeRegistry().resolve(
       opts?.runtimeId ?? DEFAULT_RUNTIME_ID,
     );
+    this.runtime = opts?.userCodeRunner && runtime.id === DEFAULT_RUNTIME_ID
+      ? createRunnerRuntimeAdapter(this, runtime, opts.userCodeRunner)
+      : runtime;
     this.runtimeId = this.runtime.id;
     this.composition = opts?.composition ?? coreOnlyComposition();
     this.changelog = new Changelog(opts?.historyDir ?? db.drizzle);
