@@ -27,6 +27,7 @@ import {
   stageProjectTextFile,
 } from "./project-files.ts";
 import type { CommandRunResult, CommandSelector } from "./command-runner.ts";
+import { readRunnerSettings } from "./runner/runner-settings.ts";
 import type { ProjectCommand } from "./codebase/types.ts";
 import type { VerificationEvidence } from "../shared/verification.ts";
 import type { Kernel } from "./registries.ts";
@@ -1815,6 +1816,8 @@ export async function startControlServer(
         path: ctx.entry.path,
         name: ctx.entry.name,
         mode: readProjectMode(ctx.entry.path),
+        // The IDE warns while it's on: native code voids the runner boundary.
+        runnerFfi: runnerFfiOn(ctx.entry.path),
       },
     });
   });
@@ -8405,4 +8408,9 @@ export async function startControlServer(
   };
 
   return { server, setProject };
+}
+
+function runnerFfiOn(projectDir: string): boolean {
+  const settings = readRunnerSettings(projectDir);
+  return settings.ok && settings.data.ffi === true;
 }

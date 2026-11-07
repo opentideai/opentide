@@ -1,7 +1,8 @@
 // The runner a project's kernel starts: a child Deno under the flags from
-// ./permissions.ts, with the project's env. The bridge (./runner-adapter.ts)
-// starts it on first use, by when the project's env and secrets are loaded,
-// and again after every respawn, so each spawn reads them afresh.
+// ./permissions.ts, with the project's env and its runner settings. The bridge
+// (./runner-adapter.ts) starts it on first use, by when the project's env and
+// secrets are loaded, and again after every respawn, so each spawn reads them
+// afresh.
 //
 // The child's lock is its own, in its scratch dir, seeded at each spawn with a
 // copy of OpenTide's: its imports resolve as the kernel's do, and what it
@@ -24,6 +25,7 @@ import {
   runnerPermissionFlags,
 } from "./permissions.ts";
 import { RUNNER_ERROR_CODES } from "./protocol.ts";
+import { RUNNER_FFI_WARNING, type RunnerSettings } from "./runner-settings.ts";
 import {
   denoCacheDirs,
   openTideConfigPath,
@@ -39,6 +41,13 @@ export interface ProjectRunnerPaths {
   // Where a compiled build writes the bundled runner out to. Outside the
   // scratch dir, so a runner can't rewrite what the next one runs.
   bundledScript: string;
+}
+
+// What a spawn reads from the project, each time.
+export interface ProjectRunnerSource {
+  env(): Record<string, string>;
+  settings(): Result<RunnerSettings>;
+  warn(message: string): void;
 }
 
 // What the child runs: runner-main.ts from source, pinned to OpenTide's
@@ -66,10 +75,12 @@ export function runnerEntry(
 
 export function projectRunnerStart(
   paths: ProjectRunnerPaths,
-  projectEnv: () => Record<string, string>,
+  project: ProjectRunnerSource,
   entry: RunnerEntry = runnerEntry(),
 ): RunnerStart {
   return async (peer) => {
+    const settings = project.settings();
+    if (!settings.ok) return settings;
     const deno = resolveDenoToolchain();
     if (!deno.ok) {
       return failure(
@@ -87,13 +98,16 @@ export function projectRunnerStart(
       configFile: entry.kind === "source" ? entry.configFile : undefined,
       lockFile: join(paths.scratchDir, RUNNER_LOCK_FILE),
       interfaceAddresses: hostInterfaceAddresses(),
+      net: settings.data.net,
+      ffi: settings.data.ffi,
     });
     if (!flags.ok) return flags;
+    if (settings.data.ffi) project.warn(RUNNER_FFI_WARNING);
     return await RunnerHost.spawn({
       spec: {
         command: deno.data,
         args: ["run", ...flags.data, prepared.data],
-        env: runnerEnv(projectEnv(), {
+        env: runnerEnv(project.env(), {
           denoDir: caches.data.denoDir,
           scratchDir: paths.scratchDir,
         }),

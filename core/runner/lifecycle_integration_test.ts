@@ -3,11 +3,12 @@
 // stops answering, and stopped with the project.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { rmSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { testStoreComposition } from "../../verification/test-stores.ts";
 import { initCompiler, stopCompiler, transpileScript } from "../compiler.ts";
+import { PROJECT_MANIFEST_FILE } from "../project-layout.ts";
 import { Database } from "../db.ts";
 import { loadProject, unloadProject } from "../project-loader.ts";
 import type { ProjectContext } from "../project-loader.ts";
@@ -15,7 +16,10 @@ import { createProject, removeProject } from "../project-manager.ts";
 import { Kernel } from "../registries.ts";
 import { isolateHome, TEST_TMP_DIR } from "../test-home_test.ts";
 import { dispatchTool } from "../tools/dispatch.ts";
-import { projectRunnerStart } from "./project-runner.ts";
+import {
+  type ProjectRunnerSource,
+  projectRunnerStart,
+} from "./project-runner.ts";
 import { RUNNER_METHODS } from "./protocol.ts";
 import {
   isRunnerRuntimeAdapter,
@@ -43,6 +47,7 @@ interface Project {
   get(path: string): Promise<{ status: number; body: string }>;
   pid(): number | undefined;
   warnings(): string[];
+  allWarnings(): string[];
 }
 
 // A project on disk loaded with its runner on, and a broken deno.json in it:
@@ -80,6 +85,9 @@ async function withProject(fn: (p: Project) => Promise<void>) {
         ctx.kernel.log.query({ source: "system", level: "warn" })
           .map((e) => e.message)
           .filter((m) => m.startsWith("The user-code runner")),
+      allWarnings: () =>
+        ctx.kernel.log.query({ source: "system", level: "warn" })
+          .map((e) => e.message),
     });
   } finally {
     await unloadProject(ctx);
@@ -222,6 +230,33 @@ Deno.test({
   },
 });
 
+function setRunner(p: Project, runner: unknown) {
+  const manifest = join(p.ctx.entry.path, PROJECT_MANIFEST_FILE);
+  const meta = JSON.parse(readFileSync(manifest, "utf-8"));
+  writeFileSync(manifest, JSON.stringify({ ...meta, runner }));
+}
+
+Deno.test({
+  ...testOpts,
+  name:
+    "a runner setting that would open the kernel fails the call, and ffi is warned of",
+  fn: () =>
+    withProject(async (p) => {
+      setRunner(p, { net: ["localhost"] });
+      const refused = await p.tool("run_script", { source: "return 1;" });
+      assert(!refused.ok);
+      assertStringIncludes(
+        refused.error!.message,
+        'runner.net entry "localhost"',
+      );
+
+      setRunner(p, { net: ["localhost:5432"], ffi: true });
+      const ran = await p.tool("run_script", { source: "return 1;" });
+      assert(ran.ok, ran.error?.message);
+      assertStringIncludes(p.allWarnings().join("\n"), "turns on ffi");
+    }),
+});
+
 // A scratch dir and a bridge on a plain kernel, for what a project can't set.
 async function withBridge(
   fn: (bridge: RunnerBridge, kernel: Kernel, dir: string) => Promise<void>,
@@ -242,6 +277,12 @@ async function withBridge(
     await Deno.remove(dir, { recursive: true });
   }
 }
+
+const BARE_PROJECT: ProjectRunnerSource = {
+  env: () => ({}),
+  settings: () => ({ ok: true, data: {} }),
+  warn: () => {},
+};
 
 function scratch(dir: string) {
   return {
@@ -282,7 +323,7 @@ Deno.test({
         assert(after.ok);
         assertEquals((after.data.answer as { output: unknown }).output, 2);
       },
-      (dir) => projectRunnerStart(scratch(dir), () => ({})),
+      (dir) => projectRunnerStart(scratch(dir), BARE_PROJECT),
       { heartbeatIntervalMs: 100, pingTimeoutMs: 300 },
     ),
 });
@@ -318,7 +359,7 @@ Deno.test({
           assertEquals((ran.data.answer as { output: unknown }).output, 2);
         },
         (dir) =>
-          projectRunnerStart(scratch(dir), () => ({}), {
+          projectRunnerStart(scratch(dir), BARE_PROJECT, {
             kind: "bundle",
             bundle: pathToFileURL(bundle),
           }),

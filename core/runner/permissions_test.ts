@@ -109,3 +109,93 @@ Deno.test("interface addresses: IPv6 bracketed, zone dropped, duplicates gone", 
     ["127.0.0.1", "[fe80::1]", "192.168.1.5"],
   );
 });
+
+function netFlags(net: string[]) {
+  const f = flags({ ...INPUT, net } as typeof INPUT);
+  return {
+    allow: f.find((x) => x.startsWith("--allow-net")),
+    deny: f.find((x) => x.startsWith("--deny-net="))?.slice(
+      "--deny-net=".length,
+    ).split(","),
+  };
+}
+
+const LOOPBACK = ["127.0.0.1", "localhost", "0.0.0.0", "[::1]", "[::]"];
+const onKernelPorts = (hosts: string[]) =>
+  hosts.flatMap((h) => [`${h}:3003`, `${h}:3004`, `${h}:3005`]);
+
+Deno.test("a net list replaces open outbound; a loopback entry opens its port in every spelling", () => {
+  const { allow, deny } = netFlags(["localhost:5432", "api.stripe.com"]);
+  assertEquals(
+    allow,
+    `--allow-net=${
+      [...LOOPBACK.map((h) => `${h}:5432`), "api.stripe.com"].join(",")
+    }`,
+  );
+  // Loopback is open on 5432, so it's denied on the kernel's ports instead of
+  // whole. This machine's other addresses stay denied whole.
+  assertEquals(deny, [
+    ...onKernelPorts(LOOPBACK),
+    "100.65.1.2",
+    "[fd7a::1]",
+  ]);
+});
+
+Deno.test("a net list that names nowhere local keeps loopback denied whole", () => {
+  const { allow, deny } = netFlags(["api.stripe.com"]);
+  assertEquals(allow, "--allow-net=api.stripe.com");
+  assertEquals(deny, [...LOOPBACK, "100.65.1.2", "[fd7a::1]"]);
+});
+
+Deno.test("naming one of this machine's addresses opens only that one, off the kernel's ports", () => {
+  const { allow, deny } = netFlags(["100.65.1.2:8080"]);
+  assertEquals(allow, "--allow-net=100.65.1.2:8080");
+  assertEquals(deny, [
+    ...LOOPBACK,
+    ...onKernelPorts(["100.65.1.2"]),
+    "[fd7a::1]",
+  ]);
+});
+
+Deno.test("an empty net list reaches nothing", () => {
+  const { allow, deny } = netFlags([]);
+  assertEquals(allow, undefined);
+  assert(deny);
+});
+
+Deno.test("net entries that would open the kernel, or that Deno wouldn't match, are refused", () => {
+  for (
+    const bad of [
+      "localhost",
+      "127.0.0.1",
+      "100.65.1.2",
+      "localhost:3003",
+      "[::1]:3005",
+      "100.65.1.2:3004",
+      "http://api.stripe.com",
+      "api.stripe.com/v1",
+      "*.stripe.com",
+      "API.stripe.com",
+      "127.1:5432",
+      "2130706433:5432",
+      "foo.localhost:5432",
+      "[::ffff:127.0.0.1]:5432",
+      "[0:0:0:0:0:0:0:1]:5432",
+      "localhost:0",
+      "localhost:70000",
+      "a.com,b.com",
+      "",
+    ]
+  ) {
+    const result = runnerPermissionFlags({ ...INPUT, net: [bad] });
+    assert(!result.ok, bad);
+    assertEquals(result.error.code, RUNNER_ERROR_CODES.invalidSettings, bad);
+  }
+});
+
+Deno.test("ffi is off unless asked for", () => {
+  assert(!flags().includes("--allow-ffi"));
+  assert(
+    flags({ ...INPUT, ffi: true } as typeof INPUT).includes("--allow-ffi"),
+  );
+});

@@ -57,6 +57,7 @@ export const RUNNER_ERROR_CODES = {
   startFailed: "RUNNER_START_FAILED",
   protocolMismatch: "RUNNER_PROTOCOL_MISMATCH",
   invalidPath: "INVALID_RUNNER_PATH",
+  invalidSettings: "INVALID_RUNNER_SETTINGS",
   invalidParams: "INVALID_RUNNER_PARAMS",
   notLoaded: "RUNNER_ENTITY_NOT_LOADED",
   streamingUnsupported: "STREAMING_UNSUPPORTED",

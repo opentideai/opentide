@@ -21,6 +21,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { APP_PORT_AUTO, getTideDir, PROJECT_GITIGNORE } from "./config.ts";
 import { readJsonQuarantine, writeJsonAtomic } from "./atomic-json.ts";
 import type { Result } from "./types.ts";
+import type { RunnerSettings } from "./runner/runner-settings.ts";
 import { SecretsStore } from "./secrets.ts";
 
 // The manifest's `previewPort` sentinel. "auto" means "no fixed pin — the
@@ -88,6 +89,9 @@ export interface ProjectMeta {
   // The toolsets an MCP connection lists when it doesn't ask for its own
   // (core/tools/toolsets.ts). Absent ⇒ core only. See readProjectToolsets.
   toolsets?: string[];
+  // What the project's user-code runner may do beyond the default. Absent ⇒
+  // none of it. See core/runner/runner-settings.ts.
+  runner?: RunnerSettings;
 }
 
 export interface ProjectForkMeta {
@@ -427,32 +431,32 @@ function isValidProjectMode(value: unknown): value is ProjectMode {
 export function readProjectCommitOnComplete(
   projectDir: string,
 ): boolean | undefined {
-  const manifestPath = getProjectPaths(projectDir).manifest;
-  if (!existsSync(manifestPath)) return undefined;
-  try {
-    const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    const value = typeof raw === "object" && raw !== null
-      ? (raw as Record<string, unknown>).commitOnComplete
-      : undefined;
-    return typeof value === "boolean" ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  const value = readProjectManifestValue(projectDir, "commitOnComplete");
+  return typeof value === "boolean" ? value : undefined;
 }
 
 // The manifest's `toolsets`, or undefined when it isn't set: a missing or
 // unreadable manifest, or a value that isn't a list of strings. Names that
 // aren't toolsets are kept; the caller reports them.
 export function readProjectToolsets(projectDir: string): string[] | undefined {
+  const value = readProjectManifestValue(projectDir, "toolsets");
+  return Array.isArray(value) && value.every((v) => typeof v === "string")
+    ? value
+    : undefined;
+}
+
+// One top-level manifest key as parsed, or undefined when the manifest is
+// missing, unreadable or not an object. The caller checks the shape.
+export function readProjectManifestValue(
+  projectDir: string,
+  key: keyof ProjectMeta,
+): unknown {
   const manifestPath = getProjectPaths(projectDir).manifest;
   if (!existsSync(manifestPath)) return undefined;
   try {
     const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
-    const value = typeof raw === "object" && raw !== null
-      ? (raw as Record<string, unknown>).toolsets
-      : undefined;
-    return Array.isArray(value) && value.every((v) => typeof v === "string")
-      ? value
+    return typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>)[key]
       : undefined;
   } catch {
     return undefined;

@@ -1287,6 +1287,15 @@ export const RUNNER_LOOPBACK_DENY_HOSTS = [
   "[::1]",
   "[::]",
 ] as const;
+// The default ports of the servers that drive the kernel. A project's
+// `runner.net` (opentide.json) may not name one of them on loopback or on one
+// of this machine's addresses, and when it opens those hosts at all, these
+// ports stay denied on them.
+export const RUNNER_KERNEL_PORTS = [
+  CONTROL_SERVER_PORT,
+  AGENT_DEFAULT_PORT,
+  MCP_HTTP_PORT,
+] as const;
 
 // --- Kernel settings defaults ---
 

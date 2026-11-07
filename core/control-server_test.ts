@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { resolveProjectFilePath } from "./control-helpers.ts";
+import { PROJECT_MANIFEST_FILE } from "./project-layout.ts";
 import {
   type BuildTargetExtras,
   type BuildTargetExtraTarget,
@@ -1677,6 +1678,50 @@ Deno.test({
         await unloadProject(control.setProject.current()!);
       }
       await control.server.shutdown();
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name: "GET /api/project says when the project turns on ffi for its runner",
+  fn: async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "genie-project-ffi-" });
+    const db = await Database.create({ driver: "pglite" });
+    const kernel = new Kernel(db, { composition: testStoreComposition() });
+    const now = new Date().toISOString();
+    const control = await startControlServer(
+      {
+        entry: {
+          path: projectDir,
+          name: "project-ffi-test",
+          createdAt: now,
+          lastOpenedAt: now,
+        },
+        kernel,
+        db,
+        appServer: { shutdown: async () => {} } as never,
+        devServer: { shutdown: async () => {} } as never,
+        commandRunner: { shutdown: async () => {} } as never,
+        rebuild: () => {},
+      },
+      0,
+    );
+    const manifest = join(projectDir, PROJECT_MANIFEST_FILE);
+    const runnerFfi = async () =>
+      (await (await fetch(
+        `http://127.0.0.1:${control.server.addr.port}/api/project`,
+      )).json()).project.runnerFfi;
+    try {
+      writeFileSync(manifest, JSON.stringify({ name: "p" }));
+      assertEquals(await runnerFfi(), false);
+      writeFileSync(manifest, JSON.stringify({ runner: { ffi: true } }));
+      assertEquals(await runnerFfi(), true);
+    } finally {
+      await control.server.shutdown();
+      await db.close();
       rmSync(projectDir, { recursive: true, force: true });
     }
   },

@@ -16,7 +16,7 @@ import {
   denoToolchainFailure,
   resolveDenoToolchain,
 } from "./deno-toolchain.ts";
-import { OPENTIDE_DB_URL_ENV } from "./config.ts";
+import { DEV_SERVER_HOST, OPENTIDE_DB_URL_ENV } from "./config.ts";
 
 function decodeVLQ(encoded: string): number[] {
   const CHARS =
@@ -1115,7 +1115,7 @@ function buildLogpointCondition(
 }
 
 async function findFreePort(): Promise<number> {
-  const listener = Deno.listen({ port: 0 });
+  const listener = Deno.listen({ hostname: DEV_SERVER_HOST, port: 0 });
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
   return port;

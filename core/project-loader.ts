@@ -32,6 +32,7 @@ import { setUnpricedModelWarnHandler } from "./usage.ts";
 import { type DoctorIssue, doctorProject } from "./project-doctor.ts";
 import { runProjectInitHooks } from "./project-hooks.ts";
 import { projectRunnerStart } from "./runner/project-runner.ts";
+import { readRunnerSettings } from "./runner/runner-settings.ts";
 import type { CompositionContext } from "./composition.ts";
 
 // Thrown when another process already has the project open. Carries the Result
@@ -155,7 +156,11 @@ async function loadProjectLocked(
           scratchDir: paths.runnerScratchDir,
           bundledScript: paths.runnerBundledScript,
         },
-        () => kernel.envSnapshot(),
+        {
+          env: () => kernel.envSnapshot(),
+          settings: () => readRunnerSettings(entry.path),
+          warn: (message) => kernel.log.log("warn", "system", message),
+        },
       )
       : undefined,
   });
