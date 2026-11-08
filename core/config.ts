@@ -269,7 +269,7 @@ export function joinAppUrl(origin: string, path = "/"): string {
 
 // The OpenTide release version: `opentide --version` and the serverInfo both
 // servers advertise.
-export const OPENTIDE_VERSION = "0.1.12";
+export const OPENTIDE_VERSION = "0.1.13";
 
 // Set by install.sh's `opentide` launcher to its own path, so a spawned serve
 // and a generated client config run the launcher rather than a bare `deno run`
