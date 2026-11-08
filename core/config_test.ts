@@ -1494,7 +1494,7 @@ Deno.test("models.dev OpenAI-compatible provider descriptors survive stale catal
   }
 });
 
-Deno.test("kernel settings: userCodeRunner is off by default, the file turns it on, the env wins", async () => {
+Deno.test("kernel settings: userCodeRunner is on by default, the file turns it off, the env wins", async () => {
   const home = await Deno.makeTempDir({ prefix: "opentide-config-runner-" });
   const oldHome = Deno.env.get("HOME");
   const oldEnv = Deno.env.get("OPENTIDE_USER_CODE_RUNNER");
@@ -1502,16 +1502,16 @@ Deno.test("kernel settings: userCodeRunner is off by default, the file turns it 
     Deno.env.set("HOME", home);
     Deno.env.delete("OPENTIDE_USER_CODE_RUNNER");
     const config = await import(`./config.ts?test=${crypto.randomUUID()}`);
-    assertEquals(config.userCodeRunnerEnabled(), false);
-    config.setKernelSettings({ userCodeRunner: true });
     assertEquals(config.userCodeRunnerEnabled(), true);
-    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "0");
-    assertEquals(config.userCodeRunnerEnabled(), false);
     config.setKernelSettings({ userCodeRunner: false });
+    assertEquals(config.userCodeRunnerEnabled(), false);
     Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "1");
     assertEquals(config.userCodeRunnerEnabled(), true);
-    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "yes");
+    config.setKernelSettings({ userCodeRunner: true });
+    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "0");
     assertEquals(config.userCodeRunnerEnabled(), false);
+    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "yes");
+    assertEquals(config.userCodeRunnerEnabled(), true);
   } finally {
     if (oldEnv === undefined) Deno.env.delete("OPENTIDE_USER_CODE_RUNNER");
     else Deno.env.set("OPENTIDE_USER_CODE_RUNNER", oldEnv);

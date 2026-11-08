@@ -10,13 +10,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CDPClient } from "./cdp-client.ts";
 import type { Kernel } from "./registries.ts";
-import type { AppServer } from "./app-server.ts";
+import { type AppServer, createAppServer } from "./app-server.ts";
+import { Database } from "./db.ts";
 import type { DbConfig } from "./db/factory.ts";
-import {
-  denoToolchainFailure,
-  resolveDenoToolchain,
-} from "./deno-toolchain.ts";
 import { DEV_SERVER_HOST, OPENTIDE_DB_URL_ENV } from "./config.ts";
+import { createDebugKernel, type DebugKernel } from "./debug-kernel.ts";
+import { debugUserCodeRunner } from "./runner/project-runner.ts";
 
 function decodeVLQ(encoded: string): number[] {
   const CHARS =
@@ -132,6 +131,9 @@ export type {
   Variable,
 } from "../shared/debug.ts";
 
+const INSPECTOR_URL_RE = /Debugger listening on (ws:\/\/\S+)/;
+const INSPECTOR_EXIT_WAIT_RE = /Waiting for the debugger to disconnect/;
+
 type DebugEventType =
   | "paused"
   | "resumed"
@@ -142,7 +144,7 @@ type DebugEventType =
 
 // The CDP payload fields DebugManager actually reads — deliberately narrower than the
 // protocol. `cdp.on` hands over `unknown`, so the cast at each `on(...)` call below is
-// the single narrowing point for a wire payload from our own inspector subprocess.
+// the single narrowing point for a wire payload from the debug runner's inspector.
 // Every field is optional: V8 omits some depending on the pause site.
 interface CdpCallFrame {
   callFrameId?: string;
@@ -167,11 +169,18 @@ interface CdpConsoleParams {
   args?: CdpConsoleArg[];
 }
 
+// A debug session: the preview proxied to a debug kernel (./debug-kernel.ts) on
+// its own port, over a copy of the database, whose user code runs in a runner
+// under the inspector. This class drives that inspector over CDP.
+interface DebugSession {
+  debug: DebugKernel;
+  db: Database;
+  appServer: AppServer;
+}
+
 export class DebugManager {
-  private subprocess: Deno.ChildProcess | null = null;
+  private session: DebugSession | null = null;
   private cdp: CDPClient | null = null;
-  private stdinWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  private encoder = new TextEncoder();
   private breakpoints = new Map<string, BreakpointInfo>();
   private _pauseState: PauseState | null = null;
   private _appPort = 0;
@@ -179,14 +188,10 @@ export class DebugManager {
     DebugEventType,
     Array<(data?: unknown) => void>
   >();
-  private readyPromise:
-    | { resolve: () => void; reject: (e: Error) => void }
-    | null = null;
   private inspectorWsUrl: string | null = null;
   private inspectorUrlPromise: { resolve: (url: string) => void } | null = null;
   private scriptMap = new Map<string, string>();
   private sourceMaps = new Map<string, SourceMapIndex>();
-  private readyTimer: ReturnType<typeof setTimeout> | null = null;
   private breakpointsPath: string;
   private watchesPath: string;
   private _watches: string[] = [];
@@ -204,7 +209,7 @@ export class DebugManager {
   }
 
   get active(): boolean {
-    return this.subprocess !== null;
+    return this.session !== null;
   }
   get paused(): boolean {
     return this._pauseState !== null;
@@ -227,103 +232,54 @@ export class DebugManager {
   }
 
   async start(): Promise<void> {
-    if (this.subprocess) throw new Error("Debug session already active");
+    if (this.session) throw new Error("Debug session already active");
 
     this.clearCDPBreakpointIds();
     this._appPort = await findFreePort();
 
-    const initData = await this.serializeKernel();
-
-    // A debug session is a second Deno running debug-server.ts under --inspect,
-    // so it needs two things a compiled build has neither of: a real `deno`, and
-    // debug-server.ts as a file on disk. Both are checked up front. Before this,
-    // the spawn used the RUNNING executable — inside a compiled binary that is
-    // the kernel itself, which died on `--inspect` and surfaced 15 seconds later
-    // as "Debug subprocess timed out waiting for ready", naming neither cause.
-    const toolchain = resolveDenoToolchain();
-    if (!toolchain.ok) {
-      throw new Error(
-        denoToolchainFailure(
-          "Debug sessions need a Deno toolchain",
-          toolchain.error,
-        ),
-      );
-    }
-    // Two things are wrong here in a compiled build, and the tempting explanation
-    // — "compiled binaries have no filesystem" — is not one of them. They do, and
-    // it works: existsSync finds imported modules and readDirSync lists them.
-    //
-    // First, debug-server.ts is never imported (only pathed to, above), so
-    // `deno compile` never puts it in the binary. That alone is one flag,
-    // --include core/debug-server.ts.
-    //
-    // Second, and the actual blocker: the virtual filesystem is visible only from
-    // inside this process. The spawn below hands the path to a SEPARATE deno,
-    // which resolves it against the real filesystem and reports Module not found.
-    // Materialising the whole import graph to a temp dir would fix it; a bundled
-    // toolchain would not. Hence a separate check with its own reason.
-    const scriptPath = new URL("./debug-server.ts", import.meta.url).pathname;
-    if (!existsSync(scriptPath)) {
-      throw new Error(
-        "Debug sessions are unavailable in this build: the debug server script " +
-          `is not on disk (${scriptPath}). This kernel was compiled into a ` +
-          "single binary, which keeps its sources in a virtual filesystem. Run " +
-          "the kernel from source to debug.",
-      );
-    }
-    const command = new Deno.Command(toolchain.data, {
-      args: [
-        "run",
-        "--inspect=127.0.0.1:0",
-        "--allow-all",
-        scriptPath,
-      ],
-      stdin: "piped",
-      stdout: "piped",
-      stderr: "piped",
-    });
-
-    this.subprocess = command.spawn();
-
-    this.subprocess.status.then(() => {
-      // The subprocess holds the temp DB copy open until it exits; remove it
-      // now whether this was an intentional stop() or an unexpected crash.
+    const db = await Database.create(await this.buildDebugDbConfig());
+    const runner = debugUserCodeRunner(
+      this.projectDir,
+      () => this.kernel,
+      (text) => this.onRunnerStderr(text),
+    );
+    const built = await createDebugKernel(
+      this.kernel,
+      db,
+      runner,
+      this._appPort,
+    );
+    if (!built.ok) {
+      await db.close();
       this.removeDbTempDir();
-      if (this.subprocess) {
-        this.cleanup();
-        this.notify("error", "Debug subprocess exited unexpectedly");
-        this.notify("stopped");
-      }
-    });
-
-    this.pipeStderr(this.subprocess.stderr);
-    this.readStdout(this.subprocess.stdout);
-
-    this.stdinWriter = this.subprocess.stdin.getWriter();
-
-    const readyWait = new Promise<void>((resolve, reject) => {
-      this.readyPromise = { resolve, reject };
-      this.readyTimer = setTimeout(
-        () => reject(new Error("Debug subprocess timed out waiting for ready")),
-        15_000,
-      );
-    });
+      throw new Error(built.error.message);
+    }
+    for (const error of built.data.errors) {
+      this.kernel.log.log("warn", "system", `Debug: ${error}`);
+    }
+    const appServer = createAppServer(built.data.kernel, this._appPort);
+    appServer.rebuild();
+    const session: DebugSession = { debug: built.data, db, appServer };
+    this.session = session;
 
     try {
-      await this.sendCommand(initData);
-      await readyWait;
+      // Every entity instantiated in the runner before the inspector is
+      // attached: Debugger.enable then reports each script.
+      const mirror = await session.debug.bridge.mirror();
+      if (!mirror.ok) throw new Error(mirror.error.message);
+      const synced = await mirror.data.sync();
+      if (!synced.ok) throw new Error(synced.error.message);
+      void session.debug.bridge.host?.exited.then(() => {
+        if (this.session !== session) return;
+        void this.teardown();
+        this.notify("error", "The debug session's runner exited unexpectedly");
+        this.notify("stopped");
+      });
       const wsUrl = await this.discoverInspectorUrl();
       this.cdp = new CDPClient(wsUrl);
       await this.cdp.connect();
     } catch (err) {
-      // Any startup failure (init send, ready timeout, CDP connect) must kill
-      // the spawned subprocess and tear down — otherwise it orphans, holding
-      // the app port and the temp DB copy. Kill before cleanup(), which nulls
-      // this.subprocess.
-      try {
-        this.subprocess?.kill();
-      } catch { /* already dead */ }
-      this.cleanup();
+      await this.teardown();
       throw err;
     }
 
@@ -401,27 +357,8 @@ export class DebugManager {
   }
 
   async stop(): Promise<void> {
-    if (!this.subprocess) return;
-
-    this.appServer.clearProxy();
-    this.cdp?.close();
-    this.cdp = null;
-
-    try {
-      await this.sendCommand({ type: "shutdown" });
-    } catch { /* may already be dead */ }
-
-    const proc = this.subprocess;
-    this.subprocess = null;
-    this.stdinWriter = null;
-    this._pauseState = null;
-    this.clearCDPBreakpointIds();
-
-    setTimeout(() => {
-      try {
-        proc.kill();
-      } catch { /* already dead */ }
-    }, 2000);
+    if (!this.session) return;
+    await this.teardown();
     this.notify("stopped");
   }
 
@@ -631,28 +568,6 @@ export class DebugManager {
       ownProperties: true,
     });
     return mapCDPProperties(result.result);
-  }
-
-  // --- Hot-reload ---
-
-  async updateHandler(name: string, source: string): Promise<void> {
-    await this.sendCommand({ type: "update-handler", name, source });
-  }
-
-  async updateFunction(name: string, source: string): Promise<void> {
-    await this.sendCommand({ type: "update-function", name, source });
-  }
-
-  async updateConfig(name: string, value: unknown): Promise<void> {
-    await this.sendCommand({ type: "update-config", name, value });
-  }
-
-  async updateRoute(
-    method: string,
-    path: string,
-    handlerName: string,
-  ): Promise<void> {
-    await this.sendCommand({ type: "update-route", method, path, handlerName });
   }
 
   // --- Status ---
@@ -901,31 +816,7 @@ export class DebugManager {
     this.notify("logpoint", output);
   }
 
-  private async serializeKernel(): Promise<Record<string, unknown>> {
-    this.kernel.envVars.refreshCache();
-    return {
-      type: "init",
-      appPort: this._appPort,
-      db: await this.buildDebugDbConfig(),
-      handlers: this.kernel.handlers.serialize(),
-      functions: this.kernel.functions.serialize(),
-      routes: this.kernel.routes.list().map((r) => ({
-        method: r.method,
-        path: r.path,
-        handlerName: r.handlerName,
-      })),
-      configs: this.kernel.configs.serialize(),
-      templates: this.kernel.templates.serialize(),
-      assets: this.kernel.assets.serialize(),
-      env: {
-        ...this.kernel.env.all(),
-        ...Object.fromEntries(this.kernel.envVars.cachedEntries()),
-        ...this.kernel.secrets.resolveAll(),
-      },
-    };
-  }
-
-  // The debug subprocess needs its own copy of the database, so breakpointed code
+  // A debug session gets its own copy of the database, so breakpointed code
   // cannot mutate the live one.
   //
   // This used to cpSync the data directory. That does not work: PGlite is
@@ -937,7 +828,7 @@ export class DebugManager {
   //
   // dumpDataDir is Postgres taking the snapshot itself, consistently, without
   // closing. Restoring it into a directory and closing that leaves an ordinary
-  // data dir, so the subprocess contract is unchanged.
+  // data dir, which the debug kernel opens.
   private async buildDebugDbConfig(): Promise<DbConfig> {
     const pgUrl = readEnv(OPENTIDE_DB_URL_ENV);
     if (pgUrl) {
@@ -960,13 +851,6 @@ export class DebugManager {
     return { driver: "pglite", dataDir: this._debugDbTempDir };
   }
 
-  private async sendCommand(msg: unknown): Promise<void> {
-    if (!this.stdinWriter) throw new Error("No subprocess connection");
-    await this.stdinWriter.write(
-      this.encoder.encode(JSON.stringify(msg) + "\n"),
-    );
-  }
-
   private async discoverInspectorUrl(): Promise<string> {
     if (this.inspectorWsUrl) return this.inspectorWsUrl;
     return new Promise<string>((resolve, reject) => {
@@ -979,74 +863,43 @@ export class DebugManager {
     });
   }
 
-  private readStdout(stream: ReadableStream<Uint8Array>): void {
-    (async () => {
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for await (const chunk of stream) {
-        buffer += decoder.decode(chunk, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop()!;
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const msg = JSON.parse(line);
-            this.handleSubprocessEvent(msg);
-          } catch { /* not JSON, ignore */ }
-        }
-      }
-    })().catch(() => {});
-  }
-
-  private handleSubprocessEvent(msg: Record<string, unknown>): void {
-    if (msg.type === "ready" && this.readyPromise) {
-      if (this.readyTimer) {
-        clearTimeout(this.readyTimer);
-        this.readyTimer = null;
-      }
-      this.readyPromise.resolve();
-      this.readyPromise = null;
+  // The runner's stderr, as it arrives. The inspector prints its address
+  // there, and says when the runner is exiting: Deno then waits for the
+  // debugger to detach before it goes (measured, Deno 2.9.8), so detach.
+  private onRunnerStderr(text: string): void {
+    if (INSPECTOR_EXIT_WAIT_RE.test(text)) {
+      this.cdp?.close();
+      this.cdp = null;
     }
+    const m = text.match(INSPECTOR_URL_RE);
+    if (!m) return;
+    this.inspectorWsUrl = m[1]!;
+    this.inspectorUrlPromise?.resolve(m[1]!);
+    this.inspectorUrlPromise = null;
   }
 
-  private pipeStderr(stream: ReadableStream<Uint8Array>): void {
-    const INSPECTOR_RE = /Debugger listening on (ws:\/\/\S+)/;
-    (async () => {
-      const decoder = new TextDecoder();
-      for await (const chunk of stream) {
-        const text = decoder.decode(chunk, { stream: true });
-        if (!text.trim()) continue;
-        console.log(`  [debug] ${text.trimEnd()}`);
-        const m = text.match(INSPECTOR_RE);
-        if (m) {
-          this.inspectorWsUrl = m[1]!;
-          this.inspectorUrlPromise?.resolve(m[1]!);
-          this.inspectorUrlPromise = null;
-        }
-      }
-    })().catch(() => {});
-  }
-
-  private cleanup(): void {
+  // Ends the session: the preview back on the live kernel, the inspector
+  // detached, the runner stopped, the database copy closed and removed.
+  private async teardown(): Promise<void> {
+    const session = this.session;
+    this.session = null;
     this.appServer.clearProxy();
     this.cdp?.close();
     this.cdp = null;
-    this.subprocess = null;
-    this.stdinWriter = null;
     this._pauseState = null;
     this.inspectorWsUrl = null;
     this.scriptMap.clear();
     this.sourceMaps.clear();
     this.clearCDPBreakpointIds();
-    if (this.readyTimer) {
-      clearTimeout(this.readyTimer);
-      this.readyTimer = null;
+    if (session) {
+      await session.appServer.shutdown();
+      await session.debug.kernel.runtime.dispose?.();
+      await session.db.close();
     }
     this.removeDbTempDir();
   }
 
-  // Remove the per-session PGlite copy. Idempotent; the subprocess holds the
-  // dir open until it exits, so this is driven off process exit / teardown.
+  // Remove the per-session PGlite copy, once it's closed. Idempotent.
   private removeDbTempDir(): void {
     if (!this._debugDbTempDir) return;
     try {

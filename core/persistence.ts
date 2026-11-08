@@ -393,7 +393,7 @@ export function loadProjectStateData(
   };
 }
 
-async function restoreKernelState(
+export async function restoreKernelState(
   kernel: Kernel,
   data: PersistedState,
   rebuild: () => void,

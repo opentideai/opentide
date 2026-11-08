@@ -211,6 +211,18 @@ Two agents, one project, no merge hell.
 ### <img src="assets/icons/safe.svg" width="22" height="22" align="top" alt=""> Safe by default
 
 - The server listens on loopback only and needs a per-project bearer token.
+- The code your agent writes runs in a Deno process of its own, one per project.
+  It can't read your API keys or the project's files, start programs, or reach
+  OpenTide's servers or anything else on `127.0.0.1`. It reaches the internet as
+  usual.
+  - `"runner": { "net": ["api.stripe.com", "localhost:5432"] }` in
+    `opentide.json` limits it to the hosts listed.
+  - `"runner": { "ffi": true }` lets native npm addons load, and gives up the
+    boundary.
+  - `OPENTIDE_USER_CODE_RUNNER=0` runs it inside the server instead.
+  - Its SQL still reaches OpenTide's own tables in the project database. With
+    `OPENTIDE_DB_URL` on a Postgres superuser role, such as `postgres`, that SQL
+    can run programs on the database host, so connect as an ordinary role.
 - Secrets go through `define_secret`, never into code.
 - `check_package_security` checks installed packages for known vulnerabilities
   and deprecations, with upgrade advice.

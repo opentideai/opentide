@@ -78,6 +78,7 @@ import { EnvVarStore } from "./env-vars.ts";
 import { Tracer } from "./tracer.ts";
 import {
   createRunnerRuntimeAdapter,
+  type RunnerBridgeOptions,
   type RunnerStart,
 } from "./runner/runner-adapter.ts";
 import { RunnerHost } from "./runner/runner-host.ts";
@@ -1251,6 +1252,8 @@ export class Kernel {
       // kernel passes a runner or null, so that's for tests, and it's how the
       // flag-on lane runs them through the runner.
       userCodeRunner?: RunnerStart | null;
+      // How the kernel minds that runner.
+      userCodeRunnerOptions?: RunnerBridgeOptions;
     },
   ) {
     this.db = db;
@@ -1261,7 +1264,12 @@ export class Kernel {
       ? (userCodeRunnerEnabled() ? RunnerHost.inMemory : null)
       : opts.userCodeRunner;
     this.runtime = runner && runtime.id === DEFAULT_RUNTIME_ID
-      ? createRunnerRuntimeAdapter(this, runtime, runner)
+      ? createRunnerRuntimeAdapter(
+        this,
+        runtime,
+        runner,
+        opts?.userCodeRunnerOptions,
+      )
       : runtime;
     this.runtimeId = this.runtime.id;
     this.composition = opts?.composition ?? coreOnlyComposition();

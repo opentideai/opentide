@@ -10,7 +10,11 @@
 
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { RUNNER_BUNDLE_FILE, userCodeRunnerEnabled } from "../config.ts";
+import {
+  RUNNER_BUNDLE_FILE,
+  RUNNER_INSPECT_FLAG,
+  userCodeRunnerEnabled,
+} from "../config.ts";
 import {
   denoToolchainFailure,
   resolveDenoToolchain,
@@ -94,18 +98,66 @@ export function projectUserCodeRunner(
       scratchDir: paths.runnerScratchDir,
       bundledScript: paths.runnerBundledScript,
     },
-    {
-      env: () => kernel().envSnapshot(),
-      settings: () => readRunnerSettings(projectDir),
-      warn: (message) => kernel().log.log("warn", "system", message),
-    },
+    projectSource(projectDir, kernel),
   );
+}
+
+// A debug session's runner: the project's flags plus the inspector, in a
+// scratch dir of its own, whatever the userCodeRunner setting says. It starts
+// once. A respawn would have no debugger attached, so a second start fails
+// and the session has to be started again.
+export function debugUserCodeRunner(
+  projectDir: string,
+  kernel: () => Kernel,
+  onStderr: (text: string) => void,
+): RunnerStart {
+  const paths = getProjectPaths(projectDir);
+  const start = projectRunnerStart(
+    {
+      scratchDir: paths.debugRunnerScratchDir,
+      bundledScript: paths.debugRunnerBundledScript,
+    },
+    projectSource(projectDir, kernel),
+    runnerEntry(),
+    { inspect: true, onStderr },
+  );
+  let started = false;
+  return (peer) => {
+    if (started) {
+      return Promise.resolve(failure(
+        RUNNER_ERROR_CODES.closed,
+        "The debug session's runner has ended. Start the session again.",
+      ));
+    }
+    started = true;
+    return start(peer);
+  };
+}
+
+function projectSource(
+  projectDir: string,
+  kernel: () => Kernel,
+): ProjectRunnerSource {
+  return {
+    env: () => kernel().envSnapshot(),
+    settings: () => readRunnerSettings(projectDir),
+    warn: (message) => kernel().log.log("warn", "system", message),
+  };
+}
+
+export interface RunnerSpawnExtras {
+  // Run under the inspector, at RUNNER_INSPECT_FLAG.
+  inspect?: boolean;
+  // Each chunk of the child's stderr, as it arrives. The inspector's address
+  // is printed there.
+  onStderr?: (text: string) => void;
 }
 
 export function projectRunnerStart(
   paths: ProjectRunnerPaths,
   project: ProjectRunnerSource,
   entry: RunnerEntry = runnerEntry(),
+  extras: RunnerSpawnExtras = {},
 ): RunnerStart {
   return async (peer) => {
     const settings = project.settings();
@@ -135,7 +187,12 @@ export function projectRunnerStart(
     return await RunnerHost.spawn({
       spec: {
         command: deno.data,
-        args: ["run", ...flags.data, prepared.data],
+        args: [
+          "run",
+          ...flags.data,
+          ...(extras.inspect ? [RUNNER_INSPECT_FLAG] : []),
+          prepared.data,
+        ],
         env: runnerEnv(project.env(), {
           denoDir: caches.data.denoDir,
           scratchDir: paths.scratchDir,
@@ -143,6 +200,7 @@ export function projectRunnerStart(
         cwd: paths.scratchDir,
       },
       peer,
+      onStderr: extras.onStderr,
     });
   };
 }

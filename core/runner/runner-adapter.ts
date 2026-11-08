@@ -129,6 +129,9 @@ interface Connection {
 }
 
 export interface RunnerBridgeOptions {
+  // False: no pings. A debugger's runner is paused at its breakpoints, and a
+  // paused runner can't answer one.
+  heartbeat?: boolean;
   heartbeatIntervalMs?: number;
   // How long a ping may go unanswered. Default: the longest any caller waits
   // for user code, so code a caller still waits for is never killed by it.
@@ -149,6 +152,7 @@ export class RunnerBridge {
   private readonly mirrorCache = new MirrorCache();
   // Read once, like the app server's handler timeout: the settings are a file.
   private readonly callTimeoutMs = callTimeout();
+  private readonly heartbeat: boolean;
   private readonly heartbeatIntervalMs: number;
   private readonly pingTimeoutMs: number;
 
@@ -157,6 +161,7 @@ export class RunnerBridge {
     private readonly start: RunnerStart,
     options: RunnerBridgeOptions = {},
   ) {
+    this.heartbeat = options.heartbeat ?? true;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ??
       RUNNER_HEARTBEAT_INTERVAL_MS;
     this.pingTimeoutMs = options.pingTimeoutMs ?? this.callTimeoutMs;
@@ -268,7 +273,7 @@ export class RunnerBridge {
     made.conn = started;
     this.live = started;
     void host.data.exited.then(() => this.drop(started, "exited"));
-    this.beat(started);
+    if (this.heartbeat) this.beat(started);
     return { ok: true, data: started };
   }
 

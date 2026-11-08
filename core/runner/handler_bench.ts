@@ -4,6 +4,9 @@
 // makes three queries. Every request is a real fetch to the preview port.
 //
 //   deno task bench:runner
+//
+// The budget: over in-process, a runner child adds at most 1 ms a call and
+// 0.5 ms a query, and the 3-query handler's p99 stays under 10 ms.
 
 import { rmSync } from "node:fs";
 import { join } from "node:path";

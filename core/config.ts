@@ -1259,9 +1259,14 @@ export const DB_CHECKPOINT_INTERVAL_MS = 60 * 1000;
 // --- User-code runner (one child Deno per project, narrow permissions) ---
 
 // Env override for the userCodeRunner kernel setting: "1" on, "0" off, anything
-// else falls through to the file value. Default off until the flag-on lane holds.
+// else falls through to the file value. Off runs user code in the kernel's
+// process, with every permission the kernel has.
 export const OPENTIDE_USER_CODE_RUNNER_ENV = "OPENTIDE_USER_CODE_RUNNER";
-export const USER_CODE_RUNNER_DEFAULT = false;
+export const USER_CODE_RUNNER_DEFAULT = true;
+// The debugger's runner listens for the inspector here, on a port of its
+// choosing. Deno opens the inspector without a net permission, so the runner's
+// own loopback deny still holds (measured, Deno 2.9.8).
+export const RUNNER_INSPECT_FLAG = `--inspect=${DEV_SERVER_HOST}:0`;
 
 // How long a new runner has to say it is ready before the kernel gives up.
 export const RUNNER_READY_TIMEOUT_MS = 15_000;

@@ -226,6 +226,10 @@ export function getProjectPaths(projectDir: string) {
     // bundled runner (core/runner/project-runner.ts).
     runnerScratchDir: join(cachesDir, "runner"),
     runnerBundledScript: join(cachesDir, "runner-main.js"),
+    // The same two for a debug session's runner, which runs beside the
+    // project's own (core/debug-manager.ts).
+    debugRunnerScratchDir: join(cachesDir, "runner-debug"),
+    debugRunnerBundledScript: join(cachesDir, "runner-debug-main.js"),
     logsCache: join(cachesDir, "logs.json"),
     localState: join(cachesDir, "local-state.json"),
     registryCache: join(cachesDir, REGISTRY_CACHE_FILE),

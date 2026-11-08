@@ -1,20 +1,24 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "node:path";
 import { Kernel } from "./registries.ts";
 import { Database } from "./db.ts";
 import { compileHandler, initCompiler, stopCompiler } from "./compiler.ts";
 import { createAppServer } from "./app-server.ts";
+import { APP_PORT_AUTO } from "./config.ts";
+import { userConfigDir } from "./user-config-dir.ts";
 import { DebugManager } from "./debug-manager.ts";
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 
 async function withDebugKernel<T>(
   fn: (kernel: Kernel, projectDir: string) => Promise<T>,
+  opts: ConstructorParameters<typeof Kernel>[1] = {},
 ): Promise<T> {
   await initCompiler();
   const tmpDir = Deno.makeTempDirSync();
   const dataDir = `${tmpDir}/data`;
   const db = await Database.create({ driver: "pglite", dataDir });
-  const kernel = new Kernel(db);
+  const kernel = new Kernel(db, opts);
   try {
     return await fn(kernel, tmpDir);
   } finally {
@@ -331,6 +335,90 @@ Deno.test({
         const res = await fetch("http://localhost:4012/echo");
         assertEquals(res.status, 200);
         assertEquals(await res.text(), "echo");
+      } finally {
+        await dm.stop().catch(() => {});
+        await appServer.shutdown();
+      }
+    });
+  },
+});
+
+async function defineRoute(
+  kernel: Kernel,
+  name: string,
+  source: string,
+): Promise<void> {
+  const compiled = await compileHandler(
+    name,
+    source,
+    await kernel.compileDeps(),
+  );
+  assert(compiled.ok);
+  kernel.handlers.register(name, source, compiled.data);
+  kernel.routes.register("GET", `/${name}`, name);
+}
+
+Deno.test({
+  ...testOpts,
+  name:
+    "Debug session: user code runs in a runner child under the runner's flags, even when the project runs it in-process",
+  fn: async () => {
+    await withDebugKernel(async (kernel, projectDir) => {
+      const keys = join(userConfigDir(), "config.json");
+      await defineRoute(
+        kernel,
+        "probe",
+        `async function probe(c: any) {
+  let read = "allowed";
+  try { await Deno.readTextFile(${
+          JSON.stringify(keys)
+        }); } catch (e) { read = e.name; }
+  return c.json({ pid: Deno.pid, read });
+}`,
+      );
+      const appServer = createAppServer(kernel, APP_PORT_AUTO);
+      appServer.rebuild();
+      const dm = new DebugManager(kernel, appServer, projectDir);
+      try {
+        await dm.start();
+        const res = await fetch(`http://127.0.0.1:${appServer.port}/probe`);
+        assertEquals(res.status, 200);
+        const body = await res.json();
+        assert(body.pid !== Deno.pid, "the debuggee is its own process");
+        assertEquals(body.read, "NotCapable");
+      } finally {
+        await dm.stop().catch(() => {});
+        await appServer.shutdown();
+      }
+    }, { userCodeRunner: null });
+  },
+});
+
+Deno.test({
+  ...testOpts,
+  name: "Debug session: a runner that exits ends the session",
+  fn: async () => {
+    await withDebugKernel(async (kernel, projectDir) => {
+      await defineRoute(
+        kernel,
+        "bye",
+        `function bye(c: any) { Deno.exit(3); return c.text("unreachable"); }`,
+      );
+      const appServer = createAppServer(kernel, APP_PORT_AUTO);
+      appServer.rebuild();
+      const dm = new DebugManager(kernel, appServer, projectDir);
+      const errors: unknown[] = [];
+      const stopped = new Promise<void>((resolve) =>
+        dm.on("stopped", () => resolve())
+      );
+      dm.on("error", (data) => errors.push(data));
+      try {
+        await dm.start();
+        const res = await fetch(`http://127.0.0.1:${appServer.port}/bye`);
+        await res.body?.cancel();
+        await stopped;
+        assertEquals(dm.active, false);
+        assertStringIncludes(String(errors[0]), "exited unexpectedly");
       } finally {
         await dm.stop().catch(() => {});
         await appServer.shutdown();
