@@ -75,7 +75,8 @@ const init: InitData = JSON.parse(initResult.value);
 await initCompiler();
 
 const db = await Database.create(init.db);
-const kernel = new Kernel(db);
+// This process is the debuggee: its user code runs here, under the inspector.
+const kernel = new Kernel(db, { userCodeRunner: null });
 
 for (const c of init.configs) {
   kernel.configs.set(c.name, c.value, c.description, c.module);

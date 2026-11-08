@@ -10,11 +10,13 @@
 
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { RUNNER_BUNDLE_FILE } from "../config.ts";
+import { RUNNER_BUNDLE_FILE, userCodeRunnerEnabled } from "../config.ts";
 import {
   denoToolchainFailure,
   resolveDenoToolchain,
 } from "../deno-toolchain.ts";
+import { getProjectPaths } from "../project-manager.ts";
+import type { Kernel } from "../registries.ts";
 import type { Result } from "../types.ts";
 import { errorMessage } from "../util.ts";
 import type { RunnerStart } from "./runner-adapter.ts";
@@ -25,7 +27,11 @@ import {
   runnerPermissionFlags,
 } from "./permissions.ts";
 import { RUNNER_ERROR_CODES } from "./protocol.ts";
-import { RUNNER_FFI_WARNING, type RunnerSettings } from "./runner-settings.ts";
+import {
+  readRunnerSettings,
+  RUNNER_FFI_WARNING,
+  type RunnerSettings,
+} from "./runner-settings.ts";
 import {
   denoCacheDirs,
   openTideConfigPath,
@@ -71,6 +77,29 @@ export function runnerEntry(
       configFile: openTideConfigPath(),
       lockSeed: new URL("../../deno.lock", import.meta.url).pathname,
     };
+}
+
+// A project kernel's runner: a child of its own when `on` (the userCodeRunner
+// setting by default), else null, which keeps user code in the kernel's
+// process. The kernel is passed late: the runner is part of its construction.
+export function projectUserCodeRunner(
+  projectDir: string,
+  kernel: () => Kernel,
+  on: boolean = userCodeRunnerEnabled(),
+): RunnerStart | null {
+  if (!on) return null;
+  const paths = getProjectPaths(projectDir);
+  return projectRunnerStart(
+    {
+      scratchDir: paths.runnerScratchDir,
+      bundledScript: paths.runnerBundledScript,
+    },
+    {
+      env: () => kernel().envSnapshot(),
+      settings: () => readRunnerSettings(projectDir),
+      warn: (message) => kernel().log.log("warn", "system", message),
+    },
+  );
 }
 
 export function projectRunnerStart(

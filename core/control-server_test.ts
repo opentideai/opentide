@@ -38,6 +38,7 @@ import {
   DOCUMENT_UPLOAD_MAX_BYTES,
   DOCUMENT_WORKING_SET_MAX_TOKENS,
   setRecommendedModels,
+  userCodeRunnerEnabled,
 } from "./config.ts";
 import { setUtilityModelCallForTest } from "./utility-model.ts";
 import {
@@ -4372,7 +4373,10 @@ Deno.test({
       assertEquals(res.status, 200);
       assertEquals(body.runtime.id, "typescript");
       assertEquals(body.runtime.defaultLanguage, "typescript");
-      assertEquals(body.runtime.capabilities.executionMode, "in-process");
+      assertEquals(
+        body.runtime.capabilities.executionMode,
+        userCodeRunnerEnabled() ? "bridge" : "in-process",
+      );
       assertEquals(
         body.runtimeDependencies.map((dependency: { name: string }) =>
           dependency.name

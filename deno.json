@@ -7,6 +7,7 @@
     "opentide": "deno run --env --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys cli/cli.ts",
     "test": "deno test --allow-net --allow-read --allow-write --allow-env --allow-ffi --allow-run --allow-sys",
     "test:shard": "deno run --allow-read --allow-run scripts/test-shard.ts",
+    "bench:runner": "deno bench --allow-net --allow-read --allow-write --allow-env --allow-run --allow-sys core/runner/handler_bench.ts",
     "cache:report": "deno run --allow-read --allow-env --allow-sys scripts/cache-composition-report.ts",
     "lint": "deno lint",
     "smoke:install": "deno run --allow-net --allow-read --allow-write --allow-run --allow-env --allow-sys scripts/install-smoke.ts",

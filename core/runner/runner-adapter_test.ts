@@ -4,13 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAppServer } from "../app-server.ts";
 import { initCompiler, stopCompiler } from "../compiler.ts";
-import { APP_AUTH_GATE_CONFIG, APP_PORT_AUTO } from "../config.ts";
+import {
+  APP_AUTH_GATE_CONFIG,
+  APP_PORT_AUTO,
+  OPENTIDE_USER_CODE_RUNNER_ENV,
+} from "../config.ts";
 import { Database } from "../db.ts";
 import { loadKernelState, saveKernelState } from "../persistence.ts";
 import { Kernel } from "../registries.ts";
 import { dispatchTool } from "../tools/dispatch.ts";
 import type { TraceEvent } from "../trace-context.ts";
 import type { LogEntry } from "../types.ts";
+import { projectUserCodeRunner } from "./project-runner.ts";
 import { RUNNER_ERROR_CODES } from "./protocol.ts";
 import { isRunnerRuntimeAdapter } from "./runner-adapter.ts";
 import { RunnerHost } from "./runner-host.ts";
@@ -34,7 +39,7 @@ async function withApp<T>(mode: Mode, fn: (app: App) => Promise<T>) {
   const db = await Database.create({ driver: "pglite" });
   const kernel = new Kernel(
     db,
-    mode === "runner" ? { userCodeRunner: RunnerHost.inMemory } : {},
+    { userCodeRunner: mode === "runner" ? RunnerHost.inMemory : null },
   );
   const server = createAppServer(kernel, APP_PORT_AUTO);
   try {
@@ -550,4 +555,33 @@ Deno.test({
       stopCompiler();
     }
   },
+});
+
+Deno.test("a kernel left to the flag runs user code in a runner only when it's on", async () => {
+  const before = Deno.env.get(OPENTIDE_USER_CODE_RUNNER_ENV);
+  const db = await Database.create({ driver: "pglite" });
+  try {
+    Deno.env.set(OPENTIDE_USER_CODE_RUNNER_ENV, "1");
+    assert(isRunnerRuntimeAdapter(new Kernel(db).runtime));
+    assert(
+      !isRunnerRuntimeAdapter(new Kernel(db, { userCodeRunner: null }).runtime),
+    );
+    Deno.env.set(OPENTIDE_USER_CODE_RUNNER_ENV, "0");
+    assert(!isRunnerRuntimeAdapter(new Kernel(db).runtime));
+  } finally {
+    if (before === undefined) Deno.env.delete(OPENTIDE_USER_CODE_RUNNER_ENV);
+    else Deno.env.set(OPENTIDE_USER_CODE_RUNNER_ENV, before);
+    await db.close();
+  }
+});
+
+Deno.test("a project gets no runner when it's off", () => {
+  const kernel = () => {
+    throw new Error("not read when off");
+  };
+  assertEquals(projectUserCodeRunner("/nowhere", kernel, false), null);
+  assertEquals(
+    typeof projectUserCodeRunner("/nowhere", kernel, true),
+    "function",
+  );
 });

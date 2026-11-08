@@ -1493,3 +1493,30 @@ Deno.test("models.dev OpenAI-compatible provider descriptors survive stale catal
     else Deno.env.set("ZHIPU_API_KEY", prev);
   }
 });
+
+Deno.test("kernel settings: userCodeRunner is off by default, the file turns it on, the env wins", async () => {
+  const home = await Deno.makeTempDir({ prefix: "opentide-config-runner-" });
+  const oldHome = Deno.env.get("HOME");
+  const oldEnv = Deno.env.get("OPENTIDE_USER_CODE_RUNNER");
+  try {
+    Deno.env.set("HOME", home);
+    Deno.env.delete("OPENTIDE_USER_CODE_RUNNER");
+    const config = await import(`./config.ts?test=${crypto.randomUUID()}`);
+    assertEquals(config.userCodeRunnerEnabled(), false);
+    config.setKernelSettings({ userCodeRunner: true });
+    assertEquals(config.userCodeRunnerEnabled(), true);
+    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "0");
+    assertEquals(config.userCodeRunnerEnabled(), false);
+    config.setKernelSettings({ userCodeRunner: false });
+    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "1");
+    assertEquals(config.userCodeRunnerEnabled(), true);
+    Deno.env.set("OPENTIDE_USER_CODE_RUNNER", "yes");
+    assertEquals(config.userCodeRunnerEnabled(), false);
+  } finally {
+    if (oldEnv === undefined) Deno.env.delete("OPENTIDE_USER_CODE_RUNNER");
+    else Deno.env.set("OPENTIDE_USER_CODE_RUNNER", oldEnv);
+    if (oldHome === undefined) Deno.env.delete("HOME");
+    else Deno.env.set("HOME", oldHome);
+    await Deno.remove(home, { recursive: true });
+  }
+});

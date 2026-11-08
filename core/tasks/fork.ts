@@ -31,6 +31,7 @@ import {
 import { Database } from "../db.ts";
 import { loadKernelState } from "../persistence.ts";
 import { Kernel } from "../registries.ts";
+import { projectUserCodeRunner } from "../runner/project-runner.ts";
 import { SecretsStore } from "../secrets.ts";
 import { type LocateOptions, locateServe } from "../serve-process.ts";
 import { SERVER_TOKEN_FILE } from "../server-token.ts";
@@ -214,11 +215,14 @@ async function rewindFork(
     dataDir: paths.dataDir,
     schemaDir: paths.schemaDir,
   });
+  // Restoring the fork's state defines its user code, so it starts the fork's
+  // own runner when the project would get one.
+  const fork: Kernel = new Kernel(db, {
+    historyDir: paths.historyDir,
+    composition: main.composition,
+    userCodeRunner: projectUserCodeRunner(forkDir, () => fork),
+  });
   try {
-    const fork = new Kernel(db, {
-      historyDir: paths.historyDir,
-      composition: main.composition,
-    });
     fork.projectDir = forkDir;
     fork.env.load(forkDir);
     const noRebuild = () => {};
@@ -233,6 +237,7 @@ async function rewindFork(
     }
     await db.checkpoint();
   } finally {
+    await fork.runtime.dispose?.();
     await db.close();
     rmSync(snapshotFile, { force: true });
   }

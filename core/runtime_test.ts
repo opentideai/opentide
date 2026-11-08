@@ -73,7 +73,9 @@ Deno.test("runScript reports TIMEOUT and a late script rejection is not unhandle
 Deno.test("TypeScript runtime delegates compiler operations", async () => {
   const db = await Database.create({ driver: "pglite" });
   try {
-    const kernel = new Kernel(db);
+    // The runtime itself: in a runner, a function compiled but never
+    // registered isn't there to call.
+    const kernel = new Kernel(db, { userCodeRunner: null });
     const deps = await kernel.compileDeps();
     const runtime = kernel.runtime;
 

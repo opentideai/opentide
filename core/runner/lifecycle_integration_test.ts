@@ -309,12 +309,12 @@ Deno.test({
           TIMEOUT_MS * 2,
         );
         assert(wedge.ok, JSON.stringify(wedge));
-        await until(() => bridge.host === null);
-        assertStringIncludes(
+        // The drop clears the host before the kill, and logs after it.
+        await until(() =>
           kernel.log.query({ source: "system", level: "warn" })
-            .map((e) => e.message).join("\n"),
-          "stopped answering",
+            .some((e) => e.message.includes("stopped answering"))
         );
+        assertEquals(bridge.host, null);
         const after = await bridge.invoke(
           RUNNER_METHODS.invokeScript,
           await script(`return 2;`),

@@ -128,7 +128,7 @@ Deno.test({
         const data3 = await res3.json();
         assertEquals(data3.items.length, 2);
 
-        assertEquals(kernel.functions.call("double", 5), 10);
+        assertEquals(await kernel.functions.call("double", 5), 10);
       } finally {
         await appServer.shutdown();
       }
@@ -186,7 +186,7 @@ Deno.test({
       const entry = kernel.functions.getEntry("answer");
       assertEquals(entry?.runtimeId, "typescript");
       assertEquals(entry?.language, "typescript");
-      assertEquals(kernel.functions.call("answer"), 42);
+      assertEquals(await kernel.functions.call("answer"), 42);
     });
   },
 });

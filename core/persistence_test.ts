@@ -97,7 +97,7 @@ Deno.test({
           entry?.purpose,
           "Return the answer to life, the universe, and everything.",
         );
-        assertEquals(restored.functions.call("answer"), 42);
+        assertEquals(await restored.functions.call("answer"), 42);
       } finally {
         await restoredDb.close();
       }

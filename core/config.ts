@@ -1258,6 +1258,11 @@ export const DB_CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 // --- User-code runner (one child Deno per project, narrow permissions) ---
 
+// Env override for the userCodeRunner kernel setting: "1" on, "0" off, anything
+// else falls through to the file value. Default off until the flag-on lane holds.
+export const OPENTIDE_USER_CODE_RUNNER_ENV = "OPENTIDE_USER_CODE_RUNNER";
+export const USER_CODE_RUNNER_DEFAULT = false;
+
 // How long a new runner has to say it is ready before the kernel gives up.
 export const RUNNER_READY_TIMEOUT_MS = 15_000;
 // Default wait for one request to the runner.
@@ -1322,6 +1327,7 @@ const KERNEL_DEFAULTS: Required<KernelSettings> = {
   perStepExecution: true,
   autoCompactEnabled: AUTOCOMPACT_ENABLED_DEFAULT,
   cacheCompositionTrace: false,
+  userCodeRunner: USER_CODE_RUNNER_DEFAULT,
   contextNudgeRatio: CONTEXT_NUDGE_RATIO,
   contextAutoCompactRatio: CONTEXT_AUTOCOMPACT_RATIO,
   contextPruneRatio: CONTEXT_PRUNE_RATIO,
@@ -1393,9 +1399,17 @@ export function getKernelSettings(): Required<KernelSettings> {
     contextWorkingBudgetTokens: normalizeWorkingBudgetTokens(
       merged.contextWorkingBudgetTokens,
     ),
-    autoCompactEnabled: normalizeAutoCompactEnabled(merged.autoCompactEnabled),
-    cacheCompositionTrace: normalizeCacheCompositionTrace(
+    autoCompactEnabled: envSwitch(
+      OPENTIDE_AUTO_COMPACT_ENABLED_ENV,
+      merged.autoCompactEnabled,
+    ),
+    cacheCompositionTrace: envSwitch(
+      OPENTIDE_CACHE_TRACE_ENABLED_ENV,
       merged.cacheCompositionTrace,
+    ),
+    userCodeRunner: envSwitch(
+      OPENTIDE_USER_CODE_RUNNER_ENV,
+      merged.userCodeRunner,
     ),
     testTimeoutMs: normalizeKernelTimeoutMs(
       merged.testTimeoutMs,
@@ -1502,24 +1516,17 @@ export function resolvedWorkingBudget(): number {
   return getKernelSettings().contextWorkingBudgetTokens;
 }
 
-// autoCompactEnabled shares the file → env → constant cascade (Slice 6). The
-// OPENTIDE_AUTO_COMPACT_ENABLED env override takes "1" (on) / "0" (off); any other value
-// (or unset) falls through to the merged file/constant boolean.
-function normalizeAutoCompactEnabled(fileValue: boolean): boolean {
-  const envRaw = readEnv(OPENTIDE_AUTO_COMPACT_ENABLED_ENV);
+// A boolean kernel setting's env override: "1" on, "0" off. Any other value,
+// or none, falls through to the merged file/constant value.
+function envSwitch(envVar: string, fileValue: boolean): boolean {
+  const envRaw = readEnv(envVar);
   if (envRaw === "1") return true;
   if (envRaw === "0") return false;
   return fileValue;
 }
 
-// cacheCompositionTrace shares the file → env → constant cascade, in the same
-// shape as normalizeAutoCompactEnabled. Default FALSE: this is an instrument, not
-// a feature, and it writes a line per provider request when on.
-function normalizeCacheCompositionTrace(fileValue: boolean): boolean {
-  const envRaw = readEnv(OPENTIDE_CACHE_TRACE_ENABLED_ENV);
-  if (envRaw === "1") return true;
-  if (envRaw === "0") return false;
-  return fileValue;
+export function userCodeRunnerEnabled(): boolean {
+  return getKernelSettings().userCodeRunner;
 }
 
 function normalizeKernelTimeoutMs(value: number, fallback: number): number {
@@ -1708,6 +1715,10 @@ interface KernelSettings {
   // and that request's reported usage. Changes no loop behaviour. File → env
   // cascade (OPENTIDE_CACHE_TRACE=1/0).
   cacheCompositionTrace?: boolean;
+  // Run each project's user code in its own runner process (core/runner/) instead
+  // of the kernel's. Read when a project loads. Default USER_CODE_RUNNER_DEFAULT;
+  // OPENTIDE_USER_CODE_RUNNER=1/0 overrides the file.
+  userCodeRunner?: boolean;
   // Occupancy ratio (0, 1] at which the pre-turn reactive guard auto-compacts before
   // the next turn (context-hardening plan, Slice 6). Same file → env → constant
   // cascade as contextNudgeRatio: this file value, overridden by the

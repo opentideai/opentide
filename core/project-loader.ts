@@ -31,8 +31,7 @@ import {
 import { setUnpricedModelWarnHandler } from "./usage.ts";
 import { type DoctorIssue, doctorProject } from "./project-doctor.ts";
 import { runProjectInitHooks } from "./project-hooks.ts";
-import { projectRunnerStart } from "./runner/project-runner.ts";
-import { readRunnerSettings } from "./runner/runner-settings.ts";
+import { projectUserCodeRunner } from "./runner/project-runner.ts";
 import type { CompositionContext } from "./composition.ts";
 
 // Thrown when another process already has the project open. Carries the Result
@@ -90,7 +89,8 @@ export interface LoadProjectOptions {
   // Kernel gets coreOnlyComposition() (no verification/agent).
   composition?: CompositionContext;
   // Run the project's user code in its own runner process
-  // (core/runner/project-runner.ts) instead of the kernel's. Off by default.
+  // (core/runner/project-runner.ts) instead of the kernel's. Left out, the
+  // userCodeRunner kernel setting decides.
   userCodeRunner?: boolean;
 }
 
@@ -150,19 +150,11 @@ async function loadProjectLocked(
   const kernel: Kernel = new Kernel(db, {
     historyDir: paths.historyDir,
     composition: opts.composition,
-    userCodeRunner: opts.userCodeRunner
-      ? projectRunnerStart(
-        {
-          scratchDir: paths.runnerScratchDir,
-          bundledScript: paths.runnerBundledScript,
-        },
-        {
-          env: () => kernel.envSnapshot(),
-          settings: () => readRunnerSettings(entry.path),
-          warn: (message) => kernel.log.log("warn", "system", message),
-        },
-      )
-      : undefined,
+    userCodeRunner: projectUserCodeRunner(
+      entry.path,
+      () => kernel,
+      opts.userCodeRunner,
+    ),
   });
   kernel.projectDir = entry.path;
   // Private sessions written before they had their own directory move there

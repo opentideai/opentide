@@ -11,6 +11,7 @@ import {
   appPreviewUrl,
   getKernelSettings,
   LOG_PERSIST_DEBOUNCE_MS,
+  userCodeRunnerEnabled,
 } from "./config.ts";
 import { encodeBase64 } from "./util.ts";
 import type { CodebaseGraph } from "./codebase/types.ts";
@@ -79,6 +80,7 @@ import {
   createRunnerRuntimeAdapter,
   type RunnerStart,
 } from "./runner/runner-adapter.ts";
+import { RunnerHost } from "./runner/runner-host.ts";
 import { tracedDb, tracedFunctions, tracedTemplates } from "./trace-context.ts";
 import { assetVersionOf } from "./asset-urls.ts";
 import { CustomAuditMap } from "./custom-audits.ts";
@@ -1243,16 +1245,23 @@ export class Kernel {
       runtimeId?: string;
       composition?: CompositionContext;
       // Run user code in this runner instead of the kernel's own process
-      // (core/runner/runner-adapter.ts). TypeScript only.
-      userCodeRunner?: RunnerStart;
+      // (core/runner/runner-adapter.ts). TypeScript only. null keeps it in the
+      // kernel's process. Left out, the userCodeRunner setting decides, and the
+      // runner is served in this process (RunnerHost.inMemory): every production
+      // kernel passes a runner or null, so that's for tests, and it's how the
+      // flag-on lane runs them through the runner.
+      userCodeRunner?: RunnerStart | null;
     },
   ) {
     this.db = db;
     const runtime = getDefaultRuntimeRegistry().resolve(
       opts?.runtimeId ?? DEFAULT_RUNTIME_ID,
     );
-    this.runtime = opts?.userCodeRunner && runtime.id === DEFAULT_RUNTIME_ID
-      ? createRunnerRuntimeAdapter(this, runtime, opts.userCodeRunner)
+    const runner = opts?.userCodeRunner === undefined
+      ? (userCodeRunnerEnabled() ? RunnerHost.inMemory : null)
+      : opts.userCodeRunner;
+    this.runtime = runner && runtime.id === DEFAULT_RUNTIME_ID
+      ? createRunnerRuntimeAdapter(this, runtime, runner)
       : runtime;
     this.runtimeId = this.runtime.id;
     this.composition = opts?.composition ?? coreOnlyComposition();

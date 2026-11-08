@@ -31,15 +31,19 @@ jobs:
   # Five parallel jobs, split by recorded time (scripts/test-shard.ts): about
   # 6 minutes each instead of 30 in one. Ubuntu only on push: development
   # happens on macOS, so its suite runs there locally; CI's macOS run is
-  # workflow_dispatch.
+  # workflow_dispatch. Each shard runs twice, with user code in the kernel and
+  # in the runner (OPENTIDE_USER_CODE_RUNNER), until the runner is the default.
   test:
-    name: Tests (shard ${{ matrix.shard }}/5)
+    name: Tests (shard ${{ matrix.shard }}/5, runner ${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5]
+        runner: ["off", "on"]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      OPENTIDE_USER_CODE_RUNNER: ${{ matrix.runner == 'on' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
