@@ -126,15 +126,16 @@ export const LAYER_ROOTS: readonly string[] = Object.keys(FOLDER_LAYERS)
 export const MODULE_LAYERS: Record<string, Layer> = {
   // COMPOSITION — apex entry points that assemble the layers below (core +
   // agent + verification). They alone import upward. cli.ts is the `opentide`
-  // dispatcher; main.ts/mcp-main.ts are the headless serve/mcp entries; both
-  // live in cli/ alongside the cli L2 module (cli-commands.ts, which is a plain
-  // cli-layer default). assembly.ts is the shared composition helper; and
+  // entry and cli-run.ts the dispatcher behind it; main.ts/mcp-main.ts are the
+  // headless serve/mcp entries; all live in cli/ alongside the cli L2 modules
+  // (cli-commands.ts and cli-args.ts, plain cli-layer defaults). assembly.ts is the shared composition helper; and
   // test-composition.ts registers the full layer set (stores + verification/
   // agent tool handlers) for tests that dispatch tools crossing those layers.
   "cli/main.ts": "composition",
   "cli/mcp-main.ts": "composition",
   "cli/lsp-main.ts": "composition",
   "cli/cli.ts": "composition",
+  "cli/cli-run.ts": "composition",
   "cli/assembly.ts": "composition",
   "cli/test-composition.ts": "composition",
   // The closed Tide composition: tide/assembly.ts layers the agent seams onto

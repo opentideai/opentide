@@ -38,7 +38,6 @@ import {
   MCP_WORKSPACES_FILE,
 } from "../core/config.ts";
 import type { CompositionContext } from "../core/composition.ts";
-import { generalGuide } from "../core/agent-guide.ts";
 import { hasProjectManifest } from "../core/project-layout.ts";
 import { createProject } from "../core/project-manager.ts";
 import type { Result } from "../core/types.ts";
@@ -52,17 +51,13 @@ import {
   withToolsets,
 } from "./mcp-bridge.ts";
 import { parseToolsetList } from "../core/tools/toolsets.ts";
+import { importLater } from "../core/import-later.ts";
 import {
   appPreviewResourceContents,
   appPreviewResourceListing,
   isAppPreviewUri,
 } from "./mcp-app-preview.ts";
-import {
-  MCP_SURFACE_META_KEY,
-  mcpSurfaceMeta,
-  type McpToolListing,
-  projectedMcpTools,
-} from "./mcp-projection.ts";
+import type { McpToolListing } from "./mcp-projection.ts";
 
 type RequestId = string | number;
 type Params = Record<string, unknown>;
@@ -153,14 +148,49 @@ export interface WorkspaceMemory {
   write(folder: string, app: string): void;
 }
 
+export interface ToolSurface {
+  tools: McpToolListing[];
+  meta: Record<string, unknown>;
+  guide: string;
+}
+
+// The full surface before an app is open. The projection comes in with
+// importLater because it reaches the database, the compiler and the type
+// checker; see cli/startup-weight_test.ts.
+export async function loadToolSurface(
+  composition: CompositionContext,
+  toolsets: string | null = null,
+): Promise<ToolSurface> {
+  const [projection, { generalGuide }] = await Promise.all([
+    importLater<typeof import("./mcp-projection.ts")>(
+      "./mcp-projection.ts",
+      import.meta.url,
+    ),
+    importLater<typeof import("../core/agent-guide.ts")>(
+      "../core/agent-guide.ts",
+      import.meta.url,
+    ),
+  ]);
+  const selection = parseToolsetList(toolsets ?? "").selection;
+  const tools = projection.projectedMcpTools(composition, selection);
+  return {
+    tools,
+    meta: {
+      [projection.MCP_SURFACE_META_KEY]: projection.mcpSurfaceMeta(tools),
+    },
+    guide: generalGuide(selection),
+  };
+}
+
 export interface WorkspaceOptions {
   folder: string;
   // List the whole surface before an app is open (the folder was named), or
   // only the three workspace tools (it's just where the client started).
   eager: boolean;
-  // The tool surface and general guide, as serve would give them.
-  surface: McpToolListing[];
-  guide: string;
+  // The tool surface and general guide, as serve would give them. Called only
+  // when eager: building it loads the whole tool registry, which a relay that
+  // lists three tools has no use for.
+  surface: () => Promise<ToolSurface>;
   locate: (projectDir: string) => Promise<Result<UpstreamTarget>>;
   // Create an app in the folder; returns its directory.
   create: (folder: string, name: string) => Result<string>;
@@ -253,11 +283,14 @@ function workspaceNote(folder: string, app: string): string {
     "switch between them; every other OpenTide tool acts on the open app.";
 }
 
-function noAppInstructions(opts: WorkspaceOptions): string {
+function noAppInstructions(
+  opts: WorkspaceOptions,
+  surface: ToolSurface | null,
+): string {
   const how = `Call ${OPEN_PROJECT} to work on one, or ${NEW_PROJECT} to ` +
     "create one, before any other OpenTide tool.";
-  if (opts.eager) {
-    return `${opts.guide}\n\nNo app is open yet. ${
+  if (surface) {
+    return `${surface.guide}\n\nNo app is open yet. ${
       appsLine(opts.folder)
     } ${how}`;
   }
@@ -394,6 +427,14 @@ export function runWorkspace(
   // list changed.
   let listedNames: string | null = null;
   let finished = false;
+  // The eager surface, built on first need and kept.
+  let surfaceLoad: Promise<ToolSurface> | null = null;
+  let surface: ToolSurface | null = null;
+  async function eagerSurface(): Promise<ToolSurface | null> {
+    if (!opts.eager) return null;
+    surfaceLoad ??= opts.surface();
+    return surface = await surfaceLoad;
+  }
 
   const send = (msg: JSONRPCMessage) =>
     downstream.send(msg).catch(() => void finish());
@@ -409,10 +450,10 @@ export function runWorkspace(
         meta: opened.meta,
       };
     }
-    if (!opts.eager) return { tools: WORKSPACE_TOOLS, meta: undefined };
+    if (!surface) return { tools: WORKSPACE_TOOLS, meta: undefined };
     return {
-      tools: [...WORKSPACE_TOOLS, ...opts.surface],
-      meta: { [MCP_SURFACE_META_KEY]: mcpSurfaceMeta(opts.surface) },
+      tools: [...WORKSPACE_TOOLS, ...surface.tools],
+      meta: surface.meta,
     };
   }
 
@@ -575,7 +616,7 @@ export function runWorkspace(
   async function initialize(params: Params) {
     initParams = params;
     const remembered = opts.memory.read(opts.folder);
-    let instructions = noAppInstructions(opts);
+    let instructions = noAppInstructions(opts, await eagerSurface());
     if (remembered && listApps(opts.folder).includes(remembered)) {
       const result = await openApp(remembered);
       if (result.ok) {
@@ -647,6 +688,7 @@ export function runWorkspace(
         : replyError(msg.id, INVALID_PARAMS, `Unknown resource: ${uri}`);
     }
     if (msg.method === "tools/list") {
+      await eagerSurface();
       const { tools, meta } = advertised();
       listedNames = names();
       return reply(
@@ -706,7 +748,7 @@ export function runWorkspace(
 export async function runWorkspaceBridge(
   folder: string,
   eager: boolean,
-  composition: CompositionContext,
+  composition: () => Promise<CompositionContext>,
   toolsets: string | null = null,
 ): Promise<number> {
   const dir = resolve(folder);
@@ -717,11 +759,7 @@ export async function runWorkspaceBridge(
   return await runWorkspace(stdioTransport(), {
     folder: dir,
     eager,
-    surface: projectedMcpTools(
-      composition,
-      parseToolsetList(toolsets ?? "").selection,
-    ),
-    guide: generalGuide(parseToolsetList(toolsets ?? "").selection),
+    surface: async () => loadToolSurface(await composition(), toolsets),
     locate: async (dir) => withToolsets(await locateAndReport(dir), toolsets),
     create: createApp,
     memory: fileWorkspaceMemory(),

@@ -11,11 +11,10 @@ import { createProject } from "../core/project-manager.ts";
 import { unloadProject } from "../core/project-loader.ts";
 import { readServerToken } from "../core/server-token.ts";
 import { testComposition } from "../cli/test-composition.ts";
-import { generalGuide } from "../core/agent-guide.ts";
 import { mountMcpRoutes } from "./mcp-mount.ts";
-import { projectedMcpTools } from "./mcp-projection.ts";
 import {
   listApps,
+  loadToolSurface,
   runWorkspace,
   WORKSPACE_TOOLS,
   type WorkspaceMemory,
@@ -81,8 +80,11 @@ Deno.test(
     ): WorkspaceOptions => ({
       folder,
       eager,
-      surface: projectedMcpTools(composition),
-      guide: generalGuide(),
+      // Listing only the three tools must not build the full surface: that is
+      // what keeps the plugin's relay light outside a project.
+      surface: eager
+        ? () => loadToolSurface(composition)
+        : () => Promise.reject(new Error("built the surface when not eager")),
       // One serve stands in for every app's: opening an app loads it there.
       locate: async (dir) => {
         located.push(dir);
@@ -117,7 +119,8 @@ Deno.test(
       ) => t.name);
       assertEquals(
         listed.length,
-        WORKSPACE_TOOLS.length + projectedMcpTools(composition).length,
+        WORKSPACE_TOOLS.length +
+          (await loadToolSurface(composition)).tools.length,
       );
       assert(listed.includes("project_status"));
       assertStringIncludes(
@@ -244,8 +247,7 @@ Deno.test("open_project reports why an app's server couldn't start", async () =>
     const exit = runWorkspace(bridgeSide, {
       folder,
       eager: true,
-      surface: [],
-      guide: "",
+      surface: () => Promise.resolve({ tools: [], meta: {}, guide: "" }),
       locate: () =>
         Promise.resolve({
           ok: false,

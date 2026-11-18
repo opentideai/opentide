@@ -4,21 +4,23 @@
 // REST control server. This is the "external agents drive the core" face
 // (OpenTide §4, Phase 3): no IDE, no integrated agent loop — just the tools.
 //
+// Only the light modules are imported statically. Run from a client, this
+// process is a relay: mcp-bridge.ts to the project's serve, mcp-workspace.ts for
+// a folder of apps. Neither needs the database, the compiler or the model SDKs,
+// so they load through importLater (core/import-later.ts) on the
+// --standalone/--http path that runs a project in this process.
+// cli/startup-weight_test.ts holds that line.
 import { resolve } from "node:path";
-import { initCompiler, stopCompiler } from "../core/compiler.ts";
 import {
   getMcpTransportArgs,
   invocationCwd,
   type McpTransportArgs,
-  openAssembly,
   resolveProjectPath,
-  type StackAssembly,
-} from "./assembly.ts";
-import { loadProject, unloadProject } from "../core/project-loader.ts";
-import { serveMcpStdio } from "../mcp/mcp-server.ts";
-import { serveMcpHttp } from "../mcp/mcp-http.ts";
+} from "./cli-args.ts";
+import type { StackAssembly } from "./assembly.ts";
 import { runMcpBridge } from "../mcp/mcp-bridge.ts";
 import { serveNoProjectStdio } from "../mcp/mcp-no-project.ts";
+import { importLater } from "../core/import-later.ts";
 import { runWorkspaceBridge } from "../mcp/mcp-workspace.ts";
 import { parseToolsetList, TOOLSET_NAMES } from "../core/tools/toolsets.ts";
 import {
@@ -131,12 +133,25 @@ function printConfigAndExit(args: McpTransportArgs): never {
   Deno.exit(0);
 }
 
+// The stack to compose, loaded only when something needs it: a caller that
+// passes its own (Tide) wins, else the open assembly.
+async function stackAssembly(
+  given: StackAssembly | undefined,
+): Promise<StackAssembly> {
+  if (given) return given;
+  const assembly = await importLater<typeof import("./assembly.ts")>(
+    "./assembly.ts",
+    import.meta.url,
+  );
+  return assembly.openAssembly;
+}
+
 // Serve the outbound MCP server. Reused verbatim by the `deno task mcp` direct
 // entry (below) and the `opentide mcp` subcommand (cli.ts), which passes the
 // args after the subcommand. `argv` defaults to Deno.args for the direct entry.
 export async function serveMcp(
   argv: string[] = Deno.args,
-  assembly: StackAssembly = openAssembly,
+  assembly?: StackAssembly,
 ): Promise<void> {
   redirectStdoutToStderr();
   const args = getMcpTransportArgs(MCP_HTTP_PORT, argv);
@@ -178,7 +193,7 @@ export async function serveMcp(
       await runWorkspaceBridge(
         folder,
         args.projectPath !== null,
-        assembly.composition(),
+        async () => (await stackAssembly(assembly)).composition(),
         args.tools,
       ),
     );
@@ -189,6 +204,29 @@ export async function serveMcp(
     Deno.exit(await runMcpBridge(projectPath, args.tools));
   }
 
+  const [
+    { initCompiler, stopCompiler },
+    { loadProject, unloadProject },
+    { serveMcpStdio },
+    { serveMcpHttp },
+  ] = await Promise.all([
+    importLater<typeof import("../core/compiler.ts")>(
+      "../core/compiler.ts",
+      import.meta.url,
+    ),
+    importLater<typeof import("../core/project-loader.ts")>(
+      "../core/project-loader.ts",
+      import.meta.url,
+    ),
+    importLater<typeof import("../mcp/mcp-server.ts")>(
+      "../mcp/mcp-server.ts",
+      import.meta.url,
+    ),
+    importLater<typeof import("../mcp/mcp-http.ts")>(
+      "../mcp/mcp-http.ts",
+      import.meta.url,
+    ),
+  ]);
   await initCompiler();
   console.error("  Compiler ready (esbuild)");
 
@@ -196,7 +234,7 @@ export async function serveMcp(
   // capability it lacks are hidden from the projection; model-backed verbs it
   // carries degrade gracefully (not-configured) rather than throw.
   const projectCtx = await loadProject(projectPath, {
-    composition: assembly.composition(),
+    composition: (await stackAssembly(assembly)).composition(),
   });
   // loadProject already logs `Project "<name>" loaded` (redirected to stderr
   // here), so we don't repeat it (F-05).
