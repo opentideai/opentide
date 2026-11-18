@@ -24,11 +24,15 @@ interface SecretsFile {
   secrets: SecretEntry[];
 }
 
-const SECRETS_DIR = join(getTideDir(), "secrets");
+// Resolved on each use, not at import: a test that swaps HOME after importing
+// this module must not write into the real ~/.config/opentide/secrets.
+function secretsDir(): string {
+  return join(getTideDir(), "secrets");
+}
 
 function ensureDir(): void {
-  if (!existsSync(SECRETS_DIR)) {
-    mkdirSync(SECRETS_DIR, { recursive: true });
+  if (!existsSync(secretsDir())) {
+    mkdirSync(secretsDir(), { recursive: true });
   }
 }
 
@@ -42,7 +46,7 @@ export class SecretsStore {
 
   load(projectPath: string): void {
     ensureDir();
-    this.filePath = join(SECRETS_DIR, `${projectId(projectPath)}.json`);
+    this.filePath = join(secretsDir(), `${projectId(projectPath)}.json`);
     if (!existsSync(this.filePath)) return;
     try {
       const data = JSON.parse(
@@ -137,7 +141,7 @@ export class SecretsStore {
   }
 
   static deleteProjectSecrets(projectPath: string): boolean {
-    const filePath = join(SECRETS_DIR, `${projectId(projectPath)}.json`);
+    const filePath = join(secretsDir(), `${projectId(projectPath)}.json`);
     if (existsSync(filePath)) {
       unlinkSync(filePath);
       return true;
@@ -146,7 +150,7 @@ export class SecretsStore {
   }
 
   static hasProjectSecrets(projectPath: string): boolean {
-    const filePath = join(SECRETS_DIR, `${projectId(projectPath)}.json`);
+    const filePath = join(secretsDir(), `${projectId(projectPath)}.json`);
     return existsSync(filePath);
   }
 
@@ -157,10 +161,10 @@ export class SecretsStore {
   ): boolean {
     ensureDir();
     const fromFilePath = join(
-      SECRETS_DIR,
+      secretsDir(),
       `${projectId(fromProjectPath)}.json`,
     );
-    const toFilePath = join(SECRETS_DIR, `${projectId(toProjectPath)}.json`);
+    const toFilePath = join(secretsDir(), `${projectId(toProjectPath)}.json`);
     if (fromFilePath === toFilePath || !existsSync(fromFilePath)) return false;
     copyFileSync(fromFilePath, toFilePath);
     return true;
@@ -171,8 +175,8 @@ export class SecretsStore {
     newProjectPath: string,
   ): boolean {
     ensureDir();
-    const oldFilePath = join(SECRETS_DIR, `${projectId(oldProjectPath)}.json`);
-    const newFilePath = join(SECRETS_DIR, `${projectId(newProjectPath)}.json`);
+    const oldFilePath = join(secretsDir(), `${projectId(oldProjectPath)}.json`);
+    const newFilePath = join(secretsDir(), `${projectId(newProjectPath)}.json`);
     if (oldFilePath === newFilePath || !existsSync(oldFilePath)) return false;
     if (existsSync(newFilePath)) {
       throw new Error(

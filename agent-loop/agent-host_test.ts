@@ -107,6 +107,7 @@ async function fakeServe(): Promise<FakeServe> {
       await mcp.closeAll();
       await server.shutdown();
       await db.close();
+      await Deno.remove(parent, { recursive: true });
     },
   };
 }

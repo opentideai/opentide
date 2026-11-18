@@ -2,6 +2,7 @@
 // under its own HOME, and a way to work in a fork.
 import { rmSync } from "node:fs";
 import { testComposition } from "../../cli/test-composition.ts";
+import { swapHome } from "../test-home_test.ts";
 import { compileHandler, initCompiler, stopCompiler } from "../compiler.ts";
 import { createProject, getProjectPaths } from "../project-manager.ts";
 import {
@@ -20,12 +21,11 @@ export const testOpts = { sanitizeResources: false, sanitizeOps: false };
 export async function withMainProject(
   fn: (main: ProjectContext) => Promise<void>,
 ): Promise<void> {
-  const prevHome = Deno.env.get("HOME");
   const home = await Deno.makeTempDir({ prefix: "genie-task-home-" });
   const baseDir = await Deno.makeTempDir({ prefix: "genie-task-project-" });
   let main: ProjectContext | null = null;
+  const restoreHome = await swapHome(home);
   try {
-    Deno.env.set("HOME", home);
     await initCompiler();
     const entry = createProject(baseDir, "Fork Main");
     main = await loadProject(entry.path, {
@@ -54,8 +54,7 @@ export async function withMainProject(
     stopCompiler();
     rmSync(baseDir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
-    if (prevHome === undefined) Deno.env.delete("HOME");
-    else Deno.env.set("HOME", prevHome);
+    restoreHome();
   }
 }
 

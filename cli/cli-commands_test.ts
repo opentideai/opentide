@@ -6,6 +6,10 @@ import {
 } from "@std/assert";
 import { cliUsage, parseCliCommand, scaffoldCommand } from "./cli-commands.ts";
 import { isProject, removeProject } from "../core/project-manager.ts";
+import { isolateHome } from "../core/test-home_test.ts";
+
+// scaffold registers the project, so the registry here must be a throwaway.
+isolateHome();
 
 Deno.test("parseCliCommand: first token is the command, rest is forwarded verbatim", () => {
   const parsed = parseCliCommand(["serve", "--project", "/x", "--http"]);
@@ -66,8 +70,6 @@ Deno.test("scaffoldCommand: extra positional beyond <dir> <name> is a usage erro
 });
 
 Deno.test("scaffoldCommand: creates a valid, loadable project under <dir>", async () => {
-  // Follows the cli_test.ts precedent: createProject writes the global registry,
-  // so scaffold into a temp parent and removeProject-clean up after.
   const parent = await Deno.makeTempDir({ prefix: "opentide-scaffold-" });
   const result = scaffoldCommand([parent, "Todo App"]);
   try {

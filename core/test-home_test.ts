@@ -21,23 +21,12 @@ export const TEST_TMP_DIR = Deno.build.os === "darwin"
 // with a provider key configured passes a dummy one here instead of relying on
 // the developer's real key.
 export function isolateHome(config?: Record<string, unknown>): void {
-  const pinned = ["HOME", "DENO_DIR", "PLAYWRIGHT_BROWSERS_PATH"] as const;
-  const saved = new Map<string, string | undefined>();
   let tempHome: string | null = null;
+  let restore: (() => void) | null = null;
 
   Deno.test.beforeAll(async () => {
-    for (const name of [...pinned, "GIT_CONFIG_GLOBAL"]) {
-      saved.set(name, Deno.env.get(name));
-    }
-    const realHome = Deno.env.get("HOME");
-    Deno.env.set("DENO_DIR", Deno.env.get("DENO_DIR") ?? await denoDir());
-    if (realHome) pinPlaywright(realHome);
-    if (realHome && !Deno.env.get("GIT_CONFIG_GLOBAL")) {
-      const gitconfig = join(realHome, ".gitconfig");
-      if (existsSync(gitconfig)) Deno.env.set("GIT_CONFIG_GLOBAL", gitconfig);
-    }
     tempHome = await Deno.makeTempDir({ prefix: "opentide-test-home-" });
-    Deno.env.set("HOME", tempHome);
+    restore = await swapHome(tempHome);
     if (config) {
       const dir = join(tempHome, ".config", "opentide");
       mkdirSync(dir, { recursive: true });
@@ -46,12 +35,42 @@ export function isolateHome(config?: Record<string, unknown>): void {
   });
 
   Deno.test.afterAll(async () => {
+    restore?.();
+    if (tempHome) await Deno.remove(tempHome, { recursive: true });
+  });
+}
+
+// Points HOME at `home` with the caches and git identity pinned where they
+// were (see isolateHome), and returns a function that puts all of it back.
+// For a fixture that needs its own HOME per test rather than per file. Without
+// the pins, a child `deno` the test starts compiles everything into a fresh
+// cache under `home`, hundreds of MB each time.
+export async function swapHome(home: string): Promise<() => void> {
+  const saved = new Map<string, string | undefined>();
+  for (
+    const name of [
+      "HOME",
+      "DENO_DIR",
+      "PLAYWRIGHT_BROWSERS_PATH",
+      "GIT_CONFIG_GLOBAL",
+    ]
+  ) {
+    saved.set(name, Deno.env.get(name));
+  }
+  const realHome = Deno.env.get("HOME");
+  Deno.env.set("DENO_DIR", Deno.env.get("DENO_DIR") ?? await denoDir());
+  if (realHome) pinPlaywright(realHome);
+  if (realHome && !Deno.env.get("GIT_CONFIG_GLOBAL")) {
+    const gitconfig = join(realHome, ".gitconfig");
+    if (existsSync(gitconfig)) Deno.env.set("GIT_CONFIG_GLOBAL", gitconfig);
+  }
+  Deno.env.set("HOME", home);
+  return () => {
     for (const [name, value] of saved) {
       if (value === undefined) Deno.env.delete(name);
       else Deno.env.set(name, value);
     }
-    if (tempHome) await Deno.remove(tempHome, { recursive: true });
-  });
+  };
 }
 
 async function denoDir(): Promise<string> {

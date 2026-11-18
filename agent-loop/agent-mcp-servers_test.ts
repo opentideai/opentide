@@ -24,9 +24,20 @@ const OFF = {
   enabled: false,
 };
 
+const madeDirs: string[] = [];
+
 async function projectDir(): Promise<string> {
-  return await Deno.makeTempDir({ dir: TEST_TMP_DIR, prefix: "agent-mcp-" });
+  const dir = await Deno.makeTempDir({
+    dir: TEST_TMP_DIR,
+    prefix: "agent-mcp-",
+  });
+  madeDirs.push(dir);
+  return dir;
 }
+
+Deno.test.afterAll(async () => {
+  for (const dir of madeDirs) await Deno.remove(dir, { recursive: true });
+});
 
 function storeFile(dir: string): string {
   return join(projectStateDir(dir), AGENT_MCP_SERVERS_FILE);

@@ -48,6 +48,9 @@ import {
 import { testStoreComposition } from "../verification/test-stores.ts";
 import { testComposition } from "../cli/test-composition.ts";
 import { CORE_ONLY } from "../core/tools/toolsets.ts";
+import { isolateHome } from "../core/test-home_test.ts";
+
+isolateHome();
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 const noop = () => {};
