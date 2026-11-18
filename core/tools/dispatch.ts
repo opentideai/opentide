@@ -1256,6 +1256,27 @@ const AUTO_SNAPSHOT_TOOLS = new Set([
   "restore_snapshot",
 ]);
 
+// The auto-snapshot holds rows only for the tables the call can change: the one
+// table an alter or a drop names, and the tables a restore would overwrite or drop.
+// Every other table goes in definition-only. A full copy here put every row of the
+// database in the heap before a one-column alter, which is what took a 5GB project
+// down (and twenty of them were retained).
+async function autoSnapshotRowScope(
+  name: string,
+  input: Record<string, unknown>,
+  kernel: Kernel,
+): Promise<false | { tables: string[] }> {
+  if (name === "restore_snapshot") {
+    const touched = typeof input.id === "string"
+      ? await kernel.snapshots.tablesTouchedByRestore(input.id, kernel)
+      : null;
+    return touched ? { tables: touched } : false;
+  }
+  return typeof input.tableName === "string"
+    ? { tables: [input.tableName] }
+    : false;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -2808,7 +2829,9 @@ async function dispatchToolCall(
   }
 
   if (AUTO_SNAPSHOT_TOOLS.has(name)) {
-    await kernel.snapshots.save(kernel, `auto: before ${name}`);
+    await kernel.snapshots.save(kernel, `auto: before ${name}`, {
+      rows: await autoSnapshotRowScope(name, input, kernel),
+    });
   }
 
   // Periodic database backup, taken BEFORE the mutation rather than after it: the
@@ -7681,7 +7704,10 @@ async function dispatchToolCall(
 
       return {
         ok: true,
-        data: { message: `Snapshot "${input.id}" restored.` },
+        data: {
+          message: `Snapshot "${input.id}" restored.`,
+          ...(result.warnings ? { warnings: result.warnings } : {}),
+        },
       };
     }
 

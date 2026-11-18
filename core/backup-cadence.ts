@@ -13,7 +13,7 @@
 // first.
 import { mkdirSync } from "node:fs";
 import type { Kernel } from "./registries.ts";
-import { type BackupMetadata, createBackup, saveBackup } from "./backup.ts";
+import { type BackupMetadata, listBackups, writeBackup } from "./backup.ts";
 import {
   DB_BACKUP_INTERVAL_MS,
   DB_CHECKPOINT_INTERVAL_MS,
@@ -25,12 +25,14 @@ import { getProjectPaths } from "./project-manager.ts";
 // kernel.projectDir, so the IDE and the tool-dispatch path key the same map entry.
 // Two projects loaded in one process keep separate clocks.
 //
-// Deliberately NOT seeded on load: the first mutating call of a session takes a backup,
-// which is the copy of the project as it was before this session touched it — the one
-// you want when a session goes wrong.
+// Seeded from the newest backup on disk the first time a project asks. It used to start
+// empty, so every session backed up on its first mutating call — and a server crashing
+// and restarting every minute wrote a full backup every minute, pushing out every
+// older one. The previous session's last backup (its shutdown backup, if it shut down
+// cleanly) is the copy of the project from before this session touched it.
 const lastBackupAt = new Map<string, number>();
 
-// Projects with a backup in flight. createBackup reads every table, so a burst of
+// Projects with a backup in flight. writeBackup reads every table, so a burst of
 // mutating calls could otherwise start several at once; the interval guard alone does
 // not cover that, because it is only advanced once the decision is made.
 const inFlight = new Set<string>();
@@ -44,8 +46,8 @@ export function noteBackupTaken(
   lastBackupAt.set(projectDir, at);
 }
 
-// Forget a project's clock. Called on unload so a reload of the same directory in a
-// long-lived process starts fresh rather than inheriting a stale timestamp.
+// Forget a project's clock. Called on unload; a reload of the same directory re-reads
+// it from the backups on disk.
 export function forgetBackupClock(projectDir: string): void {
   lastBackupAt.delete(projectDir);
   inFlight.delete(projectDir);
@@ -63,6 +65,11 @@ const lastCheckpointAt = new Map<string, number>();
 const checkpointInFlight = new Set<string>();
 
 function backupIsDue(projectDir: string, now: number): boolean {
+  if (!lastBackupAt.has(projectDir)) {
+    const newest = listBackups(getProjectPaths(projectDir).backups)[0];
+    const at = newest ? Date.parse(newest.createdAt) : NaN;
+    if (Number.isFinite(at)) lastBackupAt.set(projectDir, at);
+  }
   const last = lastBackupAt.get(projectDir);
   return last === undefined || now - last >= DB_BACKUP_INTERVAL_MS;
 }
@@ -84,16 +91,20 @@ export async function maybePeriodicBackup(
   const now = Date.now();
   if (!backupIsDue(projectDir, now) || inFlight.has(projectDir)) return null;
 
-  // Claim the slot BEFORE the await: createBackup is asynchronous and the next
+  // Claim the slot BEFORE the await: writeBackup is asynchronous and the next
   // mutating call can arrive while it runs.
   lastBackupAt.set(projectDir, now);
   inFlight.add(projectDir);
   try {
     const paths = getProjectPaths(projectDir);
     mkdirSync(paths.backups, { recursive: true });
-    const backup = await createBackup(kernel, kernel.db, "periodic");
-    saveBackup(backup, paths.backups, settings.maxDbBackups);
-    return backup.metadata;
+    return await writeBackup(
+      kernel,
+      kernel.db,
+      "periodic",
+      paths.backups,
+      settings.maxDbBackups,
+    );
   } catch {
     // The clock stays advanced on failure: a database that cannot be dumped will not
     // dump on the next tool call either, and retrying every call would turn one broken

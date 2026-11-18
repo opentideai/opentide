@@ -80,7 +80,7 @@ Deno.test("recovery diagnostics reports valid project with backups", async () =>
     writeFileSync(join(paths.dataDir, "PG_VERSION"), "15\n");
     mkdirSync(join(paths.dataDir, "pg_wal"), { recursive: true });
     writeFileSync(join(paths.dataDir, "pg_wal", "0001"), "");
-    saveBackup(backup("backup_one"), paths.backups, 5);
+    await saveBackup(backup("backup_one"), paths.backups, 5);
 
     const diagnostics = await diagnoseRecoveryProject(projectDir, "DB failed");
 

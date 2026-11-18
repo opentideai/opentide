@@ -8,6 +8,8 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -1105,14 +1107,14 @@ Deno.test({
       "Latest Backup Restore App",
       async (base, path, control) => {
         const paths = getProjectPaths(path);
-        saveBackup(
+        await saveBackup(
           backupFixture("backup_old", "2026-01-01T00:00:00.000Z", [
             { id: 1, name: "old" },
           ]),
           paths.backups,
           10,
         );
-        saveBackup(
+        await saveBackup(
           backupFixture("backup_new", "2026-01-02T00:00:00.000Z", [
             { id: 2, name: "new" },
             { id: 3, name: "latest" },
@@ -1149,7 +1151,7 @@ Deno.test({
       "Explicit Empty Reset App",
       async (base, path) => {
         const paths = getProjectPaths(path);
-        saveBackup(
+        await saveBackup(
           backupFixture("backup_new", "2026-01-02T00:00:00.000Z", [
             { id: 2, name: "new" },
           ]),
@@ -1166,6 +1168,140 @@ Deno.test({
         assertEquals(body.restoredFrom, null);
         assertEquals(body.restoredTableCount, 0);
         assertEquals(body.restoredRowCount, 0);
+      },
+    );
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name:
+    "projects reset-db refuses rather than resetting empty when the newest backup will not load",
+  fn: async () => {
+    await withResetDbProject(
+      "Unreadable Backup App",
+      async (base, path, control) => {
+        const paths = getProjectPaths(path);
+        mkdirSync(paths.backups, { recursive: true });
+        // Lists fine (the metadata is intact), will not parse: a truncated write,
+        // or a file past V8's string limit.
+        writeFileSync(
+          join(paths.backups, "backup_torn.json"),
+          `{"metadata":{"id":"backup_torn","createdAt":"2026-01-02T00:00:00.000Z",` +
+            `"trigger":"periodic","tableCount":1,"rowCount":1,` +
+            `"branchSnapshotCount":0,"includesProjectState":true},"tables":[{`,
+        );
+        const before = control.setProject.current();
+
+        const res = await fetch(
+          `${base}/api/projects/reset-db`,
+          jsonPost({ path }),
+        );
+        assertEquals(res.status, 422);
+        assertEquals((await res.json()).code, "BACKUP_UNREADABLE");
+        assertEquals(
+          control.setProject.current(),
+          before,
+          "nothing was closed",
+        );
+      },
+    );
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name:
+    "projects reset-db reads the whole backup through before wiping anything",
+  fn: async () => {
+    await withResetDbProject(
+      "Damaged Backup App",
+      async (base, path, control) => {
+        const paths = getProjectPaths(path);
+        await saveBackup(
+          backupFixture(
+            "backup_cut",
+            "2026-01-02T00:00:00.000Z",
+            Array.from({ length: 2000 }, (_, i) => ({
+              id: i,
+              name: `row ${i} ${crypto.randomUUID()}`,
+            })),
+          ),
+          paths.backups,
+          10,
+        );
+        // The manifest is fine; the rows stop halfway.
+        const rows = join(paths.backups, "backup_cut", "tables", "0.ndjson.gz");
+        truncateSync(rows, Math.floor(statSync(rows).size / 2));
+        const before = control.setProject.current();
+
+        const res = await fetch(
+          `${base}/api/projects/reset-db`,
+          jsonPost({ path }),
+        );
+        assertEquals(res.status, 422);
+        const body = await res.json();
+        assertEquals(body.code, "BACKUP_UNREADABLE");
+        assertEquals(body.errors.length, 1);
+        assertEquals(
+          control.setProject.current(),
+          before,
+          "nothing was closed",
+        );
+      },
+    );
+  },
+});
+
+Deno.test({
+  sanitizeResources: false,
+  sanitizeOps: false,
+  name: "a downloaded backup uploads back as the same backup",
+  fn: async () => {
+    await withResetDbProject(
+      "Backup Round Trip App",
+      async (base, path) => {
+        const paths = getProjectPaths(path);
+        const saved = await saveBackup(
+          backupFixture("backup_trip", "2026-01-02T00:00:00.000Z", [
+            { id: 1, name: "one" },
+            { id: 2, name: "two" },
+          ]),
+          paths.backups,
+          10,
+        );
+        const open = await fetch(
+          `${base}/api/projects/open`,
+          jsonPost({ path }),
+        );
+        assertEquals(open.status, 200);
+        await open.body?.cancel();
+
+        const download = await fetch(
+          `${base}/api/backups/backup_trip/download`,
+        );
+        assertEquals(download.status, 200);
+        const text = await download.text();
+        assertEquals(JSON.parse(text).tables[0].rows.length, 2);
+
+        rmSync(paths.backups, { recursive: true, force: true });
+        const upload = await fetch(`${base}/api/backups/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: text,
+        });
+        assertEquals(upload.status, 201);
+        assertEquals((await upload.json()).metadata, saved);
+        assertEquals(listBackups(paths.backups), [saved]);
+
+        const bad = await fetch(`${base}/api/backups/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: `{"metadata":{"id":"backup_bad"},"tables":[]}`,
+        });
+        assertEquals(bad.status, 400);
       },
     );
   },
@@ -1228,14 +1364,14 @@ Deno.test({
       "Selected Backup Restore App",
       async (base, path, control) => {
         const paths = getProjectPaths(path);
-        saveBackup(
+        await saveBackup(
           backupFixture("backup_old", "2026-01-01T00:00:00.000Z", [
             { id: 1, name: "old" },
           ]),
           paths.backups,
           10,
         );
-        saveBackup(
+        await saveBackup(
           backupFixture("backup_new", "2026-01-02T00:00:00.000Z", [
             { id: 2, name: "new" },
           ]),
@@ -1349,7 +1485,11 @@ Deno.test({
       "Broken Backup Restore App",
       async (base, path, control) => {
         const paths = getProjectPaths(path);
-        saveBackup(brokenBackupFixture("backup_broken"), paths.backups, 10);
+        await saveBackup(
+          brokenBackupFixture("backup_broken"),
+          paths.backups,
+          10,
+        );
 
         const res = await fetch(
           `${base}/api/projects/reset-db`,
@@ -1409,7 +1549,7 @@ Deno.test({
             "2026-01-01T00:00:01.000Z",
           ),
         ]);
-        saveBackup(
+        await saveBackup(
           cumulativeSchemaBackupFixture("backup_cumulative"),
           paths.backups,
           10,

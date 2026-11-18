@@ -21,7 +21,7 @@ import {
   saveBranchSnapshots,
   saveKernelState,
 } from "./persistence.ts";
-import { createBackup, saveBackup } from "./backup.ts";
+import { writeBackup } from "./backup.ts";
 import { forgetBackupClock } from "./backup-cadence.ts";
 import {
   APP_SERVER_PORT,
@@ -296,21 +296,25 @@ async function unloadProjectOnce(ctx: ProjectContext): Promise<void> {
     const settings = getKernelSettings();
     if (ctx.backupOnUnload !== false && settings.maxDbBackups > 0) {
       mkdirSync(paths.backups, { recursive: true });
-      const backup = await createBackup(ctx.kernel, ctx.kernel.db, "shutdown");
-      saveBackup(backup, paths.backups, settings.maxDbBackups);
-      const snapshots = backup.metadata.branchSnapshotCount ?? 0;
+      const metadata = await writeBackup(
+        ctx.kernel,
+        ctx.kernel.db,
+        "shutdown",
+        paths.backups,
+        settings.maxDbBackups,
+      );
+      const snapshots = metadata.branchSnapshotCount ?? 0;
       const snapshotText = snapshots > 0
         ? `, ${snapshots} branch snapshot${snapshots === 1 ? "" : "s"}`
         : "";
       console.log(
-        `  Backup saved (project state${snapshotText}, ${backup.metadata.tableCount} tables, ${backup.metadata.rowCount} rows)`,
+        `  Backup saved (project state${snapshotText}, ${metadata.tableCount} tables, ${metadata.rowCount} rows)`,
       );
     }
   } catch { /* best-effort — don't block shutdown */ }
 
-  // A reload of the same directory in this process starts with a clean clock, so the
-  // first mutating call of the next session takes its own pre-session backup rather
-  // than inheriting this one's timestamp.
+  // A reload of the same directory in this process re-reads the clock from disk,
+  // where the backup just written is the newest.
   forgetBackupClock(ctx.entry.path);
 
   await ctx.db.close();

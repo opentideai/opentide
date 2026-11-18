@@ -1317,7 +1317,9 @@ const KERNEL_DEFAULTS: Required<KernelSettings> = {
   testTimeoutMs: TEST_TIMEOUT_DEFAULT_MS,
   browserActionTimeoutMs: BROWSER_ACTION_TIMEOUT_DEFAULT_MS,
   maxSnapshots: 20,
-  maxDbBackups: 10,
+  snapshotRowBytesLimit: 64 * 1024 * 1024,
+  snapshotRetainedBytesLimit: 256 * 1024 * 1024,
+  maxDbBackups: 7,
   maxChangesetSnapshots: MAX_CHANGESET_SNAPSHOTS_DEFAULT,
   maxTraces: 50,
   maxBodyCapture: 16_384,
@@ -1661,6 +1663,14 @@ interface KernelSettings {
   testTimeoutMs?: number;
   browserActionTimeoutMs?: number;
   maxSnapshots?: number;
+  // Most row data, in bytes of its text form, one in-memory snapshot may hold.
+  // A table that would cross it is snapshotted definition-only, with a warning.
+  snapshotRowBytesLimit?: number;
+  // Most row data all retained in-memory snapshots may hold together. Oldest
+  // snapshots are dropped past it, as they are past maxSnapshots.
+  snapshotRetainedBytesLimit?: number;
+  // Most database backups kept per project: the 3 newest, then the newest of
+  // each earlier day. 0 turns backups off.
   maxDbBackups?: number;
   maxChangesetSnapshots?: number;
   maxTraces?: number;

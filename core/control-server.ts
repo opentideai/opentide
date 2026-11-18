@@ -831,13 +831,14 @@ import {
 } from "./git.ts";
 import { resolveGitCommitMessage } from "./git-message.ts";
 import {
-  createBackup,
   deleteBackup,
+  importJsonBackup,
   listBackups,
-  loadBackup,
+  openBackup,
+  pruneBackups,
   restoreBranchSnapshots,
   restoreDbTables,
-  saveBackup,
+  writeBackup,
 } from "./backup.ts";
 import { noteBackupTaken } from "./backup-cadence.ts";
 import {
@@ -2176,18 +2177,43 @@ export async function startControlServer(
 
     try {
       const paths = getProjectPaths(path);
+      const newest = listBackups(paths.backups)[0];
       const selectedBackup = resetEmpty
         ? null
         : backupId
-        ? loadBackup(paths.backups, backupId)
-        : (() => {
-          const backups = listBackups(paths.backups);
-          return backups.length > 0
-            ? loadBackup(paths.backups, backups[0]!.id)
-            : null;
-        })();
+        ? await openBackup(paths.backups, backupId)
+        : newest
+        ? await openBackup(paths.backups, newest.id)
+        : null;
       if (backupId && !selectedBackup) {
         return c.json({ error: "Backup not found" }, 404);
+      }
+      // Read the whole backup through before anything is deleted: a file cut
+      // short is found here, not after the data directory is gone.
+      const unreadable = selectedBackup ? await selectedBackup.verify() : [];
+      if (unreadable.length > 0) {
+        return c.json({
+          error:
+            `Backup ${
+              selectedBackup!.metadata.id
+            } is damaged, so the database was not reset. ` +
+            "Pass a different backupId, or empty: true to reset to an empty database.",
+          code: "BACKUP_UNREADABLE",
+          errors: unreadable,
+        }, 422);
+      }
+      // A backup that exists but will not load must stop the reset, not turn it
+      // into a reset to an empty database: this path wipes the data directory, so
+      // falling through here deletes the project's rows with no copy anywhere.
+      if (
+        !resetEmpty && !selectedBackup && newest
+      ) {
+        return c.json({
+          error:
+            "The newest backup could not be read, so the database was not reset. " +
+            "Pass a backupId to restore an older one, or empty: true to reset to an empty database.",
+          code: "BACKUP_UNREADABLE",
+        }, 422);
       }
 
       await closeCurrentProject();
@@ -2243,7 +2269,7 @@ export async function startControlServer(
             restoredRowCount,
           }, 500);
         }
-        const snapshotCount = restoreBranchSnapshots(
+        const snapshotCount = await restoreBranchSnapshots(
           selectedBackup,
           ctx.kernel,
         );
@@ -6528,12 +6554,17 @@ export async function startControlServer(
     const paths = getProjectPaths(ctx!.entry.path);
     const settings = getKernelSettings();
     mkdirSync(paths.backups, { recursive: true });
-    const backup = await createBackup(ctx!.kernel, ctx!.kernel.db, "manual");
-    saveBackup(backup, paths.backups, settings.maxDbBackups);
+    const metadata = await writeBackup(
+      ctx!.kernel,
+      ctx!.kernel.db,
+      "manual",
+      paths.backups,
+      settings.maxDbBackups,
+    );
     // An explicit backup restarts the periodic clock — asking for one and then getting
     // an automatic duplicate a moment later is just eviction pressure on maxDbBackups.
     noteBackupTaken(ctx!.entry.path);
-    return c.json(backup.metadata, 201);
+    return c.json(metadata, 201);
   });
 
   app.post("/api/backups/:id/restore", async (c) => {
@@ -6541,7 +6572,7 @@ export async function startControlServer(
     if (guard) return guard;
     const id = c.req.param("id");
     const paths = getProjectPaths(ctx!.entry.path);
-    const backup = loadBackup(paths.backups, id);
+    const backup = await openBackup(paths.backups, id);
     if (!backup) return c.json({ error: "Backup not found" }, 404);
 
     // Restore kernel state
@@ -6551,7 +6582,7 @@ export async function startControlServer(
 
     // Restore DB tables and branch snapshots
     const result = await restoreDbTables(backup, ctx!.kernel.db);
-    const snapshotCount = restoreBranchSnapshots(backup, ctx!.kernel, {
+    const snapshotCount = await restoreBranchSnapshots(backup, ctx!.kernel, {
       restoreBranchList: true,
     });
     if (snapshotCount > 0) {
@@ -6564,15 +6595,18 @@ export async function startControlServer(
     });
   });
 
-  app.get("/api/backups/:id/download", (c) => {
+  app.get("/api/backups/:id/download", async (c) => {
     const guard = requireKernel(c);
     if (guard) return guard;
     const id = c.req.param("id");
     const paths = getProjectPaths(ctx!.entry.path);
-    const backup = loadBackup(paths.backups, id);
+    const backup = await openBackup(paths.backups, id);
     if (!backup) return c.json({ error: "Backup not found" }, 404);
     const name = ctx!.entry.name.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
-    return new Response(JSON.stringify(backup), {
+    // One JSON object, the format an upload takes, streamed so it is never one string.
+    const body = ReadableStream.from(backup.asJson())
+      .pipeThrough(new TextEncoderStream());
+    return new Response(body, {
       headers: {
         "Content-Type": "application/json",
         "Content-Disposition": `attachment; filename="${name}_${id}.json"`,
@@ -6585,16 +6619,23 @@ export async function startControlServer(
     if (guard) return guard;
     const paths = getProjectPaths(ctx!.entry.path);
     const settings = getKernelSettings();
-    const body = await c.req.json().catch(() => null);
-    if (
-      !body?.metadata?.id || !body?.kernelState || !Array.isArray(body?.tables)
-    ) {
-      return c.json({ error: "Invalid backup format" }, 400);
+    const stream = c.req.raw.body;
+    if (!stream) return c.json({ error: "Invalid backup format" }, 400);
+    let metadata;
+    try {
+      // Read as a stream: an upload is as big as the backup it came from.
+      metadata = await importJsonBackup(
+        stream.pipeThrough(new TextDecoderStream()),
+        paths.backups,
+        { requireProjectState: true },
+      );
+    } catch (err) {
+      return c.json({
+        error: `Invalid backup format: ${errorMessage(err)}`,
+      }, 400);
     }
-    const backup = body as import("./backup.ts").BackupData;
-    mkdirSync(paths.backups, { recursive: true });
-    saveBackup(backup, paths.backups, settings.maxDbBackups);
-    return c.json({ ok: true, metadata: backup.metadata }, 201);
+    pruneBackups(paths.backups, settings.maxDbBackups);
+    return c.json({ ok: true, metadata }, 201);
   });
 
   app.delete("/api/backups/:id", (c) => {

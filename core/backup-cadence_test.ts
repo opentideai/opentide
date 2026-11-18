@@ -21,6 +21,8 @@ import {
   maybePeriodicCheckpoint,
   noteBackupTaken,
 } from "./backup-cadence.ts";
+import { saveBackup } from "./backup.ts";
+import { serializeKernelState } from "./persistence.ts";
 
 const BACKUPS_ENABLED = getKernelSettings().maxDbBackups > 0;
 
@@ -49,8 +51,8 @@ Deno.test({
   ignore: !BACKUPS_ENABLED,
   fn: () =>
     withProject(async (kernel, projectDir) => {
-      // Unseeded clock: the point is a copy of the project as it was before this
-      // session touched anything.
+      // No backup on disk: the point is a copy of the project as it was before
+      // this session touched anything.
       const first = await maybePeriodicBackup(kernel, projectDir);
       assert(first, "the first call should write a backup");
       assertEquals(backupCount(projectDir), 1);
@@ -110,15 +112,45 @@ Deno.test({
 });
 
 Deno.test({
-  name: "forgetting the clock lets the next session take its own baseline",
+  name: "a restart reads the clock from the backups on disk",
   ignore: !BACKUPS_ENABLED,
   fn: () =>
     withProject(async (kernel, projectDir) => {
       assert(await maybePeriodicBackup(kernel, projectDir));
-      assertEquals(await maybePeriodicBackup(kernel, projectDir), null);
-      // What unloadProject does, so a reload in the same process does not inherit a
-      // stale timestamp.
+      // What unloadProject does, and what a crash does to the in-memory clock. A
+      // server crash-looping once a minute used to write a full backup per restart.
       forgetBackupClock(projectDir);
+      assertEquals(
+        await maybePeriodicBackup(kernel, projectDir),
+        null,
+        "the backup from a minute ago still counts after a restart",
+      );
+      assertEquals(backupCount(projectDir), 1);
+    }),
+});
+
+Deno.test({
+  name: "a restart backs up when the newest backup on disk is old",
+  ignore: !BACKUPS_ENABLED,
+  fn: () =>
+    withProject(async (kernel, projectDir) => {
+      const dir = getProjectPaths(projectDir).backups;
+      await saveBackup(
+        {
+          metadata: {
+            id: "backup_old",
+            createdAt: new Date(Date.now() - DB_BACKUP_INTERVAL_MS - 1000)
+              .toISOString(),
+            trigger: "shutdown",
+            tableCount: 0,
+            rowCount: 0,
+          },
+          kernelState: serializeKernelState(kernel),
+          tables: [],
+        },
+        dir,
+        10,
+      );
       assert(await maybePeriodicBackup(kernel, projectDir));
       assertEquals(backupCount(projectDir), 2);
     }),

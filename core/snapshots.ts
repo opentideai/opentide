@@ -18,6 +18,16 @@ export interface SnapshotMetadata {
   devViewCount: number;
   devToolCount: number;
   testCount: number;
+  // Tables whose definition is in the snapshot but whose rows are not: left out
+  // because the snapshot was scoped to other tables (`definition-only`), or
+  // because the rows would not fit the byte budget (`too-large`). Restore leaves
+  // these tables as they stand. Absent on a snapshot that holds every row.
+  rowsOmitted?: Array<
+    { tableName: string; reason: "definition-only" | "too-large" }
+  >;
+  // Rough size of the rows held, in bytes of their text form. What the retained
+  // list is budgeted on.
+  rowBytes?: number;
 }
 
 export interface SnapshotData {
@@ -134,45 +144,103 @@ export interface SnapshotData {
       sql: string;
       rows: Record<string, unknown>[];
       module?: string;
+      // false: `rows` is not the table's content, only the definition was taken.
+      // Absent means the rows are authoritative (every snapshot written before
+      // scoped capture existed).
+      rowsCaptured?: false;
     }
   >;
+}
+
+export interface CaptureOptions {
+  // true (default): every table's rows. false: none, a code-only snapshot.
+  // { tables }: only those tables' rows; the rest are definition-only.
+  rows?: boolean | { tables: string[] };
+  // Ceiling on the rows one snapshot holds. A table that would cross it is kept
+  // definition-only, with a warning. Defaults to the snapshotRowBytesLimit setting.
+  rowBytesLimit?: number;
 }
 
 import { getKernelSettings } from "./config.ts";
 const MAX_SNAPSHOTS = getKernelSettings().maxSnapshots;
 
+// Every in-memory snapshot holds its rows as JS objects, so the list is a cost in
+// heap, not a free cache. It is capped by count (maxSnapshots) and by the summed
+// size of the rows it holds (snapshotRetainedBytesLimit), oldest out first.
 export class SnapshotManager {
   private snapshots: SnapshotData[] = [];
   private branchSnapshots = new Map<string, SnapshotData>();
 
-  async save(kernel: Kernel, description = ""): Promise<SnapshotMetadata> {
-    const snapshot = await this.capture(kernel, description);
+  async save(
+    kernel: Kernel,
+    description = "",
+    opts: CaptureOptions & { retainedBytesLimit?: number } = {},
+  ): Promise<SnapshotMetadata> {
+    const snapshot = await this.capture(kernel, description, opts);
     this.snapshots.push(snapshot);
-    if (this.snapshots.length > MAX_SNAPSHOTS) {
-      this.snapshots.shift();
+    const retainedLimit = opts.retainedBytesLimit ??
+      getKernelSettings().snapshotRetainedBytesLimit;
+    let retained = this.snapshots.reduce(
+      (sum, s) => sum + (s.metadata.rowBytes ?? 0),
+      0,
+    );
+    while (
+      this.snapshots.length > 1 &&
+      (this.snapshots.length > MAX_SNAPSHOTS || retained > retainedLimit)
+    ) {
+      retained -= this.snapshots.shift()!.metadata.rowBytes ?? 0;
     }
     return snapshot.metadata;
   }
 
-  // The snapshot without keeping it. `rows: false` records each table's
-  // definition but not its rows: a code-only snapshot.
+  // The snapshot without keeping it. See CaptureOptions for what `rows` takes.
+  // No table's rows are read unless they are in scope and fit the budget, so a
+  // scoped capture costs the scoped tables and nothing else.
   async capture(
     kernel: Kernel,
     description = "",
-    opts: { rows?: boolean } = {},
+    opts: CaptureOptions = {},
   ): Promise<SnapshotData> {
-    const withRows = opts.rows !== false;
+    const scope = opts.rows === undefined ? true : opts.rows;
+    const inScope = (tableName: string) =>
+      scope === true ||
+      (typeof scope === "object" && scope.tables.includes(tableName));
+    let budget = opts.rowBytesLimit ??
+      getKernelSettings().snapshotRowBytesLimit;
+    let rowBytes = 0;
+    const rowsOmitted: NonNullable<SnapshotMetadata["rowsOmitted"]> = [];
     const tables: SnapshotData["tables"] = [];
     for (const schema of await kernel.db.listSchemas()) {
-      const rows = withRows
-        ? await kernel.db.query(`SELECT * FROM "${schema.tableName}"`)
-        : [];
-      tables.push({
+      const base = {
         tableName: schema.tableName,
         sql: schema.sql,
-        rows,
         ...(schema.module ? { module: schema.module } : {}),
-      });
+      };
+      if (!inScope(schema.tableName)) {
+        tables.push({ ...base, rows: [], rowsCaptured: false });
+        if (scope !== false) {
+          rowsOmitted.push({
+            tableName: schema.tableName,
+            reason: "definition-only",
+          });
+        }
+        continue;
+      }
+      const size = await estimateRowBytes(kernel, schema.tableName, budget);
+      if (size === null) {
+        tables.push({ ...base, rows: [], rowsCaptured: false });
+        rowsOmitted.push({ tableName: schema.tableName, reason: "too-large" });
+        console.warn(
+          `[snapshots] "${description}": rows of "${schema.tableName}" left out, ` +
+            `over the ${formatBytes(budget)} left in this snapshot's budget ` +
+            `(snapshotRowBytesLimit). Restoring this snapshot will not touch that table.`,
+        );
+        continue;
+      }
+      const rows = await kernel.db.query(`SELECT * FROM "${schema.tableName}"`);
+      budget -= size;
+      rowBytes += size;
+      tables.push({ ...base, rows });
     }
 
     const snapshot: SnapshotData = {
@@ -192,6 +260,8 @@ export class SnapshotManager {
         devViewCount: kernel.devViews.list().filter((v) => !v.builtIn).length,
         devToolCount: kernel.devTools.list().length,
         testCount: kernel.tests.list().length,
+        rowBytes,
+        ...(rowsOmitted.length > 0 ? { rowsOmitted } : {}),
       },
       runtimeId: kernel.runtimeId,
       routes: kernel.routes.list(),
@@ -214,7 +284,7 @@ export class SnapshotManager {
     id: string,
     kernel: Kernel,
     rebuild: () => void,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<RestoreResult> {
     const snapshot = this.snapshots.find((s) => s.metadata.id === id) ??
       this.branchSnapshots.get(id);
     if (!snapshot) return { ok: false, error: `Snapshot "${id}" not found.` };
@@ -228,7 +298,7 @@ export class SnapshotManager {
     kernel: Kernel,
     rebuild: () => void,
     opts: { tables?: "replace" | "keep" } = {},
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<RestoreResult> {
     const deps = await kernel.compileDeps();
     const defaultRuntimeId = snapshot.runtimeId ?? kernel.runtimeId;
     const defaultLanguage = kernel.runtime.defaultLanguage;
@@ -243,7 +313,9 @@ export class SnapshotManager {
     kernel.assets.clear();
     kernel.packages.clear();
 
-    if (opts.tables !== "keep") await restoreTables(snapshot, kernel);
+    const warnings = opts.tables !== "keep"
+      ? await restoreTables(snapshot, kernel)
+      : [];
 
     // Restore state, templates, and assets
     kernel.configs.restore(snapshot.configs);
@@ -416,7 +488,30 @@ export class SnapshotManager {
     kernel.routes.restore(snapshot.routes);
     rebuild();
 
-    return { ok: true };
+    return warnings.length > 0 ? { ok: true, warnings } : { ok: true };
+  }
+
+  // The tables restoring snapshot `id` would drop or overwrite: the ones whose rows
+  // it holds, and the ones that exist now but not in it. What an auto-snapshot
+  // taken before that restore has to hold rows for to undo it. Null when there is
+  // no such snapshot.
+  async tablesTouchedByRestore(
+    id: string,
+    kernel: Kernel,
+  ): Promise<string[] | null> {
+    const snapshot = this.snapshots.find((s) => s.metadata.id === id) ??
+      this.branchSnapshots.get(id);
+    if (!snapshot) return null;
+    const inSnapshot = new Set(snapshot.tables.map((t) => t.tableName));
+    const touched = new Set(
+      snapshot.tables
+        .filter((t) => t.rowsCaptured !== false)
+        .map((t) => t.tableName),
+    );
+    for (const schema of await kernel.db.listSchemas()) {
+      if (!inSnapshot.has(schema.tableName)) touched.add(schema.tableName);
+    }
+    return [...touched];
   }
 
   list(): SnapshotMetadata[] {
@@ -453,14 +548,46 @@ export class SnapshotManager {
   }
 }
 
+// A table whose rows the snapshot holds is dropped and rebuilt from it. A table
+// the snapshot only has the definition of is left exactly as it stands, rows and
+// definition both: rebuilding it would mean emptying it. One that no longer exists
+// is recreated empty. A table the snapshot has never heard of is dropped, as it
+// always was. Returns what the caller should be told about the tables left alone.
 async function restoreTables(
   snapshot: SnapshotData,
   kernel: Kernel,
-): Promise<void> {
-  for (const schema of await kernel.db.listSchemas()) {
-    await kernel.db.dropSchema(schema.tableName);
+): Promise<string[]> {
+  const warnings: string[] = [];
+  const replaced = new Set(
+    snapshot.tables
+      .filter((t) => t.rowsCaptured !== false)
+      .map((t) => t.tableName),
+  );
+  const inSnapshot = new Set(snapshot.tables.map((t) => t.tableName));
+  const current = new Map(
+    (await kernel.db.listSchemas()).map((s) => [s.tableName, s]),
+  );
+  for (const tableName of current.keys()) {
+    if (replaced.has(tableName) || !inSnapshot.has(tableName)) {
+      await kernel.db.dropSchema(tableName);
+    }
   }
   for (const table of snapshot.tables) {
+    if (table.rowsCaptured === false) {
+      const now = current.get(table.tableName);
+      if (!now) {
+        await kernel.db.defineSchema(table.tableName, table.sql, table.module);
+        warnings.push(
+          `"${table.tableName}" was recreated empty: this snapshot has its definition but not its rows.`,
+        );
+      } else if (now.sql !== table.sql) {
+        warnings.push(
+          `"${table.tableName}" was left as it is now: this snapshot does not hold its rows, ` +
+            `so its definition was not rolled back either.`,
+        );
+      }
+      continue;
+    }
     await kernel.db.defineSchema(table.tableName, table.sql, table.module);
     if (table.rows.length > 0) {
       const columns = Object.keys(table.rows[0]!);
@@ -492,4 +619,38 @@ async function restoreTables(
       }
     }
   }
+  return warnings;
+}
+
+export type RestoreResult =
+  | { ok: true; warnings?: string[] }
+  | { ok: false; error: string };
+
+// Size of a table's rows in bytes of their text form, or null when that is more
+// than `limit`. On-disk size is checked first so a table that is plainly too big
+// is never scanned; compression means it can only under-count, so a table that
+// passes is then measured exactly, in the database, without a row reaching JS.
+async function estimateRowBytes(
+  kernel: Kernel,
+  tableName: string,
+  limit: number,
+): Promise<number | null> {
+  if (limit <= 0) return null;
+  const quoted = `"${tableName}"`;
+  const [disk] = await kernel.db.query(
+    `SELECT pg_table_size(to_regclass($1))::float8 AS bytes`,
+    [quoted],
+  );
+  if (Number(disk?.bytes ?? 0) > limit) return null;
+  const [text] = await kernel.db.query(
+    `SELECT coalesce(sum(octet_length(t::text)), 0)::float8 AS bytes FROM ${quoted} t`,
+  );
+  const bytes = Number(text?.bytes ?? 0);
+  return bytes > limit ? null : bytes;
+}
+
+function formatBytes(n: number): string {
+  return n >= 1024 * 1024
+    ? `${(n / 1024 / 1024).toFixed(0)}MB`
+    : `${(n / 1024).toFixed(0)}KB`;
 }
