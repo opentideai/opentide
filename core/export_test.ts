@@ -1,4 +1,9 @@
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { testStoreComposition } from "../verification/test-stores.ts";
 import { binaryCompileArgs, writeExportFiles } from "./build.ts";
 import { Database } from "./db.ts";
@@ -119,6 +124,32 @@ Deno.test("exported tasks and binary compile args grant the same permissions", a
         );
       }
     }
+  } finally {
+    await db.close();
+  }
+});
+
+Deno.test("exportProject refuses seed data too big to hold", async () => {
+  const db = await Database.create({ driver: "pglite" });
+  try {
+    const kernel = new Kernel(db, { composition: testStoreComposition() });
+    await kernel.db.defineSchema("big", "CREATE TABLE big (body TEXT)");
+    await kernel.db.execute(
+      "INSERT INTO big SELECT repeat('x', 1000) FROM generate_series(1, 100)",
+    );
+    const err = await assertRejects(() =>
+      exportProject(kernel, {
+        includeSeedData: true,
+        seedDataMaxRowBytes: 50_000,
+      })
+    );
+    assertStringIncludes((err as Error).message, `Seed data holds at most`);
+    assertStringIncludes((err as Error).message, `"big" does not fit`);
+    // Without seed data it exports.
+    assert(
+      (await exportProject(kernel, { seedDataMaxRowBytes: 50_000 })).files
+        .some((f) => f.path === "schema.sql"),
+    );
   } finally {
     await db.close();
   }

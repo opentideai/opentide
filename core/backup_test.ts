@@ -34,6 +34,7 @@ import {
   restoreDbTables,
   saveBackup,
   writeBackup,
+  writeBackupIfChanged,
 } from "./backup.ts";
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
@@ -374,30 +375,125 @@ function meta(id: string, createdAt: string): BackupMetadata {
   return { id, createdAt, trigger: "periodic", tableCount: 0, rowCount: 0 };
 }
 
-Deno.test("retention keeps the newest few, then one per earlier day", () => {
-  const today = Array.from(
-    { length: 10 },
-    (_, i) => meta(`t${i}`, `2026-11-18T10:${String(59 - i)}:00.000Z`),
+const at = (ms: number) => new Date(ms).toISOString();
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+
+Deno.test("retention keeps the 2 newest, one a day for a week, one a week for 4 more", () => {
+  // Wednesday 18 November 2026: a busy morning, a backup a minute, then two a
+  // day (20:00 and 08:00) for fifty days before it.
+  const morning = Array.from(
+    { length: 9 },
+    (_, i) => meta(`m${i}`, at(Date.UTC(2026, 10, 18, 10, 59 - i))),
   );
-  const earlier = ["17", "16", "15", "14", "13", "12"].flatMap((d) => [
-    meta(`d${d}a`, `2026-11-${d}T20:00:00.000Z`),
-    meta(`d${d}b`, `2026-11-${d}T08:00:00.000Z`),
+  const earlier = Array.from({ length: 50 }, (_, i) => i + 1).flatMap((d) => [
+    meta(`d${d}a`, at(Date.UTC(2026, 10, 18 - d, 20))),
+    meta(`d${d}b`, at(Date.UTC(2026, 10, 18 - d, 8))),
   ]);
+  // The morning keeps two. Then the newest of 17 to 12 November. Then, from 11
+  // November back to 15 October, the newest of each Monday-to-Sunday week: 11
+  // and 8 November, 1 November, 25 and 18 October.
+  const policy = [
+    "m0",
+    "m1",
+    "d1a",
+    "d2a",
+    "d3a",
+    "d4a",
+    "d5a",
+    "d6a",
+    "d7a",
+    "d10a",
+    "d17a",
+    "d24a",
+    "d31a",
+  ];
   assertEquals(
-    backupsToKeep([...today, ...earlier], 7).map((b) => b.id),
-    ["t0", "t1", "t2", "d17a", "d16a", "d15a", "d14a"],
+    backupsToKeep([...morning, ...earlier], 13).map((b) => b.id),
+    policy,
   );
-  // One day's worth only: the newest, as many as fit.
   assertEquals(
-    backupsToKeep(today, 7).map((b) => b.id),
-    ["t0", "t1", "t2", "t3", "t4", "t5", "t6"],
+    backupsToKeep([...morning, ...earlier], 50).map((b) => b.id),
+    policy,
+    "nothing older, however much room",
   );
-  // Fewer earlier days than slots: the rest go to the newest.
   assertEquals(
-    backupsToKeep([...today, earlier[0]!], 7).map((b) => b.id),
-    ["t0", "t1", "t2", "t3", "t4", "t5", "d17a"],
+    backupsToKeep([...morning, ...earlier], 5).map((b) => b.id),
+    policy.slice(0, 5),
   );
-  assertEquals(backupsToKeep(today, 2).map((b) => b.id), ["t0", "t1"]);
+  // Nothing tops the list up from the morning when the days run out.
+  assertEquals(
+    backupsToKeep([...morning, earlier[0]!], 13).map((b) => b.id),
+    ["m0", "m1", "d1a"],
+  );
+  assertEquals(backupsToKeep(morning, 0), []);
+});
+
+Deno.test("retention still spans a month after two months of pruning", () => {
+  // A backup every working hour for sixty days, pruned after each one. Buckets
+  // measured from the newest backup instead of the calendar re-elect their
+  // newest member every day, and the weekly copies never get old.
+  let kept: BackupMetadata[] = [];
+  const start = Date.UTC(2026, 8, 1);
+  for (let day = 0; day < 60; day++) {
+    for (let hour = 9; hour < 18; hour++) {
+      const t = start + day * DAY + hour * HOUR;
+      kept = backupsToKeep([meta(`b${t}`, at(t)), ...kept], 13);
+    }
+  }
+  const newest = Date.parse(kept[0]!.createdAt);
+  const oldest = Date.parse(kept.at(-1)!.createdAt);
+  assert(kept.length <= 13);
+  assert(
+    newest - oldest >= 28 * DAY,
+    `the oldest kept is ${(newest - oldest) / DAY} days old`,
+  );
+  const days = kept.slice(2).map((b) => b.createdAt.slice(0, 10));
+  assertEquals(new Set(days).size, days.length, "one a day at most");
+});
+
+Deno.test({
+  ...testOpts,
+  name: "an unchanged project is not backed up again, a changed one is",
+  fn: async () => {
+    await withDb(async (kernel, db, dir) => {
+      await seed(db);
+      // Not one of the project's tables: OpenTide's own live beside them and
+      // change on every chat turn, and a backup leaves them out.
+      await db.execute(`CREATE TABLE scratch (n INT)`);
+      const first = await writeBackupIfChanged(kernel, db, "periodic", dir, 20);
+      assert(first?.fingerprint, "the first backup is written");
+      const again = () => writeBackupIfChanged(kernel, db, "periodic", dir, 20);
+      assertEquals(await again(), null);
+      await db.query(`SELECT count(*) FROM docs`);
+      await db.checkpoint();
+      assertEquals(await again(), null, "reads and checkpoints change nothing");
+      await db.execute(`INSERT INTO scratch VALUES (1)`);
+      assertEquals(
+        await again(),
+        null,
+        "a table outside the backup changes nothing",
+      );
+
+      const changes = [
+        `INSERT INTO loose VALUES ('new', 41)`,
+        `UPDATE pairs SET v = 'changed' WHERE b = 3`,
+        `DELETE FROM docs WHERE id = 10`,
+        `TRUNCATE empty`,
+      ];
+      for (const sql of changes) {
+        await db.execute(sql);
+        assert(await again(), `${sql} is a change`);
+        assertEquals(await again(), null, `and only once: ${sql}`);
+      }
+      // Rewrites nothing: no row, count or file node moves.
+      await db.execute(`ALTER TABLE loose ADD COLUMN extra TEXT`);
+      assert(await again(), "a new column is a change");
+
+      // Asked for explicitly, a backup is written changed or not.
+      assert(await writeBackup(kernel, db, "manual", dir, 20));
+    });
+  },
 });
 
 Deno.test({
@@ -407,6 +503,8 @@ Deno.test({
     await withDb(async (kernel, db, dir) => {
       await seed(db);
       const legacy = await legacyOf(kernel, db);
+      // Older than any backup the policy keeps.
+      legacy.metadata.createdAt = "2020-01-01T00:00:00.000Z";
       writeFileSync(join(dir, "backup_legacy.json"), JSON.stringify(legacy));
       const ids = [];
       for (let i = 0; i < 3; i++) {
@@ -418,11 +516,13 @@ Deno.test({
       utimesSync(join(dir, "backup_stale.tmp"), old, old);
       mkdirSync(join(dir, "backup_writing.tmp"));
 
-      pruneBackups(dir, 3);
-      assertEquals(listBackups(dir).map((b) => b.id), ids.reverse());
+      pruneBackups(dir, 13);
+      // Three from the same minute: the two newest stay.
+      const newest = ids.slice(1).reverse();
+      assertEquals(listBackups(dir).map((b) => b.id), newest);
       assertEquals(
         readdirSync(dir).sort(),
-        [...ids, "backup_writing.tmp"].sort(),
+        [...newest, "backup_writing.tmp"].sort(),
         "the old file and the stale temporary are gone, the live one is not",
       );
     });

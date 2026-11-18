@@ -23,6 +23,9 @@ import {
 } from "./backup-cadence.ts";
 import { saveBackup } from "./backup.ts";
 import { serializeKernelState } from "./persistence.ts";
+import { isolateHome } from "./test-home_test.ts";
+
+isolateHome();
 
 const BACKUPS_ENABLED = getKernelSettings().maxDbBackups > 0;
 
@@ -73,13 +76,30 @@ Deno.test({
   fn: () =>
     withProject(async (kernel, projectDir) => {
       assert(await maybePeriodicBackup(kernel, projectDir));
-      // Backdate the clock rather than wait ten minutes for it.
+      await kernel.db.defineSchema("t", "CREATE TABLE t (n INT)");
+      // Backdate the clock rather than wait an hour for it.
       noteBackupTaken(projectDir, Date.now() - DB_BACKUP_INTERVAL_MS - 1);
       assert(
         await maybePeriodicBackup(kernel, projectDir),
         "past the interval, the next mutating call backs up again",
       );
       assertEquals(backupCount(projectDir), 2);
+    }),
+});
+
+Deno.test({
+  name: "past the interval, a project nothing changed in is not backed up",
+  ignore: !BACKUPS_ENABLED,
+  fn: () =>
+    withProject(async (kernel, projectDir) => {
+      await kernel.db.defineSchema("t", "CREATE TABLE t (n INT)");
+      assert(await maybePeriodicBackup(kernel, projectDir));
+      noteBackupTaken(projectDir, Date.now() - DB_BACKUP_INTERVAL_MS - 1);
+      assertEquals(await maybePeriodicBackup(kernel, projectDir), null);
+      assertEquals(backupCount(projectDir), 1);
+      // The check itself restarted the clock: it scans every table.
+      await kernel.db.execute(`INSERT INTO t VALUES (1)`);
+      assertEquals(await maybePeriodicBackup(kernel, projectDir), null);
     }),
 });
 

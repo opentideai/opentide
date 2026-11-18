@@ -13,7 +13,11 @@
 // first.
 import { mkdirSync } from "node:fs";
 import type { Kernel } from "./registries.ts";
-import { type BackupMetadata, listBackups, writeBackup } from "./backup.ts";
+import {
+  type BackupMetadata,
+  listBackups,
+  writeBackupIfChanged,
+} from "./backup.ts";
 import {
   DB_BACKUP_INTERVAL_MS,
   DB_CHECKPOINT_INTERVAL_MS,
@@ -74,9 +78,11 @@ function backupIsDue(projectDir: string, now: number): boolean {
   return last === undefined || now - last >= DB_BACKUP_INTERVAL_MS;
 }
 
-// Write a periodic backup if one is due. Returns the metadata when a backup was
-// written, null when it was not due, was already running, or is disabled by
-// maxDbBackups: 0.
+// Write a periodic backup if one is due and the project changed since the newest
+// backup. Returns the metadata when a backup was written, null when it was not due,
+// nothing changed, one was already running, or maxDbBackups is 0. An unchanged
+// project still restarts the clock: the check scans every table, and once an
+// interval is plenty.
 //
 // Never throws. A backup is a safety net, not a precondition — a project whose backup
 // fails must still be workable, and the caller (a tool dispatch, a finished chat turn)
@@ -98,7 +104,7 @@ export async function maybePeriodicBackup(
   try {
     const paths = getProjectPaths(projectDir);
     mkdirSync(paths.backups, { recursive: true });
-    return await writeBackup(
+    return await writeBackupIfChanged(
       kernel,
       kernel.db,
       "periodic",

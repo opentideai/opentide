@@ -55,7 +55,9 @@ import {
   IMPORT_CLASSIFIER_PLUGIN_ID,
   type ImportClassifierRequest,
 } from "../codebase/index.ts";
-import { TEST_TMP_DIR } from "../test-home_test.ts";
+import { isolateHome, TEST_TMP_DIR } from "../test-home_test.ts";
+
+isolateHome();
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 

@@ -9,10 +9,14 @@ import {
 import { join } from "node:path";
 import type { Database } from "./db.ts";
 import type { SchemaEntry } from "./types.ts";
+import { DATA_EXPORT_MAX_ROW_BYTES } from "./config.ts";
+import { assertRowsFit } from "./row-bytes.ts";
 
 export interface DataExportOptions {
   tables?: string[];
   name?: string;
+  // Defaults to DATA_EXPORT_MAX_ROW_BYTES.
+  maxRowBytes?: number;
 }
 
 export interface DataImportOptions {
@@ -123,9 +127,16 @@ export async function exportDataFixture(
   opts: DataExportOptions = {},
 ): Promise<DataExportResult> {
   const dir = fixtureDir(projectDir, opts.name);
-  mkdirSync(dir, { recursive: true });
-
   const schemas = selectedSchemas(await db.listSchemas(), opts.tables);
+  // Before anything is written: a refused fixture leaves no half of itself behind.
+  await assertRowsFit(
+    db,
+    schemas.map((schema) => schema.tableName),
+    opts.maxRowBytes ?? DATA_EXPORT_MAX_ROW_BYTES,
+    "A data fixture",
+    "Leave those tables out with `tables`, or move the data with a database backup.",
+  );
+  mkdirSync(dir, { recursive: true });
   const files: string[] = [];
   const tables: DataFixtureManifest["tables"] = [];
 

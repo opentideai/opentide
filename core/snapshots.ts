@@ -1,6 +1,7 @@
 import type { Kernel } from "./registries.ts";
 import { kernelInspectAPI } from "./dev-views.ts";
 import { createTimestampedShortId } from "./ids.ts";
+import { formatBytes, rowBytesWithin } from "./row-bytes.ts";
 
 export interface SnapshotMetadata {
   id: string;
@@ -226,7 +227,7 @@ export class SnapshotManager {
         }
         continue;
       }
-      const size = await estimateRowBytes(kernel, schema.tableName, budget);
+      const size = await rowBytesWithin(kernel.db, schema.tableName, budget);
       if (size === null) {
         tables.push({ ...base, rows: [], rowsCaptured: false });
         rowsOmitted.push({ tableName: schema.tableName, reason: "too-large" });
@@ -625,32 +626,3 @@ async function restoreTables(
 export type RestoreResult =
   | { ok: true; warnings?: string[] }
   | { ok: false; error: string };
-
-// Size of a table's rows in bytes of their text form, or null when that is more
-// than `limit`. On-disk size is checked first so a table that is plainly too big
-// is never scanned; compression means it can only under-count, so a table that
-// passes is then measured exactly, in the database, without a row reaching JS.
-async function estimateRowBytes(
-  kernel: Kernel,
-  tableName: string,
-  limit: number,
-): Promise<number | null> {
-  if (limit <= 0) return null;
-  const quoted = `"${tableName}"`;
-  const [disk] = await kernel.db.query(
-    `SELECT pg_table_size(to_regclass($1))::float8 AS bytes`,
-    [quoted],
-  );
-  if (Number(disk?.bytes ?? 0) > limit) return null;
-  const [text] = await kernel.db.query(
-    `SELECT coalesce(sum(octet_length(t::text)), 0)::float8 AS bytes FROM ${quoted} t`,
-  );
-  const bytes = Number(text?.bytes ?? 0);
-  return bytes > limit ? null : bytes;
-}
-
-function formatBytes(n: number): string {
-  return n >= 1024 * 1024
-    ? `${(n / 1024 / 1024).toFixed(0)}MB`
-    : `${(n / 1024).toFixed(0)}KB`;
-}

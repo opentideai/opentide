@@ -1,4 +1,9 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "./db.ts";
@@ -176,4 +181,26 @@ Deno.test("schema state plus fixture rows rebuild local data", async () => {
     await db.close();
     rmSync(projectDir, { recursive: true, force: true });
   }
+});
+
+Deno.test("exportDataFixture refuses tables too big to hold, and writes nothing", async () => {
+  await withProjectDb(async (db, projectDir) => {
+    await db.defineSchema("small", "CREATE TABLE small (n INT)");
+    await db.execute("INSERT INTO small VALUES (1)");
+    await db.defineSchema("big", "CREATE TABLE big (body TEXT)");
+    await db.execute(
+      "INSERT INTO big SELECT repeat('x', 1000) FROM generate_series(1, 100)",
+    );
+    const err = await assertRejects(() =>
+      exportDataFixture(db, projectDir, { maxRowBytes: 50_000 })
+    );
+    assertStringIncludes((err as Error).message, `"big" does not fit`);
+    assertEquals(existsSync(join(projectDir, "fixtures", "default")), false);
+    // Left out, the rest still exports.
+    const result = await exportDataFixture(db, projectDir, {
+      tables: ["small"],
+      maxRowBytes: 50_000,
+    });
+    assertEquals(result.manifest.tables.map((t) => t.tableName), ["small"]);
+  });
 });

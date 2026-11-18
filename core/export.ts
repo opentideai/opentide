@@ -1,5 +1,6 @@
 import type { Kernel } from "./registries.ts";
 import { referencedTables } from "./db.ts";
+import { assertRowsFit } from "./row-bytes.ts";
 import {
   docsToMarkdownFiles,
   docsToStaticSiteFiles,
@@ -28,6 +29,7 @@ import { sha256Hex } from "./util.ts";
 import {
   APP_AUTH_GATE_CONFIG,
   CORS_ALLOW_METHODS,
+  DATA_EXPORT_MAX_ROW_BYTES,
   PROJECT_GITIGNORE,
   ROUTE_METHOD_NOT_ALLOWED_CODE,
   ROUTE_NOT_FOUND_CODE,
@@ -653,6 +655,8 @@ export async function generateAgentMd(
 export interface ExportProjectOptions {
   includeEnvFile?: boolean;
   includeSeedData?: boolean;
+  // Defaults to DATA_EXPORT_MAX_ROW_BYTES.
+  seedDataMaxRowBytes?: number;
   includeMigrations?: boolean;
   includeReferenceSeeds?: boolean;
   includeReadme?: boolean;
@@ -935,6 +939,13 @@ export async function exportProject(
     }
 
     if (opts?.includeSeedData) {
+      await assertRowsFit(
+        kernel.db,
+        orderedSchemaPlans.map(({ schema }) => schema.tableName),
+        opts.seedDataMaxRowBytes ?? DATA_EXPORT_MAX_ROW_BYTES,
+        "Seed data",
+        "Export without seed data, and move the data with a database backup.",
+      );
       const seedLines: string[] = [];
       for (const { schema } of orderedSchemaPlans) {
         const rows = await kernel.db.query(

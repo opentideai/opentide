@@ -24,6 +24,9 @@ import { Database } from "./db.ts";
 import { getProjectPaths } from "./project-manager.ts";
 import { Kernel } from "./registries.ts";
 import { dispatchTool } from "./tools/dispatch.ts";
+import { isolateHome } from "./test-home_test.ts";
+
+isolateHome();
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 const noop = () => {};

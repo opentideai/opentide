@@ -1242,11 +1242,19 @@ export const CONTEXT_AUTOCOMPACT_MESSAGE =
 
 // --- Database backups ---
 
-// How much work a periodic backup is allowed to leave unprotected. Consulted by
-// backup-cadence.ts, which every face that drives the kernel goes through — the IDE
-// (per completed chat turn) and an external MCP agent (before a mutating tool call).
-// Ten minutes is the interval the IDE used inline before the two faces shared a clock.
-export const DB_BACKUP_INTERVAL_MS = 10 * 60 * 1000;
+// Most bytes of rows a data fixture (export_data) or an export's seed data will
+// read. Both hold every row in memory and write it as one file of JSON or SQL, so a
+// big table ran the server out of heap. Moving more than this is what a database
+// backup is for: it streams.
+export const DATA_EXPORT_MAX_ROW_BYTES = 64 * 1024 * 1024;
+
+// The least time between periodic backups. Consulted by backup-cadence.ts, which
+// every face that drives the kernel goes through — the IDE (per completed chat turn)
+// and an external MCP agent (before a mutating tool call). A backup is the copy to go
+// far back to; undoing the last change is what the snapshot before a schema change
+// is for, and surviving a crash is the checkpoint's job. It was ten minutes, which on
+// a busy morning filled every slot with copies an hour apart at most.
+export const DB_BACKUP_INTERVAL_MS = 60 * 60 * 1000;
 
 // How long a PGlite project is allowed to run with writes that exist only inside the
 // process. PGlite's emscripten filesystem has no working fsync, so an unclean exit
@@ -1319,7 +1327,7 @@ const KERNEL_DEFAULTS: Required<KernelSettings> = {
   maxSnapshots: 20,
   snapshotRowBytesLimit: 64 * 1024 * 1024,
   snapshotRetainedBytesLimit: 256 * 1024 * 1024,
-  maxDbBackups: 7,
+  maxDbBackups: 13,
   maxChangesetSnapshots: MAX_CHANGESET_SNAPSHOTS_DEFAULT,
   maxTraces: 50,
   maxBodyCapture: 16_384,
@@ -1669,8 +1677,9 @@ interface KernelSettings {
   // Most row data all retained in-memory snapshots may hold together. Oldest
   // snapshots are dropped past it, as they are past maxSnapshots.
   snapshotRetainedBytesLimit?: number;
-  // Most database backups kept per project: the 3 newest, then the newest of
-  // each earlier day. 0 turns backups off.
+  // Most database backups kept per project. Which ones: the 2 newest, then one a
+  // day for a week, then one a week for 4 weeks (backupsToKeep). 0 turns backups
+  // off.
   maxDbBackups?: number;
   maxChangesetSnapshots?: number;
   maxTraces?: number;

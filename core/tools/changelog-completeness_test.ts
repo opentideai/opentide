@@ -9,6 +9,9 @@ import { startControlServer } from "../control-server.ts";
 import { Database } from "../db.ts";
 import { Kernel } from "../registries.ts";
 import { dispatchTool, MODIFICATION_TOOLS } from "./dispatch.ts";
+import { isolateHome } from "../test-home_test.ts";
+
+isolateHome();
 
 const testOpts = { sanitizeResources: false, sanitizeOps: false };
 const noop = () => {};

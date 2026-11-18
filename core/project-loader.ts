@@ -21,7 +21,7 @@ import {
   saveBranchSnapshots,
   saveKernelState,
 } from "./persistence.ts";
-import { writeBackup } from "./backup.ts";
+import { writeBackupIfChanged } from "./backup.ts";
 import { forgetBackupClock } from "./backup-cadence.ts";
 import {
   APP_SERVER_PORT,
@@ -296,20 +296,26 @@ async function unloadProjectOnce(ctx: ProjectContext): Promise<void> {
     const settings = getKernelSettings();
     if (ctx.backupOnUnload !== false && settings.maxDbBackups > 0) {
       mkdirSync(paths.backups, { recursive: true });
-      const metadata = await writeBackup(
+      // Only when something changed since the newest backup: every session that
+      // opened the project used to leave a full copy behind on its way out.
+      const metadata = await writeBackupIfChanged(
         ctx.kernel,
         ctx.kernel.db,
         "shutdown",
         paths.backups,
         settings.maxDbBackups,
       );
-      const snapshots = metadata.branchSnapshotCount ?? 0;
-      const snapshotText = snapshots > 0
-        ? `, ${snapshots} branch snapshot${snapshots === 1 ? "" : "s"}`
-        : "";
-      console.log(
-        `  Backup saved (project state${snapshotText}, ${metadata.tableCount} tables, ${metadata.rowCount} rows)`,
-      );
+      if (!metadata) {
+        console.log("  No backup: nothing changed since the last one");
+      } else {
+        const snapshots = metadata.branchSnapshotCount ?? 0;
+        const snapshotText = snapshots > 0
+          ? `, ${snapshots} branch snapshot${snapshots === 1 ? "" : "s"}`
+          : "";
+        console.log(
+          `  Backup saved (project state${snapshotText}, ${metadata.tableCount} tables, ${metadata.rowCount} rows)`,
+        );
+      }
     }
   } catch { /* best-effort — don't block shutdown */ }
 

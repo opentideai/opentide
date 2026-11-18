@@ -29,6 +29,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Kernel } from "./registries.ts";
 import { type Database, referencedTables } from "./db.ts";
@@ -44,6 +45,10 @@ export interface BackupMetadata {
   rowCount: number;
   branchSnapshotCount?: number;
   includesProjectState?: boolean;
+  // What the project looked like when the backup started (backupFingerprint). A
+  // later periodic or shutdown backup that would come out the same is not written.
+  // Absent on backups from before 0.1.15, which never match.
+  fingerprint?: string;
 }
 
 export interface BackupTableDef {
@@ -175,6 +180,7 @@ class BackupDirWriter {
     trigger: BackupMetadata["trigger"];
     kernelState?: PersistedState;
     branchSnapshots: SnapshotData[];
+    fingerprint?: string;
   }): Promise<BackupMetadata> {
     if (!isValidBackupId(opts.id)) {
       throw new Error(`Invalid backup id: ${JSON.stringify(opts.id)}`);
@@ -204,6 +210,7 @@ class BackupDirWriter {
       rowCount: tables.reduce((n, t) => n + t.rowCount, 0),
       branchSnapshotCount: opts.branchSnapshots.length,
       includesProjectState: opts.kernelState !== undefined,
+      ...(opts.fingerprint ? { fingerprint: opts.fingerprint } : {}),
     };
     // Metadata first: listing reads it from the head of the file.
     const manifest: BackupManifest = {
@@ -239,7 +246,37 @@ export async function writeBackup(
   backupsDir: string,
   maxBackups: number,
 ): Promise<BackupMetadata> {
+  return (await backUp(kernel, db, trigger, backupsDir, maxBackups, false))!;
+}
+
+// writeBackup, unless the newest backup already holds what this one would: null
+// then, and nothing is written. The periodic and shutdown backups go through here.
+// A project left open and idle used to back itself up on every restart and every
+// interval, and each copy pushed an older, different one out.
+export function writeBackupIfChanged(
+  kernel: Kernel,
+  db: Database,
+  trigger: BackupMetadata["trigger"],
+  backupsDir: string,
+  maxBackups: number,
+): Promise<BackupMetadata | null> {
+  return backUp(kernel, db, trigger, backupsDir, maxBackups, true);
+}
+
+async function backUp(
+  kernel: Kernel,
+  db: Database,
+  trigger: BackupMetadata["trigger"],
+  backupsDir: string,
+  maxBackups: number,
+  onlyIfChanged: boolean,
+): Promise<BackupMetadata | null> {
   mkdirSync(backupsDir, { recursive: true });
+  const previous = listBackups(backupsDir)[0]?.fingerprint;
+  // Taken before the rows are read: a write that lands mid-backup makes the next
+  // fingerprint differ, so it costs a backup, never a missed change.
+  const fingerprint = await backupFingerprint(kernel, db, previous);
+  if (onlyIfChanged && sameContents(fingerprint, previous)) return null;
   const id = createTimestampedShortId("backup");
   const createdAt = new Date().toISOString();
   // The project state as it was when the backup started, like the rows.
@@ -263,6 +300,7 @@ export async function writeBackup(
       trigger,
       kernelState,
       branchSnapshots: branchSnapshotsOf(kernel),
+      fingerprint,
     });
     pruneBackups(backupsDir, maxBackups);
     return metadata;
@@ -270,6 +308,85 @@ export async function writeBackup(
     await writer.abort();
     throw err;
   }
+}
+
+// A short string that changes when anything a backup holds changes: the user
+// tables' rows and definitions, the project state, the branch snapshots. Three
+// parts, dot-separated:
+//
+// - The next transaction id, when no transaction is in flight. Postgres hands an id
+//   only to a transaction that writes, and checkpoints, reads and restarts take
+//   none, so an unchanged id means nothing at all was written.
+// - A hash of the project state and the branch snapshot ids.
+// - A hash over each user table's definition, columns, row count, newest xmin and
+//   file node. An insert or update brings a newer xmin, a delete a lower count, a
+//   TRUNCATE or a rewriting ALTER a new file node, an ALTER that rewrites nothing
+//   (ADD COLUMN) a new column list. This is a scan of every table — about half a
+//   second a gigabyte — and it is skipped when the id says nothing was written.
+//
+// The id alone would not do: OpenTide's own tables (chat messages, the changelog)
+// live in the same database and change on every turn, and a backup leaves them out.
+// Postgres's own write counters would be cheaper than the scan, but PGlite never
+// flushes them; they read zero.
+export async function backupFingerprint(
+  kernel: Kernel,
+  db: Database,
+  previous?: string,
+): Promise<string> {
+  const [snap] = await db.query(
+    `SELECT pg_snapshot_xmin(s)::text AS lo, pg_snapshot_xmax(s)::text AS hi
+       FROM pg_current_snapshot() AS s`,
+  );
+  // A transaction still in flight may commit rows after the scan below; with one,
+  // the id is left blank so the next fingerprint scans again.
+  const xid = snap && snap.lo === snap.hi ? String(snap.hi) : "";
+  const state = shortHash(
+    JSON.stringify(serializeKernelState(kernel)) +
+      JSON.stringify(kernel.branches.list().map((b) => b.snapshotId)),
+  );
+  const [prevXid, prevState, prevTables] = previous?.split(".") ?? [];
+  if (xid && xid === prevXid && state === prevState && prevTables) {
+    return previous!;
+  }
+  const tables = createHash("sha256");
+  for (const schema of await db.listSchemas()) {
+    const name = `"${schema.tableName.replaceAll('"', '""')}"`;
+    const rel = `'${name.replaceAll("'", "''")}'::regclass`;
+    const [row] = await db.query(
+      `SELECT count(*)::text AS n, max(xmin::text::bigint)::text AS x,
+              pg_relation_filenode(${rel})::text AS f,
+              (SELECT string_agg(attname || ' ' ||
+                                 format_type(atttypid, atttypmod),
+                                 ', ' ORDER BY attnum)
+                 FROM pg_attribute
+                WHERE attrelid = ${rel} AND attnum > 0
+                  AND NOT attisdropped) AS c
+         FROM ${name}`,
+    );
+    tables.update(
+      JSON.stringify([
+        schema.tableName,
+        schema.sql,
+        row?.c,
+        row?.n,
+        row?.x,
+        row?.f,
+      ]) + "\n",
+    );
+  }
+  return `${xid}.${state}.${tables.digest("hex").slice(0, 16)}`;
+}
+
+// Whether two fingerprints describe the same contents. The transaction id is only
+// a shortcut past the scan; OpenTide's own writes move it with nothing backed up
+// changing.
+function sameContents(a: string, b: string | undefined): boolean {
+  return b !== undefined &&
+    a.slice(a.indexOf(".")) === b.slice(b.indexOf("."));
+}
+
+function shortHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
 // Save a backup held whole in memory: an upload, a test fixture.
@@ -302,6 +419,7 @@ export async function saveBackup(
       trigger: backup.metadata.trigger,
       kernelState: backup.kernelState,
       branchSnapshots: backup.branchSnapshots ?? [],
+      fingerprint: backup.metadata.fingerprint,
     });
     pruneBackups(backupsDir, maxBackups);
     return metadata;
@@ -709,6 +827,11 @@ export async function importJsonBackup(
       trigger: metadata.trigger ?? "manual",
       ...(kernelState ? { kernelState } : {}),
       branchSnapshots: Array.isArray(branchSnapshots) ? branchSnapshots : [],
+      // A download carries its own: it still describes the rows that came with it.
+      ...(typeof metadata.fingerprint === "string" &&
+          metadata.fingerprint.length <= 128
+        ? { fingerprint: metadata.fingerprint }
+        : {}),
     });
   } catch (err) {
     await writer.abort();
@@ -898,36 +1021,49 @@ export function deleteBackup(backupsDir: string, id: string): boolean {
 }
 
 // However many backups are kept, the newest few always are.
-const RECENT_BACKUPS = 3;
+const RECENT_BACKUPS = 2;
+// Then one a day for this many days, then one a week across this many weeks of days
+// before those. Counted back from the newest backup's day, not from today: a project
+// left alone for two months keeps the month of history it had.
+const DAILY_BACKUP_DAYS = 7;
+const WEEKLY_BACKUP_WEEKS = 4;
+const DAY_MS = 24 * 60 * 60 * 1000;
 // A temporary directory this old is not a backup still being written.
 const STALE_TMP_MS = 24 * 60 * 60 * 1000;
 
-// Which backups to keep, newest first: the RECENT_BACKUPS newest, then the newest
-// backup of each earlier day, then — if that leaves room — the newest of the rest.
-// Keeping the newest N alone meant a morning of restarts or a busy hour pushed out
-// everything older than the hour.
+// Which backups to keep, newest first: the RECENT_BACKUPS newest; the newest of each
+// UTC day in the DAILY_BACKUP_DAYS days ending on the newest backup's; the newest of
+// each Monday-to-Sunday week in the WEEKLY_BACKUP_WEEKS * 7 days before those. At
+// most 2 + 6 + 5 = 13, and never more than maxBackups. Nothing tops the list up: the
+// old policy filled spare slots with the newest, so one busy morning took every slot
+// and pushed out the days before it.
+//
+// Buckets are calendar days and weeks. Buckets measured back from the newest backup
+// would slide every day, re-elect their newest member, and nothing would ever grow
+// old enough to be the weekly copy.
 export function backupsToKeep(
   newestFirst: BackupMetadata[],
   maxBackups: number,
 ): BackupMetadata[] {
-  const keep = newestFirst.slice(0, Math.min(maxBackups, RECENT_BACKUPS));
-  const kept = new Set(keep.map((b) => b.id));
-  const days = new Set(keep.map((b) => b.createdAt.slice(0, 10)));
-  for (const b of newestFirst) {
-    if (keep.length >= maxBackups) break;
-    const day = b.createdAt.slice(0, 10);
-    if (days.has(day)) continue;
-    days.add(day);
-    keep.push(b);
-    kept.add(b.id);
-  }
-  for (const b of newestFirst) {
-    if (keep.length >= maxBackups) break;
-    if (kept.has(b.id)) continue;
-    keep.push(b);
-    kept.add(b.id);
-  }
-  return keep.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (maxBackups <= 0 || newestFirst.length === 0) return [];
+  const dayOf = (b: BackupMetadata) =>
+    Math.floor(Date.parse(b.createdAt) / DAY_MS);
+  const newestDay = dayOf(newestFirst[0]!);
+  const keep: BackupMetadata[] = [];
+  const buckets = new Set<string>();
+  newestFirst.forEach((b, i) => {
+    const day = dayOf(b);
+    const back = newestDay - day;
+    // Day 0 of the epoch was a Thursday; + 3 starts the weeks on Mondays.
+    const bucket = back < DAILY_BACKUP_DAYS
+      ? `day ${day}`
+      : back < DAILY_BACKUP_DAYS + 7 * WEEKLY_BACKUP_WEEKS
+      ? `week ${Math.floor((day + 3) / 7)}`
+      : null;
+    if (i < RECENT_BACKUPS || (bucket && !buckets.has(bucket))) keep.push(b);
+    if (bucket) buckets.add(bucket);
+  });
+  return keep.slice(0, maxBackups);
 }
 
 export function pruneBackups(backupsDir: string, maxBackups: number): void {
